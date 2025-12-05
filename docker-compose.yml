@@ -12,7 +12,7 @@ services:
       POSTGRES_PASSWORD: paws_secret_password
       POSTGRES_DB: paws_db
     ports:
-      - "5432:5432"
+    - "5433:5432"  # El primero es el de tu PC, el segundo es el del contenedor
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
