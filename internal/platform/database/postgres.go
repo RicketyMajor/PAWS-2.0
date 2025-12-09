@@ -42,7 +42,7 @@ func Connect() {
 }
 func Migrate() {
 	// Agregamos &domain.BlacklistEntry{} a la lista
-	err := DB.AutoMigrate(&domain.User{}, &domain.BlacklistEntry{})
+	err := DB.AutoMigrate(&domain.User{}, &domain.BlacklistEntry{}, &domain.Pet{})
 	if err != nil {
 		log.Fatal("❌ Error en la migración de base de datos: ", err)
 	}
