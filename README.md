@@ -121,6 +121,101 @@ Respuesta exitosa:
 }
 ```
 
+### Crear Mascota (Requiere Autenticación)
+
+```bash
+TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+curl -X POST http://localhost:8080/api/v1/pets \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Max",
+    "type": "Dog",
+    "breed": "Golden Retriever",
+    "age": 24,
+    "latitude": -33.5,
+    "longitude": -70.5,
+    "description": "Perro amigable y energético"
+  }'
+```
+
+Respuesta exitosa (201):
+
+```json
+{
+  "id": 1,
+  "name": "Max",
+  "type": "Dog",
+  "status": "available",
+  "user_id": 1,
+  "created_at": "2025-12-09T10:30:00Z"
+}
+```
+
+### Obtener Lista de Mascotas (Sin Autenticación)
+
+```bash
+curl -X GET http://localhost:8080/api/v1/pets
+```
+
+Respuesta exitosa (200):
+
+```json
+[
+  {
+    "id": 1,
+    "name": "Max",
+    "type": "Dog",
+    "breed": "Golden Retriever",
+    "status": "available",
+    "latitude": -33.5,
+    "longitude": -70.5
+  }
+]
+```
+
+### Subir Imagen (Requiere Autenticación)
+
+```bash
+TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+curl -X POST http://localhost:8080/api/v1/files/upload \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@dog.jpg"
+```
+
+Respuesta exitosa (200):
+
+```json
+{
+  "url": "/uploads/a0eebc99-9c0b-4ef8-a6b0-6e3d3f5e9c8f.jpg",
+  "message": "imagen subida exitosamente"
+}
+```
+
+### Verificar Identidad (Requiere Autenticación)
+
+```bash
+TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+curl -X POST http://localhost:8080/api/v1/verification/verify \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "document_image_url": "/uploads/a0eebc99-9c0b-4ef8-a6b0-6e3d3f5e9c8f.jpg"
+  }'
+```
+
+Respuesta exitosa (200):
+
+```json
+{
+  "message": "Identidad verificada exitosamente. Ahora tienes acceso total.",
+  "status": "verified"
+}
+```
+
 ## Acceso a Servicios
 
 | Servicio   | URL                   | Credenciales                     |
@@ -134,8 +229,9 @@ Respuesta exitosa:
 Consultar `documentation/` para documentación exhaustiva:
 
 - `Fase-0.md`: Infraestructura, Docker, configuración de base de datos
-- `Fase-1.md`: Autenticación, seguridad, modelos de datos
-- Próximas fases: Mascotas, matchmaking, chat
+- `Fase-1.md`: Autenticación, seguridad, JWT y Bcrypt
+- `Fase-2.md`: Gestión de mascotas, uploads, middleware, OCR mock
+- Próximas fases: Matchmaking, geolocalización, chat
 
 Estructura actual:
 
@@ -145,12 +241,23 @@ PAWS-2.0/
 │   └── api/                 # Punto de entrada de la aplicación
 ├── internal/
 │   ├── core/
-│   │   ├── domain/          # Modelos de datos (User, BlacklistEntry)
-│   │   └── services/        # Lógica de negocio (AuthService)
+│   │   ├── domain/          # Modelos (User, BlacklistEntry, Pet)
+│   │   └── services/        # Lógica de negocio
+│   │       ├── auth_service.go
+│   │       ├── pet_service.go
+│   │       ├── file_service.go
+│   │       └── identity_service.go
 │   ├── transport/
-│   │   └── http/            # Handlers HTTP (AuthHandler)
+│   │   └── http/            # Handlers y middleware HTTP
+│   │       ├── auth_handler.go
+│   │       ├── pet_handler.go
+│   │       ├── upload_handler.go
+│   │       ├── identity_handler.go
+│   │       └── middleware/
+│   │           └── auth.go
 │   └── platform/
 │       └── database/        # Conexión y migraciones de BD
+├── uploads/                 # Almacenamiento local de imágenes
 ├── documentation/           # Documentación por fase
 ├── docker-compose.yml       # Orquestación de servicios
 ├── go.mod                   # Dependencias de Go
@@ -177,9 +284,9 @@ Este proyecto se desarrolla en fases:
 
 - **Fase 0** (Completada): Infraestructura, Docker, estructura de proyecto
 - **Fase 1** (Completada): Autenticación JWT, hashing de contraseñas, blacklist
-- **Fase 2**: Gestión de mascotas, perfiles y subida de imágenes
-- **Fase 3**: Matchmaking y geolocalización
-- **Fase 4**: Chat en tiempo real distribuido con Redis
+- **Fase 2** (Completada): Gestión de mascotas, uploads, middleware de auth, OCR mock
+- **Fase 3**: Matchmaking y geolocalización avanzada con PostGIS
+- **Fase 4**: Chat en tiempo real distribuido con WebSocket y Redis
 - **Fase 5**: Frontend con Flutter
 - **Fase 6**: Despliegue y orquestación (Kubernetes)
 
@@ -187,6 +294,7 @@ Este proyecto se desarrolla en fases:
 
 - [Fase 0](documentation/Fase-0.md): Infraestructura, Docker, estructura base
 - [Fase 1](documentation/Fase-1.md): Autenticación, seguridad, JWT y Bcrypt
+- [Fase 2](documentation/Fase-2.md): Gestión de mascotas, uploads, middleware, OCR
 - Próximas fases: Documentadas en `documentation/`
 
 ## Autor
