@@ -7,6 +7,7 @@ import (
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"github.com/RicketyMajor/PAWS-2.0/internal/core/domain"
 )
 
 // DB es una variable global (por ahora) que guardará la conexión.
@@ -38,4 +39,12 @@ func Connect() {
 	// 4. Si funciona, guardamos la conexión en la variable global
 	DB = connection
 	log.Println("✅ Conexión a Base de Datos exitosa")
+}
+func Migrate() {
+    // AutoMigrate es magia de GORM: revisa el struct User y crea/actualiza la tabla en Postgres
+    err := DB.AutoMigrate(&domain.User{})
+    if err != nil {
+        log.Fatal("❌ Error en la migración de base de datos: ", err)
+    }
+    log.Println("✅ Migración de base de datos completada: Tablas creadas/actualizadas")
 }

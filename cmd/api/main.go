@@ -4,24 +4,44 @@ import (
 	"log"
 	"os"
 
-	"github.com/RicketyMajor/PAWS-2.0/internal/platform/database" // ⚠️ IMPORTANTE: Cambia TU_USUARIO por tu usuario de GitHub real
+	"github.com/RicketyMajor/PAWS-2.0/internal/core/services"       // Ajustar Import
+	"github.com/RicketyMajor/PAWS-2.0/internal/platform/database"   // Ajustar Import
+	transport "github.com/RicketyMajor/PAWS-2.0/internal/transport/http" // Ajustar Import (alias transport)
+	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 )
 
 func main() {
-	// 1. Cargar variables de entorno desde el archivo .env
-	// Esto debe ser LO PRIMERO que se ejecute.
+	// 1. Configuración inicial
 	if err := godotenv.Load(); err != nil {
-		log.Fatal("Error cargando el archivo .env")
+		log.Fatal("Error cargando .env")
 	}
 
-	// 2. Conectar a la Base de Datos
 	database.Connect()
+	database.Migrate()
 
-	// 3. Simulación de inicio del servidor
+	// 2. Inyección de Dependencias
+	// Inicializamos el servicio y el handler
+	authService := services.NewAuthService()
+	authHandler := transport.NewAuthHandler(authService)
+
+	// 3. Configurar Router (Gin)
+	r := gin.Default()
+
+	// Definir Rutas
+	api := r.Group("/api/v1") // Versionamiento de API (Buena práctica)
+	{
+		auth := api.Group("/auth")
+		{
+			auth.POST("/register", authHandler.Register)
+		}
+	}
+
+	// 4. Arrancar Servidor
 	port := os.Getenv("PORT")
-	log.Printf("🚀 Servidor PAWS corriendo en el puerto %s", port)
-	
-	// Aquí, más adelante, pondremos el código que mantiene el servidor "escuchando" peticiones.
-	// Por ahora, el programa terminará después de imprimir esto.
+	if port == "" {
+		port = "8080"
+	}
+	log.Printf("🚀 Servidor PAWS corriendo en puerto %s", port)
+	r.Run(":" + port)
 }
