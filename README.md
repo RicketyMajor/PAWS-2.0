@@ -40,7 +40,7 @@ PORT=8080
 ### 3. Iniciar Infraestructura (Docker)
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 Esto levanta:
@@ -52,7 +52,7 @@ Esto levanta:
 Verificar estado:
 
 ```bash
-docker-compose ps
+docker compose ps
 ```
 
 ### 4. Ejecutar el Servidor
@@ -93,13 +93,13 @@ PAWS-2.0/
 ## Detener Servicios
 
 ```bash
-docker-compose down
+docker compose down
 ```
 
 Para eliminar también los volúmenes de datos:
 
 ```bash
-docker-compose down -v
+docker compose down -v
 ```
 
 ## Plan de Desarrollo
@@ -118,7 +118,7 @@ Consultar `documentation/` para detalles de cada fase.
 
 ## Documentación Adicional
 
-- `documentation/Fase-0.md`: Documentación técnica detallada de la infraestructura y cimientos
+- [Fase 0](documentation/Fase-0.md): Documentación técnica detallada de la infraestructura y cimientos
 - Plan de desarrollo completo: Disponible en `documentation/`
 
 ## Autor
