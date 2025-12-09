@@ -28,13 +28,21 @@ cd PAWS-2.0
 En la raíz del proyecto, crear un archivo `.env` con las siguientes variables:
 
 ```
-DB_HOST=db
+PORT=8080
+ENV=development
+
+DB_HOST=localhost
+DB_PORT=5433
 DB_USER=paws_user
 DB_PASSWORD=paws_secret_password
 DB_NAME=paws_db
-DB_PORT=5432
 DB_SSL_MODE=disable
-PORT=8080
+
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=
+
+JWT_SECRET=secreto_super_seguro_cambiar_en_produccion
 ```
 
 ### 3. Iniciar Infraestructura (Docker)
@@ -65,7 +73,52 @@ Esperado:
 
 ```
 ✅ Conexión a Base de Datos exitosa
-🚀 Servidor PAWS corriendo en el puerto 8080
+✅ Migración de base de datos completada
+🚀 Servidor PAWS corriendo en puerto 8080
+```
+
+## Pruebas Rápidas de Endpoints
+
+### Registrarse
+
+```bash
+curl -X POST http://localhost:8080/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Juan Pérez",
+    "email": "juan@example.com",
+    "password": "securepassword123",
+    "run": "12345678-9",
+    "role": "adopter"
+  }'
+```
+
+Respuesta exitosa:
+
+```json
+{
+  "message": "Usuario registrado exitosamente",
+  "user_id": 1
+}
+```
+
+### Iniciar Sesión
+
+```bash
+curl -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "juan@example.com",
+    "password": "securepassword123"
+  }'
+```
+
+Respuesta exitosa:
+
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
 ```
 
 ## Acceso a Servicios
@@ -78,15 +131,31 @@ Esperado:
 
 ## Estructura del Proyecto
 
-Para documentación exhaustiva sobre la arquitectura, stack tecnológico y decisiones de diseño, consultar `documentation/Fase-0.md`.
+Consultar `documentation/` para documentación exhaustiva:
+
+- `Fase-0.md`: Infraestructura, Docker, configuración de base de datos
+- `Fase-1.md`: Autenticación, seguridad, modelos de datos
+- Próximas fases: Mascotas, matchmaking, chat
+
+Estructura actual:
 
 ```
 PAWS-2.0/
-├── cmd/api/                 # Punto de entrada de la aplicación
-├── internal/platform/       # Infraestructura y servicios
+├── cmd/
+│   └── api/                 # Punto de entrada de la aplicación
+├── internal/
+│   ├── core/
+│   │   ├── domain/          # Modelos de datos (User, BlacklistEntry)
+│   │   └── services/        # Lógica de negocio (AuthService)
+│   ├── transport/
+│   │   └── http/            # Handlers HTTP (AuthHandler)
+│   └── platform/
+│       └── database/        # Conexión y migraciones de BD
 ├── documentation/           # Documentación por fase
 ├── docker-compose.yml       # Orquestación de servicios
 ├── go.mod                   # Dependencias de Go
+├── go.sum                   # Lock de dependencias
+├── .env                     # Variables de entorno
 └── README.md               # Este archivo
 ```
 
@@ -106,25 +175,18 @@ docker compose down -v
 
 Este proyecto se desarrolla en fases:
 
-- **Fase 0** (Completada): Infraestructura y estructura del proyecto
-- **Fase 1**: Autenticación y seguridad
-- **Fase 2**: Gestión de mascotas y perfiles
+- **Fase 0** (Completada): Infraestructura, Docker, estructura de proyecto
+- **Fase 1** (Completada): Autenticación JWT, hashing de contraseñas, blacklist
+- **Fase 2**: Gestión de mascotas, perfiles y subida de imágenes
 - **Fase 3**: Matchmaking y geolocalización
-- **Fase 4**: Chat en tiempo real distribuido
+- **Fase 4**: Chat en tiempo real distribuido con Redis
 - **Fase 5**: Frontend con Flutter
-- **Fase 6**: Despliegue y orquestación
-
-Consultar `documentation/` para detalles de cada fase.
+- **Fase 6**: Despliegue y orquestación (Kubernetes)
 
 ## Documentación Adicional
 
-- [Fase 0](documentation/Fase-0.md): Documentación técnica detallada de la infraestructura y cimientos
-- Plan de desarrollo completo: Disponible en `documentation/`
+- [Fase 0](documentation/Fase-0.md): Infraestructura, Docker, estructura base
+- [Fase 1](documentation/Fase-1.md): Autenticación, seguridad, JWT y Bcrypt
+- Próximas fases: Documentadas en `documentation/`
 
 ## Autor
-
-[Tu nombre o equipo]
-
-## Licencia
-
-[Tu licencia preferida]
