@@ -2,9 +2,12 @@ package services
 
 import (
 	"errors"
+	"os"
+	"time"
 
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/domain" // <--- CAMBIA ESTO
 	"github.com/RicketyMajor/PAWS-2.0/internal/platform/database" // <--- CAMBIA ESTO
+	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -17,6 +20,13 @@ func NewAuthService() *AuthService {
 
 // Register crea un nuevo usuario aplicando reglas de seguridad
 func (s *AuthService) Register(name, email, password, run, role string) (*domain.User, error) {
+	// --- NUEVO: Validación R-SEC-03 (Blacklist) ---
+	var blacklistEntry domain.BlacklistEntry
+	// Buscamos si el RUN está en la lista negra
+	if err := database.DB.Where("run = ?", run).First(&blacklistEntry).Error; err == nil {
+		// Si err == nil, significa que LO ENCONTRÓ. ¡Peligro!
+		return nil, errors.New("registro rechazado: este RUN se encuentra en nuestra lista de bloqueo por: " + blacklistEntry.Reason)
+	}
 	// 1. Verificar si el RUN ya existe (R-SEC-02)
 	var existingUser domain.User
 	// Buscamos en la BD si alguien tiene ese RUN
@@ -55,4 +65,47 @@ func (s *AuthService) Register(name, email, password, run, role string) (*domain
 	}
 
 	return &newUser, nil
+}
+
+func (s *AuthService) Login(email, password string) (string, error) {
+	var user domain.User
+
+	// 1. Buscar usuario
+	result := database.DB.Where("email = ?", email).First(&user)
+	if result.Error != nil {
+		return "", errors.New("credenciales inválidas") // No decir "usuario no encontrado" por seguridad
+	}
+
+	// 2. Verificar si está Baneado (R-SEC-03)
+	// Si "Evil PAWS" marcó a este usuario, no lo dejamos entrar.
+	if user.IsBanned {
+		return "", errors.New("tu cuenta ha sido suspendida por violar las normas de seguridad")
+	}
+
+	// 3. Verificar Contraseña
+	// Comparamos el hash de la BD con la contraseña que nos mandan ahora
+	err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password))
+	if err != nil {
+		return "", errors.New("credenciales inválidas")
+	}
+
+	// 4. Generar JWT
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub":  user.ID,   // Subject (Quién es)
+		"role": user.Role, // Rol (Permisos)
+		"exp":  time.Now().Add(time.Hour * 24).Unix(), // Expira en 24 horas
+	})
+
+	// Firmar el token con una clave secreta (Debería estar en .env, por ahora usamos un default)
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		secret = "secreto_super_seguro_cambiar_en_produccion"
+	}
+
+	tokenString, err := token.SignedString([]byte(secret))
+	if err != nil {
+		return "", err
+	}
+
+	return tokenString, nil
 }

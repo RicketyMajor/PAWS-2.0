@@ -32,3 +32,8 @@ type User struct {
 	// Banned permite bloquear usuarios manualmente o automáticamente (R-SEC-03)
 	IsBanned bool `gorm:"default:false" json:"is_banned"`
 }
+type BlacklistEntry struct {
+	gorm.Model
+	Run    string `gorm:"uniqueIndex;not null" json:"run"`
+	Reason string `json:"reason"` // Ej: "Maltrato animal verificado", "Cuenta falsa"
+}
