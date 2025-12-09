@@ -216,6 +216,93 @@ Respuesta exitosa (200):
 }
 ```
 
+### Buscar Mascotas con Filtros Avanzados (Sin Autenticación)
+
+```bash
+curl -X GET "http://localhost:8080/api/v1/pets/search?type=Dog&breed=Golden&lat=-33.5&long=-70.5&radius=10"
+```
+
+Respuesta exitosa (200):
+
+```json
+[
+  {
+    "id": 1,
+    "name": "Max",
+    "type": "Dog",
+    "breed": "Golden Retriever",
+    "age": 24,
+    "status": "available",
+    "latitude": -33.5,
+    "longitude": -70.5,
+    "description": "Perro amigable y energético"
+  },
+  {
+    "id": 3,
+    "name": "Luna",
+    "type": "Dog",
+    "breed": "Golden Doodle",
+    "age": 36,
+    "status": "available",
+    "latitude": -33.48,
+    "longitude": -70.52,
+    "description": "Juguetona y activa"
+  }
+]
+```
+
+**Parámetros de búsqueda**:
+- `type`: Tipo de mascota (Dog, Cat, etc.)
+- `breed`: Raza (búsqueda parcial, case-insensitive)
+- `lat`: Latitud de ubicación
+- `long`: Longitud de ubicación
+- `radius`: Radio en kilómetros
+- `max_age`: Edad máxima en meses
+
+### Obtener Matches de Mascotas (Sin Autenticación)
+
+```bash
+curl -X GET "http://localhost:8080/api/v1/pets/match?type=Dog&breed=Golden&max_age=60"
+```
+
+Respuesta exitosa (200):
+
+```json
+{
+  "matches_found": 2,
+  "results": [
+    {
+      "pet": {
+        "id": 1,
+        "name": "Max",
+        "type": "Dog",
+        "breed": "Golden Retriever",
+        "age": 24,
+        "status": "available"
+      },
+      "match_score": 80
+    },
+    {
+      "pet": {
+        "id": 3,
+        "name": "Luna",
+        "type": "Dog",
+        "breed": "Golden Doodle",
+        "age": 36,
+        "status": "available"
+      },
+      "match_score": 60
+    }
+  ]
+}
+```
+
+**Score de matching** (0-100):
+- Tipo correcto: +40 puntos
+- Raza coincide: +20 puntos
+- Edad aceptable: +20 puntos
+- Ubicación disponible: +20 puntos
+
 ## Acceso a Servicios
 
 | Servicio   | URL                   | Credenciales                     |
@@ -231,7 +318,8 @@ Consultar `documentation/` para documentación exhaustiva:
 - `Fase-0.md`: Infraestructura, Docker, configuración de base de datos
 - `Fase-1.md`: Autenticación, seguridad, JWT y Bcrypt
 - `Fase-2.md`: Gestión de mascotas, uploads, middleware, OCR mock
-- Próximas fases: Matchmaking, geolocalización, chat
+- `Fase-3.md`: Matchmaking, geolocalización avanzada, búsqueda con filtros
+- Próximas fases: Chat real-time, favorites, Flutter frontend
 
 Estructura actual:
 
@@ -245,12 +333,14 @@ PAWS-2.0/
 │   │   └── services/        # Lógica de negocio
 │   │       ├── auth_service.go
 │   │       ├── pet_service.go
+│   │       ├── match_service.go       # (Fase 3)
 │   │       ├── file_service.go
 │   │       └── identity_service.go
 │   ├── transport/
 │   │   └── http/            # Handlers y middleware HTTP
 │   │       ├── auth_handler.go
 │   │       ├── pet_handler.go
+│   │       ├── match_handler.go       # (Fase 3)
 │   │       ├── upload_handler.go
 │   │       ├── identity_handler.go
 │   │       └── middleware/
@@ -282,10 +372,10 @@ docker compose down -v
 
 Este proyecto se desarrolla en fases:
 
-- **Fase 0** (Completada): Infraestructura, Docker, estructura de proyecto
-- **Fase 1** (Completada): Autenticación JWT, hashing de contraseñas, blacklist
-- **Fase 2** (Completada): Gestión de mascotas, uploads, middleware de auth, OCR mock
-- **Fase 3**: Matchmaking y geolocalización avanzada con PostGIS
+- **Fase 0** (✅ Completada): Infraestructura, Docker, estructura de proyecto
+- **Fase 1** (✅ Completada): Autenticación JWT, hashing de contraseñas, blacklist
+- **Fase 2** (✅ Completada): Gestión de mascotas, uploads, middleware de auth, OCR mock
+- **Fase 3** (✅ Completada): Matchmaking y geolocalización avanzada, búsqueda SQL con filtros
 - **Fase 4**: Chat en tiempo real distribuido con WebSocket y Redis
 - **Fase 5**: Frontend con Flutter
 - **Fase 6**: Despliegue y orquestación (Kubernetes)
@@ -295,6 +385,7 @@ Este proyecto se desarrolla en fases:
 - [Fase 0](documentation/Fase-0.md): Infraestructura, Docker, estructura base
 - [Fase 1](documentation/Fase-1.md): Autenticación, seguridad, JWT y Bcrypt
 - [Fase 2](documentation/Fase-2.md): Gestión de mascotas, uploads, middleware, OCR
+- [Fase 3](documentation/Fase-3.md): Matchmaking, geolocalización, búsqueda SQL
 - Próximas fases: Documentadas en `documentation/`
 
 ## Autor
