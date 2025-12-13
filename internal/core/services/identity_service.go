@@ -21,7 +21,7 @@ func (s *IdentityService) VerifyIdentity(userID uint, imageURL string) error {
 	// Hacemos que el sistema espere 2 segundos para parecer que está procesando la imagen.
 	time.Sleep(2 * time.Second)
 
-	log.Printf("🤖 [MOCK OCR] Procesando imagen: %s para usuario %d", imageURL, userID)
+	log.Printf("[MOCK OCR] Procesando imagen: %s para usuario %d", imageURL, userID)
 
 	// 2. Validación "Fake"
 	// En un sistema real, aquí la IA nos diría si leyó el RUT correctamente.

@@ -72,9 +72,9 @@ go run ./cmd/api/main.go
 Esperado:
 
 ```
-✅ Conexión a Base de Datos exitosa
-✅ Migración de base de datos completada
-🚀 Servidor PAWS corriendo en puerto 8080
+ Conexión a Base de Datos exitosa
+ Migración de base de datos completada
+ Servidor PAWS corriendo en puerto 8080
 ```
 
 ## Pruebas Rápidas de Endpoints
@@ -252,12 +252,42 @@ Respuesta exitosa (200):
 ```
 
 **Parámetros de búsqueda**:
+
 - `type`: Tipo de mascota (Dog, Cat, etc.)
 - `breed`: Raza (búsqueda parcial, case-insensitive)
 - `lat`: Latitud de ubicación
 - `long`: Longitud de ubicación
 - `radius`: Radio en kilómetros
 - `max_age`: Edad máxima en meses
+
+### Conectar a Chat en Tiempo Real (Requiere Autenticación)
+
+Fase 4 implementa WebSocket para chat distribuido con Redis Pub/Sub.
+
+```bash
+TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+# Conectar cliente WebSocket (ejemplo con wscat)
+wscat -c "ws://localhost:8080/api/v1/chat/ws" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Esperado:
+
+```
+Connected (press CTRL+C to quit)
+> {"message": "Hola"}
+< {"message": "Hola"}
+< {"user": "user_1", "message": "Hola"}
+```
+
+**Características WebSocket Fase 4**:
+
+- Conexión persistente bidireccional
+- Distribuido con Redis Pub/Sub (múltiples servidores)
+- Filtro de contenido R-SEC-05 (malas palabras)
+- Heartbeat ping/pong
+- Escalable a miles de conexiones simultáneas
 
 ### Obtener Matches de Mascotas (Sin Autenticación)
 
@@ -298,6 +328,7 @@ Respuesta exitosa (200):
 ```
 
 **Score de matching** (0-100):
+
 - Tipo correcto: +40 puntos
 - Raza coincide: +20 puntos
 - Edad aceptable: +20 puntos
@@ -319,7 +350,8 @@ Consultar `documentation/` para documentación exhaustiva:
 - `Fase-1.md`: Autenticación, seguridad, JWT y Bcrypt
 - `Fase-2.md`: Gestión de mascotas, uploads, middleware, OCR mock
 - `Fase-3.md`: Matchmaking, geolocalización avanzada, búsqueda con filtros
-- Próximas fases: Chat real-time, favorites, Flutter frontend
+- `Fase-4.md`: Chat distribuido, WebSocket, Redis Pub/Sub, seguridad R-SEC-05
+- Próximas fases: Flutter frontend, Kubernetes
 
 Estructura actual:
 
@@ -337,14 +369,18 @@ PAWS-2.0/
 │   │       ├── file_service.go
 │   │       └── identity_service.go
 │   ├── transport/
-│   │   └── http/            # Handlers y middleware HTTP
-│   │       ├── auth_handler.go
-│   │       ├── pet_handler.go
-│   │       ├── match_handler.go       # (Fase 3)
-│   │       ├── upload_handler.go
-│   │       ├── identity_handler.go
-│   │       └── middleware/
-│   │           └── auth.go
+│   │   ├── http/            # Handlers y middleware HTTP
+│   │   │   ├── auth_handler.go
+│   │   │   ├── pet_handler.go
+│   │   │   ├── match_handler.go       # (Fase 3)
+│   │   │   ├── upload_handler.go
+│   │   │   ├── identity_handler.go
+│   │   │   ├── ws_handler.go          # (Fase 4 - Upgrade WebSocket)
+│   │   │   └── middleware/
+│   │   │       └── auth.go
+│   │   └── websocket/                 # (Fase 4 - Lógica WebSocket)
+│   │       ├── client.go              # Cliente WebSocket individual
+│   │       └── hub.go                 # Hub distribuido con Redis
 │   └── platform/
 │       └── database/        # Conexión y migraciones de BD
 ├── uploads/                 # Almacenamiento local de imágenes
@@ -372,11 +408,11 @@ docker compose down -v
 
 Este proyecto se desarrolla en fases:
 
-- **Fase 0** (✅ Completada): Infraestructura, Docker, estructura de proyecto
-- **Fase 1** (✅ Completada): Autenticación JWT, hashing de contraseñas, blacklist
-- **Fase 2** (✅ Completada): Gestión de mascotas, uploads, middleware de auth, OCR mock
-- **Fase 3** (✅ Completada): Matchmaking y geolocalización avanzada, búsqueda SQL con filtros
-- **Fase 4**: Chat en tiempo real distribuido con WebSocket y Redis
+- **Fase 0** (Completada): Infraestructura, Docker, estructura de proyecto
+- **Fase 1** (Completada): Autenticación JWT, hashing de contraseñas, blacklist
+- **Fase 2** (Completada): Gestión de mascotas, uploads, middleware de auth, OCR mock
+- **Fase 3** (Completada): Matchmaking y geolocalización avanzada, búsqueda SQL con filtros
+- **Fase 4** (Completada): Chat distribuido con WebSocket, Redis Pub/Sub, seguridad R-SEC-05
 - **Fase 5**: Frontend con Flutter
 - **Fase 6**: Despliegue y orquestación (Kubernetes)
 
@@ -386,6 +422,6 @@ Este proyecto se desarrolla en fases:
 - [Fase 1](documentation/Fase-1.md): Autenticación, seguridad, JWT y Bcrypt
 - [Fase 2](documentation/Fase-2.md): Gestión de mascotas, uploads, middleware, OCR
 - [Fase 3](documentation/Fase-3.md): Matchmaking, geolocalización, búsqueda SQL
-- Próximas fases: Documentadas en `documentation/`
+- [Fase 4](documentation/Fase-4.md): Chat distribuido, WebSocket, Redis, seguridad real-time
 
 ## Autor
