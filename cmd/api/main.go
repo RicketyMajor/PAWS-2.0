@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	"github.com/RicketyMajor/PAWS-2.0/internal/transport/http/middleware"
+	"github.com/RicketyMajor/PAWS-2.0/internal/transport/websocket"
 )
 
 func main() {
@@ -28,12 +29,16 @@ func main() {
 	fileService := services.NewFileService()
 	identityService := services.NewIdentityService()
 	matchService := services.NewMatchService(petService)
+	hub := websocket.NewHub()
+	go hub.Run()
 
 	authHandler := transport.NewAuthHandler(authService)
 	petHandler := transport.NewPetHandler(petService)
 	uploadHandler := transport.NewUploadHandler(fileService)
 	identityHandler := transport.NewIdentityHandler(identityService)
 	matchHandler := transport.NewMatchHandler(matchService)
+	wsHandler := transport.NewWSHandler(hub)
+	
 
 	// 3. Configurar Router (Gin)
 r := gin.Default()
@@ -86,6 +91,12 @@ r := gin.Default()
 		{
 			verification.POST("/verify", identityHandler.Verify)
 		}
+
+		chat := api.Group("/chat")
+        chat.Use(middleware.AuthMiddleware())
+        {
+            chat.GET("/ws", wsHandler.HandleConnections) // Endpoint WebSocket
+        }
 	}
 
 	// 4. Arrancar Servidor
@@ -93,6 +104,6 @@ r := gin.Default()
 	if port == "" {
 		port = "8080"
 	}
-	log.Printf("🚀 Servidor PAWS corriendo en puerto %s", port)
+	log.Printf(" Servidor PAWS corriendo en puerto %s", port)
 	r.Run(":" + port)
 }

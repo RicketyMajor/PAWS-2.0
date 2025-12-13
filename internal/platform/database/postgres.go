@@ -33,18 +33,18 @@ func Connect() {
 	connection, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
 		// Si falla (ej: contraseña mal, docker apagado), el programa debe detenerse.
-		log.Fatal("❌ Error conectando a la base de datos: ", err)
+		log.Fatal("Error conectando a la base de datos: ", err)
 	}
 
 	// 4. Si funciona, guardamos la conexión en la variable global
 	DB = connection
-	log.Println("✅ Conexión a Base de Datos exitosa")
+	log.Println("Conexión a Base de Datos exitosa")
 }
 func Migrate() {
 	// Agregamos &domain.BlacklistEntry{} a la lista
 	err := DB.AutoMigrate(&domain.User{}, &domain.BlacklistEntry{}, &domain.Pet{})
 	if err != nil {
-		log.Fatal("❌ Error en la migración de base de datos: ", err)
+		log.Fatal("Error en la migración de base de datos: ", err)
 	}
-	log.Println("✅ Migración de base de datos completada")
+	log.Println("Migración de base de datos completada")
 }
