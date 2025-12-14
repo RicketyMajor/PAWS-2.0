@@ -8,10 +8,31 @@ PAWS conecta a personas que desean adoptar mascotas con organizaciones y rescati
 
 **Stack**: Go (Backend) + Flutter (Frontend) + PostgreSQL + Redis
 
+**Arquitectura**: Monorepo con separación Backend (cmd/, internal/) y Frontend (app/)
+
 ## Requisitos Previos
+
+### Backend
 
 - Docker y Docker Compose instalados
 - Go 1.18 o superior
+- WSL2 (si estás en Windows)
+
+### Frontend
+
+- Flutter SDK 3.24.0 o superior
+- Dart 3.10.4 o superior
+- Android Studio / VS Code con extensiones Flutter
+- Android Emulator o dispositivo físico
+
+### Desarrollo Híbrido (Windows + WSL2)
+
+- Windows 11/10 Pro (WSL2 disponible)
+- PowerShell (para ejecutar script netsh)
+- Emulador de Android en Hyper-V
+
+### General
+
 - Git
 
 ## Instalación y Ejecución
@@ -72,9 +93,53 @@ go run ./cmd/api/main.go
 Esperado:
 
 ```
- Conexión a Base de Datos exitosa
- Migración de base de datos completada
- Servidor PAWS corriendo en puerto 8080
+✅ Conexión a Base de Datos exitosa
+✅ Migración de base de datos completada
+🚀 Servidor PAWS corriendo en puerto 8080
+```
+
+### 5. Ejecutar Frontend Flutter (Fase 5)
+
+#### Windows + WSL2 Setup
+
+Si estás en Windows con WSL2 y Android Emulator:
+
+1. Ejecutar el script de puente de red:
+
+```bash
+cd app
+powershell -ExecutionPolicy Bypass -File conectar_backend.ps1
+```
+
+Esto crea un puente netsh que redirige puerto 8080 desde Windows a WSL2.
+
+2. Instalar dependencias Flutter:
+
+```bash
+cd app
+flutter pub get
+```
+
+3. Ejecutar en emulador o dispositivo:
+
+```bash
+# Listar dispositivos disponibles
+flutter devices
+
+# Ejecutar en emulador
+flutter run
+```
+
+Esperado: App se abre en emulador, se conecta a backend en WSL2.
+
+#### Linux/Mac Setup
+
+Si estás en Linux o Mac:
+
+```bash
+cd app
+flutter pub get
+flutter run
 ```
 
 ## Pruebas Rápidas de Endpoints
@@ -351,46 +416,78 @@ Consultar `documentation/` para documentación exhaustiva:
 - `Fase-2.md`: Gestión de mascotas, uploads, middleware, OCR mock
 - `Fase-3.md`: Matchmaking, geolocalización avanzada, búsqueda con filtros
 - `Fase-4.md`: Chat distribuido, WebSocket, Redis Pub/Sub, seguridad R-SEC-05
-- Próximas fases: Flutter frontend, Kubernetes
+- `Fase-5.md`: Frontend Flutter, Clean Architecture, BLoC, arquitectura híbrida
 
-Estructura actual:
+Estructura actual (Monorepo Backend + Frontend):
 
 ```
-PAWS-2.0/
+PAWS-2.0/                               # Raíz del monorepo
+├── app/                                # Frontend Flutter (FASE 5)
+│   ├── lib/
+│   │   ├── core/
+│   │   │   └── constants/
+│   │   │       └── api_constants.dart
+│   │   ├── features/
+│   │   │   ├── auth/
+│   │   │   │   ├── data/
+│   │   │   │   │   └── auth_repository.dart
+│   │   │   │   └── presentation/
+│   │   │   │       ├── bloc/
+│   │   │   │       │   └── login_bloc.dart
+│   │   │   │       └── screens/
+│   │   │   │           ├── login_screen.dart
+│   │   │   │           └── register_screen.dart
+│   │   │   ├── pets/
+│   │   │   │   ├── domain/
+│   │   │   │   │   └── pet_model.dart
+│   │   │   │   ├── data/
+│   │   │   │   │   └── pets_repository.dart
+│   │   │   │   └── presentation/
+│   │   │   │       ├── bloc/
+│   │   │   │       │   └── pets_bloc.dart
+│   │   │   │       └── screens/
+│   │   │   │           └── feed_screen.dart
+│   │   │   └── chat/
+│   │   │       ├── domain/
+│   │   │       │   └── message_model.dart
+│   │   │       ├── data/
+│   │   │       │   └── chat_repository.dart
+│   │   │       └── presentation/
+│   │   │           ├── bloc/
+│   │   │           │   └── chat_bloc.dart
+│   │   │           └── screens/
+│   │   │               └── chat_screen.dart
+│   │   └── main.dart
+│   ├── pubspec.yaml                   # Dependencias Flutter
+│   ├── conectar_backend.ps1           # Script netsh para puente red
+│   └── android/                       # Configuración Android
 ├── cmd/
-│   └── api/                 # Punto de entrada de la aplicación
+│   └── api/                           # Backend (FASE 0-4)
+│       └── main.go
 ├── internal/
 │   ├── core/
-│   │   ├── domain/          # Modelos (User, BlacklistEntry, Pet)
-│   │   └── services/        # Lógica de negocio
-│   │       ├── auth_service.go
-│   │       ├── pet_service.go
-│   │       ├── match_service.go       # (Fase 3)
-│   │       ├── file_service.go
-│   │       └── identity_service.go
+│   │   ├── domain/
+│   │   └── services/
 │   ├── transport/
-│   │   ├── http/            # Handlers y middleware HTTP
-│   │   │   ├── auth_handler.go
-│   │   │   ├── pet_handler.go
-│   │   │   ├── match_handler.go       # (Fase 3)
-│   │   │   ├── upload_handler.go
-│   │   │   ├── identity_handler.go
-│   │   │   ├── ws_handler.go          # (Fase 4 - Upgrade WebSocket)
-│   │   │   └── middleware/
-│   │   │       └── auth.go
-│   │   └── websocket/                 # (Fase 4 - Lógica WebSocket)
-│   │       ├── client.go              # Cliente WebSocket individual
-│   │       └── hub.go                 # Hub distribuido con Redis
+│   │   ├── http/
+│   │   └── websocket/
 │   └── platform/
-│       └── database/        # Conexión y migraciones de BD
-├── uploads/                 # Almacenamiento local de imágenes
-├── documentation/           # Documentación por fase
-├── docker-compose.yml       # Orquestación de servicios
-├── go.mod                   # Dependencias de Go
-├── go.sum                   # Lock de dependencias
-├── .env                     # Variables de entorno
-└── README.md               # Este archivo
+│       └── database/
+├── uploads/                           # Almacenamiento local de imágenes
+├── documentation/                     # Documentación por fase
+├── docker-compose.yml                 # Orquestación de servicios
+├── go.mod                             # Dependencias de Go
+├── go.sum
+├── .env                               # Variables de entorno
+└── README.md                          # Este archivo
 ```
+
+**Notas Arquitectónicas**:
+
+- Backend: Mantiene estructura tradicional en raíz (cmd/, internal/)
+- Frontend: Aislado en carpeta app/ (proyecto Flutter independiente)
+- Monorepo: Git único, pero dos proyectos completamente separados
+- Comunicación: API REST (Dio) + WebSocket (web_socket_channel)
 
 ## Detener Servicios
 
@@ -413,7 +510,7 @@ Este proyecto se desarrolla en fases:
 - **Fase 2** (Completada): Gestión de mascotas, uploads, middleware de auth, OCR mock
 - **Fase 3** (Completada): Matchmaking y geolocalización avanzada, búsqueda SQL con filtros
 - **Fase 4** (Completada): Chat distribuido con WebSocket, Redis Pub/Sub, seguridad R-SEC-05
-- **Fase 5**: Frontend con Flutter
+- **Fase 5** (Completada): Frontend Flutter, Clean Architecture, BLoC, arquitectura híbrida
 - **Fase 6**: Despliegue y orquestación (Kubernetes)
 
 ## Documentación Adicional
@@ -423,5 +520,6 @@ Este proyecto se desarrolla en fases:
 - [Fase 2](documentation/Fase-2.md): Gestión de mascotas, uploads, middleware, OCR
 - [Fase 3](documentation/Fase-3.md): Matchmaking, geolocalización, búsqueda SQL
 - [Fase 4](documentation/Fase-4.md): Chat distribuido, WebSocket, Redis, seguridad real-time
+- [Fase 5](documentation/Fase-5.md): Frontend Flutter, Clean Architecture, BLoC, arquitectura híbrida
 
 ## Autor
