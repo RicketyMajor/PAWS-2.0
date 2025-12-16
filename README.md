@@ -31,6 +31,13 @@ PAWS conecta a personas que desean adoptar mascotas con organizaciones y rescati
 - PowerShell (para ejecutar script netsh)
 - Emulador de Android en Hyper-V
 
+### Infraestructura (Fase 6)
+
+- Docker Desktop instalado (proporciona Kubernetes)
+- kubectl (cliente de línea de comandos para Kubernetes)
+- Kubernetes cluster habilitado en Docker Desktop
+- WSL2 configurado para acceder al cluster desde Linux
+
 ### General
 
 - Git
@@ -132,7 +139,62 @@ flutter run
 
 Esperado: App se abre en emulador, se conecta a backend en WSL2.
 
-#### Linux/Mac Setup
+### 5. Desplegar con Kubernetes (Fase 6)
+
+#### Opción A: Docker Compose (Local, Simple)
+
+```bash
+# Construir e iniciar todos los servicios
+docker compose up
+
+# Verificar que está corriendo
+docker compose ps
+
+# Acceso:
+# - Backend API: localhost:8080
+# - MinIO Console: localhost:9001
+# - PostgreSQL: localhost:5432
+# - Redis: localhost:6379
+
+# Detener
+docker compose down
+```
+
+#### Opción B: Kubernetes (Local Cluster)
+
+Primero, habilitar Kubernetes en Docker Desktop:
+
+1. Abrir Docker Desktop Preferences
+2. Ir a Kubernetes
+3. Habilitar "Enable Kubernetes"
+
+Luego, desplegar manifiestos:
+
+```bash
+# Construir imagen Docker
+docker build -t paws-backend:k8s .
+
+# Aplicar todos los manifiestos K8s
+kubectl apply -f k8s/
+
+# Verificar estado de Pods
+kubectl get pods
+kubectl get services
+
+# Ver logs del Backend
+kubectl logs deployment/backend-deployment
+
+# Acceso:
+# - Backend API: localhost:8080 (LoadBalancer)
+# - MinIO Console: localhost:9001 (LoadBalancer)
+# - PostgreSQL: acceso interno solo (ClusterIP)
+# - Redis: acceso interno solo (ClusterIP)
+
+# Limpiar
+kubectl delete -f k8s/
+```
+
+### 6. Ejecutar Frontend Flutter (Fase 5)
 
 Si estás en Linux o Mac:
 
@@ -142,7 +204,13 @@ flutter pub get
 flutter run
 ```
 
-## Pruebas Rápidas de Endpoints
+## Pruebas Rápidas de Endpoints (Backend)
+
+Usa cualquiera de estos endpoints dependiendo de cómo ejecutes el backend:
+
+- **Docker Compose**: localhost:8080
+- **Kubernetes**: localhost:8080 (LoadBalancer)
+- **Desarrollo** (go run): localhost:8080
 
 ### Registrarse
 
@@ -401,11 +469,22 @@ Respuesta exitosa (200):
 
 ## Acceso a Servicios
 
+### Docker Compose
+
 | Servicio   | URL                   | Credenciales                     |
 | ---------- | --------------------- | -------------------------------- |
 | pgAdmin    | http://localhost:5050 | admin@paws.com / admin           |
 | PostgreSQL | localhost:5433        | paws_user / paws_secret_password |
 | Redis CLI  | redis-cli -p 6379     | -                                |
+
+### Kubernetes
+
+| Servicio   | URL/Acceso                      | Tipo         |
+| ---------- | ------------------------------- | ------------ |
+| Backend    | localhost:8080                  | LoadBalancer |
+| MinIO      | localhost:9001 (console)        | LoadBalancer |
+| PostgreSQL | postgres-service:5432 (interno) | ClusterIP    |
+| Redis      | redis-service:6379 (interno)    | ClusterIP    |
 
 ## Estructura del Proyecto
 
@@ -473,9 +552,16 @@ PAWS-2.0/                               # Raíz del monorepo
 │   │   └── websocket/
 │   └── platform/
 │       └── database/
+├── k8s/                               # Manifiestos Kubernetes (FASE 6)
+│   ├── backend.yaml                   # Deployment + LoadBalancer Service
+│   ├── postgres.yaml                  # Deployment + ClusterIP Service
+│   ├── redis.yaml                     # Deployment + ClusterIP Service
+│   └── minio.yaml                     # Deployment + LoadBalancer Service
+├── Dockerfile                         # Containerización del Backend (FASE 6)
+├── .dockerignore                      # Archivos a ignorar en construcción
 ├── uploads/                           # Almacenamiento local de imágenes
 ├── documentation/                     # Documentación por fase
-├── docker-compose.yml                 # Orquestación de servicios
+├── docker-compose.yml                 # Orquestación de servicios (Docker)
 ├── go.mod                             # Dependencias de Go
 ├── go.sum
 ├── .env                               # Variables de entorno
@@ -488,6 +574,9 @@ PAWS-2.0/                               # Raíz del monorepo
 - Frontend: Aislado en carpeta app/ (proyecto Flutter independiente)
 - Monorepo: Git único, pero dos proyectos completamente separados
 - Comunicación: API REST (Dio) + WebSocket (web_socket_channel)
+- Containerización (Fase 6): Dockerfile para Backend, multi-stage build
+- Orquestación (Fase 6): Kubernetes manifiestos YAML en carpeta k8s/
+- Networking (Fase 6): LoadBalancer para API/MinIO, ClusterIP para Postgres/Redis
 
 ## Detener Servicios
 
@@ -511,7 +600,8 @@ Este proyecto se desarrolla en fases:
 - **Fase 3** (Completada): Matchmaking y geolocalización avanzada, búsqueda SQL con filtros
 - **Fase 4** (Completada): Chat distribuido con WebSocket, Redis Pub/Sub, seguridad R-SEC-05
 - **Fase 5** (Completada): Frontend Flutter, Clean Architecture, BLoC, arquitectura híbrida
-- **Fase 6**: Despliegue y orquestación (Kubernetes)
+- **Fase 6** (Completada): Dockerización, Kubernetes, orquestación de contenedores
+- **Fase 7** (Próximamente): CI/CD pipeline, deployment automatizado
 
 ## Documentación Adicional
 
@@ -521,5 +611,6 @@ Este proyecto se desarrolla en fases:
 - [Fase 3](documentation/Fase-3.md): Matchmaking, geolocalización, búsqueda SQL
 - [Fase 4](documentation/Fase-4.md): Chat distribuido, WebSocket, Redis, seguridad real-time
 - [Fase 5](documentation/Fase-5.md): Frontend Flutter, Clean Architecture, BLoC, arquitectura híbrida
+- [Fase 6](documentation/Fase-6.md): Dockerización, Kubernetes, orquestación, LoadBalancer, ClusterIP
 
 ## Autor
