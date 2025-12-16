@@ -46,6 +46,26 @@ spec:
               value: "paws-db"
             - name: DB_SSL_MODE
               value: "disable"
-            # Redis y Minio los dejaremos pendientes por ahora para probar conexión básica
+
             - name: JWT_SECRET
               value: "secreto_k8s"
+
+            - name: REDIS_HOST
+              value: "redis-service" # Nombre del Service en redis.yaml
+            - name: REDIS_PORT
+              value: "6379"
+            - name: REDIS_PASSWORD
+              value: ""
+
+            - name: AWS_ENDPOINT
+              value: "http://minio-service:9000"
+            - name: AWS_ACCESS_KEY_ID
+              value: "minioadmin"
+            - name: AWS_SECRET_ACCESS_KEY
+              value: "minioadmin"
+            - name: AWS_REGION
+              value: "us-east-1"
+            - name: AWS_BUCKET
+              value: "paws-bucket"
+            - name: AWS_DISABLE_SSL
+              value: "true"
