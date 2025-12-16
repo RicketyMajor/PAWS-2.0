@@ -15,8 +15,9 @@ import (
 
 func main() {
 	// 1. Configuración inicial
+	// CÓDIGO CORREGIDO (RESILIENTE)
 	if err := godotenv.Load(); err != nil {
-		log.Fatal("Error cargando .env")
+		log.Println("No se encontró archivo .env, usando variables de entorno del sistema")
 	}
 
 	database.Connect()

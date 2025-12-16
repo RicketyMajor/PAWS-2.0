@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+spec:
+  type: LoadBalancer # <--- Esto permite entrar desde Windows (localhost)
+  selector:
+    app: backend
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-deployment
+spec:
+  replicas: 1 # Podríamos poner 3 y tener balanceo de carga real
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+        - name: backend
+          image: paws-backend:k8s # La imagen que acabamos de construir
+          imagePullPolicy: Never # <--- VITAL para desarrollo local
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: DB_HOST
+              value: "postgres-service" # Apunta al Service de la DB
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_USER
+              value: "postgres"
+            - name: DB_PASSWORD
+              value: "password"
+            - name: DB_NAME
+              value: "paws-db"
+            - name: DB_SSL_MODE
+              value: "disable"
+            # Redis y Minio los dejaremos pendientes por ahora para probar conexión básica
+            - name: JWT_SECRET
+              value: "secreto_k8s"

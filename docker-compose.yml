@@ -1,54 +1,64 @@
-version: '3.8'
-
 services:
-  # Base de Datos Principal (PostgreSQL + PostGIS)
-  # Usamos la imagen de PostGIS directamente para soportar mapas y geolocalización.
+  # 1. BASE DE DATOS
   db:
-    image: postgis/postgis:15-3.3
-    container_name: paws_db
+    image: postgres:15-alpine
+    container_name: paws-db
     restart: always
     environment:
-      POSTGRES_USER: paws_user
-      POSTGRES_PASSWORD: paws_secret_password
-      POSTGRES_DB: paws_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: paws-db
     ports:
-    - "5433:5432"  # El primero es el de tu PC, el segundo es el del contenedor
+      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    networks:
-      - paws_network
 
-  # Cache y Mensajería (Redis)
-  # Crucial para el Chat en tiempo real y validar la Blacklist rápidamente.
+  # 2. CACHÉ (REDIS)
   redis:
     image: redis:alpine
-    container_name: paws_redis
+    container_name: paws-redis
     restart: always
     ports:
       - "6379:6379"
-    volumes:
-      - redis_data:/data
-    networks:
-      - paws_network
 
-  # (Opcional) Interfaz visual para ver la BD sin instalar nada extra
-  pgadmin:
-    image: dpage/pgadmin4
-    container_name: paws_pgadmin
-    environment:
-      PGADMIN_DEFAULT_EMAIL: admin@paws.com
-      PGADMIN_DEFAULT_PASSWORD: admin
+  # 3. ALMACENAMIENTO (MINIO - S3 Compatible)
+  minio:
+    image: minio/minio
+    container_name: paws-minio
+    restart: always
     ports:
-      - "5050:80"
+      - "9000:9000" # API S3
+      - "9001:9001" # Consola Web
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+
+  # 4. BACKEND (TU APP GO)
+  backend:
+    build: . # Construye usando el Dockerfile en la carpeta actual
+    container_name: paws-backend
+    restart: always
     depends_on:
       - db
-    networks:
-      - paws_network
+      - redis
+    ports:
+      - "8080:8080" # Exponemos el puerto al exterior (Windows)
+    environment:
+      PORT: 8080
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: password
+      DB_NAME: paws-db
+      DB_SSL_MODE: disable  # <--- ¡IMPORTANTE! AGREGA ESTA LÍNEA
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ""
+      JWT_SECRET: "tu_secreto" 
 
 volumes:
   postgres_data:
-  redis_data:
-
-networks:
-  paws_network:
-    driver: bridge
+  minio_data:
