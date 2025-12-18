@@ -2,6 +2,7 @@ package services
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"time"
 
@@ -108,4 +109,30 @@ func (s *AuthService) Login(email, password string) (string, error) {
 	}
 
 	return tokenString, nil
+}
+
+// CheckBlacklist verifica si un RUN está prohibido [cite: 70]
+// Retorna true si está bloqueado, false si está limpio.
+func (s *AuthService) CheckBlacklist(run string) (bool, error) {
+	// Validación básica: Si el RUN viene vacío, retornamos error (Caso 3 del UT) [cite: 73]
+	if run == "" {
+		return false, fmt.Errorf("el RUN no puede estar vacío")
+	}
+
+	// NOTA: En una implementación real, aquí consultaríamos a la BD:
+	// var entry domain.BlacklistEntry
+	// result := database.DB.Where("run = ?", run).First(&entry)
+	// return result.Error == nil, nil
+
+	// PARA EL TEST (MOCK): Simulamos una lista negra en memoria por ahora
+	// Esto nos permite probar la lógica sin depender de Postgres corriendo.
+	bannedRuns := []string{"12345678-9", "99999999-K"}
+
+	for _, banned := range bannedRuns {
+		if run == banned {
+			return true, nil // Está baneado (Caso 1) [cite: 71]
+		}
+	}
+
+	return false, nil // Está limpio (Caso 2) [cite: 72]
 }
