@@ -17,6 +17,13 @@ PAWS conecta a personas que desean adoptar mascotas con organizaciones y rescati
 - Docker y Docker Compose instalados
 - Go 1.18 o superior
 - WSL2 (si estás en Windows)
+- Git (para clonar el repo)
+
+### Backend Testing (Fase 7)
+
+- Go testing tools (incluido en Go SDK)
+- GitHub Actions habilitado en el repositorio
+- (Opcional) golangci-lint para análisis estático local
 
 ### Frontend
 
@@ -100,10 +107,35 @@ go run ./cmd/api/main.go
 Esperado:
 
 ```
-✅ Conexión a Base de Datos exitosa
-✅ Migración de base de datos completada
-🚀 Servidor PAWS corriendo en puerto 8080
+Conexión a Base de Datos exitosa
+Migración de base de datos completada
+Servidor PAWS corriendo en puerto 8080
 ```
+
+### 4.1 Testing del Backend (Fase 7)
+
+Antes de hacer un PR, asegúrate de que los tests pasen:
+
+```bash
+# Ejecutar todos los tests unitarios
+go test -v ./...
+
+# Ejecutar tests con cobertura
+go test -cover ./...
+
+# Generar reporte HTML de cobertura
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out -o coverage.html
+```
+
+Esperado:
+
+```
+ok      github.com/RicketyMajor/PAWS-2.0/internal/core/services  0.005s
+Todos los tests pasaron!
+```
+
+**GitHub Actions**: Cuando hagas push, GitHub Actions ejecuta automáticamente los tests. Si algo falla, tu PR quedará en rojo (bloqueado para merge).
 
 ### 5. Ejecutar Frontend Flutter (Fase 5)
 
@@ -139,7 +171,7 @@ flutter run
 
 Esperado: App se abre en emulador, se conecta a backend en WSL2.
 
-### 5. Desplegar con Kubernetes (Fase 6)
+### 6. Desplegar con Kubernetes (Fase 6)
 
 #### Opción A: Docker Compose (Local, Simple)
 
@@ -194,7 +226,7 @@ kubectl logs deployment/backend-deployment
 kubectl delete -f k8s/
 ```
 
-### 6. Ejecutar Frontend Flutter (Fase 5)
+### 7. Ejecutar Frontend Flutter (Fase 5)
 
 Si estás en Linux o Mac:
 
@@ -203,6 +235,42 @@ cd app
 flutter pub get
 flutter run
 ```
+
+## Estrategia de Testing (Fase 7)
+
+### Unit Tests
+
+PAWS implementa unit tests para lógica crítica (UT-SEC-01):
+
+```bash
+# Ejecutar unit tests
+go test -v ./internal/core/services/
+
+# Resultado esperado
+--- PASS: TestCheckBlacklist
+--- PASS: TestDummy
+ok      github.com/RicketyMajor/PAWS-2.0/internal/core/services  0.005s
+```
+
+### GitHub Actions (CI/CD)
+
+El pipeline ejecuta automáticamente:
+
+1. `go build -v ./cmd/api` (Verifica compilación)
+2. `go test -v ./...` (Ejecuta todos los tests)
+3. Resultado en PR (verde = OK, rojo = falla)
+
+**Archivo**: [.github/workflows/ci.yml](.github/workflows/ci.yml)
+
+### Tests de Seguridad (Futuro)
+
+En Fase 8 agregaremos:
+
+- SQL Injection testing (SECT-01)
+- File Upload validation (SECT-02)
+- Authentication bypass attempts
+
+Consultar [Fase-7.md](documentation/Fase-7.md) para detalles exhaustivos.
 
 ## Pruebas Rápidas de Endpoints (Backend)
 
@@ -547,11 +615,18 @@ PAWS-2.0/                               # Raíz del monorepo
 │   ├── core/
 │   │   ├── domain/
 │   │   └── services/
+│   │       ├── auth_service.go                        # (Fase 1)
+│   │       ├── auth_service_test.go                   # ← NUEVO (Fase 7)
+│   │       ├── math_test.go                           # ← NUEVO (Fase 7)
+│   │       └── ...
 │   ├── transport/
 │   │   ├── http/
 │   │   └── websocket/
 │   └── platform/
 │       └── database/
+├── .github/                           # GitHub Actions (FASE 7)
+│   └── workflows/
+│       └── ci.yml                     # CI/CD Pipeline
 ├── k8s/                               # Manifiestos Kubernetes (FASE 6)
 │   ├── backend.yaml                   # Deployment + LoadBalancer Service
 │   ├── postgres.yaml                  # Deployment + ClusterIP Service
@@ -601,7 +676,8 @@ Este proyecto se desarrolla en fases:
 - **Fase 4** (Completada): Chat distribuido con WebSocket, Redis Pub/Sub, seguridad R-SEC-05
 - **Fase 5** (Completada): Frontend Flutter, Clean Architecture, BLoC, arquitectura híbrida
 - **Fase 6** (Completada): Dockerización, Kubernetes, orquestación de contenedores
-- **Fase 7** (Próximamente): CI/CD pipeline, deployment automatizado
+- **Fase 7** (Completada): CI/CD pipeline, testing unitario, calidad de código
+- **Fase 8**: Evil PAWS - Seguridad robusta, verificación de identidad, anti-multicuentas
 
 ## Documentación Adicional
 
@@ -612,5 +688,6 @@ Este proyecto se desarrolla en fases:
 - [Fase 4](documentation/Fase-4.md): Chat distribuido, WebSocket, Redis, seguridad real-time
 - [Fase 5](documentation/Fase-5.md): Frontend Flutter, Clean Architecture, BLoC, arquitectura híbrida
 - [Fase 6](documentation/Fase-6.md): Dockerización, Kubernetes, orquestación, LoadBalancer, ClusterIP
+- [Fase 7](documentation/Fase-7.md): CI/CD pipeline, testing unitario, GitHub Actions, calidad de código
 
 ## Autor
