@@ -1,0 +1,42 @@
+name: PAWS Backend CI
+
+# ¿Cuándo se activa el robot?
+on:
+  push:
+    branches: ["main", "develop"] # Al hacer push a estas ramas
+    paths:
+      - "**.go" # Solo si cambiamos archivos Go
+      - "go.mod"
+  pull_request:
+    branches: ["main", "develop"]
+
+jobs:
+  # Definimos el trabajo de "Calidad"
+  quality-check:
+    name: Build & Test
+    runs-on: ubuntu-latest # Usamos servidores Linux de GitHub
+
+    steps:
+      # 1. Bajar tu código al servidor
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Instalar Go en el servidor
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23" # La versión que usas en tu go.mod
+
+      # 3. Bajar librerías (GORM, Gin, etc.)
+      - name: Install Dependencies
+        run: go mod download
+
+      # 4. Verificar que el código compila (Build)
+      # Esto detecta errores de sintaxis graves antes de testear
+      - name: Verify Build
+        run: go build -v ./cmd/api
+
+      # 5. Correr los Tests Unitarios
+      # Aquí es donde se ejecutarían los casos como UT-SEC-01
+      - name: Run Unit Tests
+        run: go test -v ./...
