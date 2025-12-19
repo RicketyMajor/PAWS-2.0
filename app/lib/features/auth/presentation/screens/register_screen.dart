@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:dio/dio.dart';
+import 'package:image_picker/image_picker.dart'; // <--- FALTABA ESTA IMPORTACIÓN
 import '../../data/auth_repository.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -11,14 +13,16 @@ class RegisterScreen extends StatefulWidget {
 
 class _RegisterScreenState extends State<RegisterScreen> {
   final _nameController = TextEditingController();
-  final _runController =
-      TextEditingController(); // <--- NUEVO: Controlador para RUN
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  // CORREGIDO: _runController estaba declarado dos veces. Dejamos solo uno.
+  final _runController = TextEditingController();
+
   bool _isLoading = false;
+  bool _isVerifying = false;
+  final ImagePicker _picker = ImagePicker();
 
   Future<void> _submitRegister() async {
-    // Validación simple antes de enviar
     if (_nameController.text.isEmpty || _runController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Por favor completa todos los campos')),
@@ -28,12 +32,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     setState(() => _isLoading = true);
     try {
-      // Llamamos al método actualizado con los parámetros nombrados
       await context.read<AuthRepository>().register(
         email: _emailController.text,
         password: _passwordController.text,
         name: _nameController.text,
-        run: _runController.text, // <--- Enviamos el RUN
+        run: _runController.text,
       );
 
       if (mounted) {
@@ -47,7 +50,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
     } catch (e) {
       if (mounted) {
-        // Aquí se mostrará el error del backend de forma más limpia
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(e.toString().replaceAll("Exception: ", "")),
@@ -57,6 +59,62 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _scanIdentity() async {
+    try {
+      // 1. Abrir Galería o Cámara
+      final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
+      if (image == null) return;
+
+      setState(() => _isVerifying = true);
+
+      // 2. Preparar el archivo
+      String fileName = image.path.split('/').last;
+      FormData formData = FormData.fromMap({
+        "document": await MultipartFile.fromFile(
+          image.path,
+          filename: fileName,
+        ),
+      });
+
+      // 3. Enviar al Backend (Evil PAWS)
+      // Nota: 10.0.2.2 es para Emulador Android. Si usas físico, usa tu IP local.
+      var response = await Dio().post(
+        'http://10.0.2.2:8080/api/v1/verification/verify',
+        data: formData,
+      );
+
+      // 4. Procesar Respuesta
+      if (response.statusCode == 200) {
+        // Aseguramos que la respuesta sea un Map y extraemos el dato
+        String extractedRun = response.data['extracted_run'];
+
+        setState(() {
+          _runController.text = extractedRun;
+          _isVerifying = false;
+        });
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("✅ Identidad Verificada: RUN detectado"),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      setState(() => _isVerifying = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Error verificando documento: $e"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -83,19 +141,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ),
               const SizedBox(height: 16),
 
-              // 2. Campo RUN (Nuevo)
-              TextField(
-                controller: _runController,
-                decoration: const InputDecoration(
-                  labelText: 'RUN (Sin puntos ni guión)',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.badge), // Icono de credencial
-                ),
-                keyboardType: TextInputType.number, // Teclado numérico
-              ),
-              const SizedBox(height: 16),
-
-              // 3. Email
+              // 2. Email
               TextField(
                 controller: _emailController,
                 decoration: const InputDecoration(
@@ -107,7 +153,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ),
               const SizedBox(height: 16),
 
-              // 4. Password
+              // 3. Password
               TextField(
                 controller: _passwordController,
                 obscureText: true,
@@ -119,7 +165,71 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ),
               const SizedBox(height: 24),
 
-              // Botón
+              // --- SECCIÓN DE VERIFICACIÓN (OCR) ---
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.grey[100],
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey[300]!),
+                ),
+                child: Column(
+                  children: [
+                    const Text(
+                      "Verificación de Identidad",
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black54,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Center(
+                      child: ElevatedButton.icon(
+                        onPressed: _isVerifying ? null : _scanIdentity,
+                        icon: _isVerifying
+                            ? Container(
+                                width: 24,
+                                height: 24,
+                                child: const CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Icon(Icons.camera_alt),
+                        label: Text(
+                          _isVerifying
+                              ? "Analizando..."
+                              : "Escanear Cédula (OCR)",
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.deepPurple,
+                          foregroundColor: Colors.white,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    // Campo RUN (Autocompletable)
+                    TextFormField(
+                      controller: _runController,
+                      decoration: const InputDecoration(
+                        labelText: 'RUN',
+                        hintText: 'Se completará automáticamente',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.badge),
+                        fillColor: Colors.white,
+                        filled: true,
+                      ),
+                      readOnly:
+                          false, // Permitimos editar si el OCR falla un poco
+                    ),
+                  ],
+                ),
+              ),
+
+              // -------------------------------------
+              const SizedBox(height: 24),
+
+              // Botón Registrar
               _isLoading
                   ? const CircularProgressIndicator()
                   : FilledButton(
