@@ -3,50 +3,60 @@ package main
 import (
 	"log"
 	"os"
+
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/domain"
-	"github.com/RicketyMajor/PAWS-2.0/internal/core/services"       // Ajustar Import
-	"github.com/RicketyMajor/PAWS-2.0/internal/platform/database"   // Ajustar Import
-	transport "github.com/RicketyMajor/PAWS-2.0/internal/transport/http" // Ajustar Import (alias transport)
-	"github.com/gin-gonic/gin"
-	"github.com/joho/godotenv"
+	"github.com/RicketyMajor/PAWS-2.0/internal/core/services"
+	"github.com/RicketyMajor/PAWS-2.0/internal/platform/database"
+	
+	// Unificamos el alias a 'httpTransport' para evitar duplicados
+	httpTransport "github.com/RicketyMajor/PAWS-2.0/internal/transport/http" 
 	"github.com/RicketyMajor/PAWS-2.0/internal/transport/http/middleware"
 	"github.com/RicketyMajor/PAWS-2.0/internal/transport/websocket"
-	httpTransport "github.com/RicketyMajor/PAWS-2.0/internal/transport/http"
+
+	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 )
 
 func main() {
 	// 1. Configuración inicial
-	// CÓDIGO CORREGIDO (RESILIENTE)
 	if err := godotenv.Load(); err != nil {
 		log.Println("No se encontró archivo .env, usando variables de entorno del sistema")
 	}
 
 	database.Connect()
-	database.DB.AutoMigrate(&domain.User{}, &domain.BlacklistEntry{}, &domain.Report{}) // <--- ACTUALIZAR ESTO
-	reportService := services.NewReportService(database.DB, authService)
 
-	// 2. Inyección de Dependencias
-	// Inicializamos el servicio y el handler
-	authService := services.NewAuthService(nil)
+	// 2. Inyección de Dependencias (ORDEN CORREGIDO)
+	
+	// A. Servicios Base (Independientes)
+	authService := services.NewAuthService(nil) // Creamos este PRIMERO
 	petService := services.NewPetService()
 	fileService := services.NewFileService()
 	identityService := services.NewIdentityService()
+	
+	// B. Migraciones y Servicios Dependientes
+	// Agregamos Report a la migración
+	database.DB.AutoMigrate(&domain.User{}, &domain.BlacklistEntry{}, &domain.Report{}) 
+	
+	// ReportService necesita authService, por eso va después
+	reportService := services.NewReportService(database.DB, authService) 
 	matchService := services.NewMatchService(petService)
+	
+	// C. Websocket Hub
 	hub := websocket.NewHub()
 	go hub.Run()
 
-	authHandler := transport.NewAuthHandler(authService)
-	petHandler := transport.NewPetHandler(petService)
-	uploadHandler := transport.NewUploadHandler(fileService)
+	// 3. Inicialización de Handlers (Usando el alias unificado httpTransport)
+	authHandler := httpTransport.NewAuthHandler(authService)
+	petHandler := httpTransport.NewPetHandler(petService)
+	uploadHandler := httpTransport.NewUploadHandler(fileService)
 	identityHandler := httpTransport.NewIdentityHandler(identityService)
-	matchHandler := transport.NewMatchHandler(matchService)
-	wsHandler := transport.NewWSHandler(hub)
+	matchHandler := httpTransport.NewMatchHandler(matchService)
+	wsHandler := httpTransport.NewWSHandler(hub)
 	reportHandler := httpTransport.NewReportHandler(reportService)
-	
 
-	// 3. Configurar Router (Gin)
-r := gin.Default()
-	r.Static("/uploads", "./uploads")
+	// 4. Configurar Router (Gin)
+	r := gin.Default()
+	r.Static("/uploads", "./uploads") // Servir imágenes estáticas
 
 	api := r.Group("/api/v1")
 	{
@@ -54,7 +64,6 @@ r := gin.Default()
 		// RUTAS PÚBLICAS (Sin Token)
 		// ----------------------------
 		
-		// Auth
 		auth := api.Group("/auth")
 		{
 			auth.POST("/register", authHandler.Register)
@@ -62,57 +71,54 @@ r := gin.Default()
 		}
 
 		// Mascotas (Lectura)
-		// Creamos un grupo para las rutas GET que cualquiera puede ver
 		petsPublic := api.Group("/pets")
 		{
-			petsPublic.GET("/search", petHandler.Search) // Buscador
+			petsPublic.GET("/search", petHandler.Search)
 			petsPublic.GET("/match", matchHandler.GetMatches)
-			petsPublic.GET("", petHandler.GetAll)        // Ver todas
+			petsPublic.GET("", petHandler.GetAll)
+		}
+
+		// Verificación de Identidad (Pública para registro)
+		verification := api.Group("/verification")
+		{
+			verification.POST("/verify", identityHandler.Verify)
 		}
 
 		// ----------------------------
 		// RUTAS PROTEGIDAS (Con Token)
 		// ----------------------------
 		
+		// Grupo general protegido
+		protected := api.Group("/")
+		protected.Use(middleware.AuthMiddleware()) // <--- IMPORTANTE: Descomentado para seguridad
+		{
+			// Reportes (Requiere saber quién reporta)
+			protected.POST("/report", reportHandler.Create)
+			
+			// Archivos
+			protected.POST("/files/upload", uploadHandler.Upload)
+		}
+
 		// Mascotas (Escritura)
-		// Usamos el MISMO prefijo "/pets" pero en un grupo diferente con middleware
 		petsProtected := api.Group("/pets")
 		petsProtected.Use(middleware.AuthMiddleware())
 		{
-			petsProtected.POST("", petHandler.Create) // Crear (Solo usuarios)
+			petsProtected.POST("", petHandler.Create)
 		}
 
-		// Archivos
-		files := api.Group("/files")
-		files.Use(middleware.AuthMiddleware())
-		{
-			files.POST("/upload", uploadHandler.Upload)
-		}
-
-		// Verificación de Identidad
-		verification := api.Group("/verification")
-		{
-			verification.POST("/verify", identityHandler.Verify)
-		}
-
+		// Chat
 		chat := api.Group("/chat")
-        chat.Use(middleware.AuthMiddleware())
-        {
-            chat.GET("/ws", wsHandler.HandleConnections) // Endpoint WebSocket
-        }
-		protected := api.Group("/") 
-        // protected.Use(middleware.AuthMiddleware()) <--- Si tienes middleware, úsalo aquí
-        {
-            // Endpoint para reportar
-            protected.POST("/report", reportHandler.Create) // <--- NUEVO
-        }
+		chat.Use(middleware.AuthMiddleware())
+		{
+			chat.GET("/ws", wsHandler.HandleConnections)
+		}
 	}
 
-	// 4. Arrancar Servidor
+	// 5. Arrancar Servidor
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
-	log.Printf(" Servidor PAWS corriendo en puerto %s", port)
+	log.Printf("🚀 Servidor PAWS corriendo en puerto %s", port)
 	r.Run(":" + port)
 }
