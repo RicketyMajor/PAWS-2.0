@@ -1,48 +1,84 @@
 package services
 
 import (
-	"errors"
-	"log"
-	"time"
+	"context"
+	"fmt"
+	"mime/multipart"
+	"path/filepath"
 
-	"github.com/RicketyMajor/PAWS-2.0/internal/core/domain"
-	"github.com/RicketyMajor/PAWS-2.0/internal/platform/database"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
-type IdentityService struct{}
-
-func NewIdentityService() *IdentityService {
-	return &IdentityService{}
+type IdentityService struct {
+	minioClient *minio.Client
+	bucketName  string
 }
 
-// VerifyIdentity simula el proceso de OCR y validación biométrica
-func (s *IdentityService) VerifyIdentity(userID uint, imageURL string) error {
-	// 1. Simulación de Latencia (Farming: Aquí iría la llamada a la IA de Python en el futuro)
-	// Hacemos que el sistema espere 2 segundos para parecer que está procesando la imagen.
-	time.Sleep(2 * time.Second)
+func NewIdentityService() *IdentityService {
+	// ... (configuración del cliente igual que antes) ...
+	endpoint := "minio-service:9000"
+	accessKeyID := "minioadmin"
+	secretAccessKey := "minioadmin"
+	useSSL := false
 
-	log.Printf("[MOCK OCR] Procesando imagen: %s para usuario %d", imageURL, userID)
-
-	// 2. Validación "Fake"
-	// En un sistema real, aquí la IA nos diría si leyó el RUT correctamente.
-	// Por ahora, solo validamos que la URL no esté vacía.
-	if imageURL == "" {
-		return errors.New("no se ha proporcionado una imagen del documento")
+	client, err := minio.New(endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(accessKeyID, secretAccessKey, ""),
+		Secure: useSSL,
+	})
+	if err != nil {
+		fmt.Println("Error conectando a MinIO:", err)
+		return nil // O manejar mejor el error
 	}
 
-	// 3. Buscar al usuario
-	var user domain.User
-	if err := database.DB.First(&user, userID).Error; err != nil {
-		return errors.New("usuario no encontrado")
+	// --- NUEVA LÓGICA DE AUTOMATIZACIÓN ---
+	bucketName := "paws-identity"
+	ctx := context.Background()
+	
+	// 1. Preguntamos si el bucket existe
+	exists, errBucket := client.BucketExists(ctx, bucketName)
+	if errBucket == nil && !exists {
+		// 2. Si no existe, lo creamos automáticamente
+		errCreate := client.MakeBucket(ctx, bucketName, minio.MakeBucketOptions{})
+		if errCreate != nil {
+			fmt.Println("Error creando bucket automático:", errCreate)
+		} else {
+			fmt.Println("Bucket 'paws-identity' creado automáticamente")
+		}
+	}
+	// --------------------------------------
+
+	return &IdentityService{
+		minioClient: client,
+		bucketName:  bucketName,
+	}
+}
+
+// VerifyIdentity recibe la imagen, la guarda y (simula) extraer el RUT
+func (s *IdentityService) VerifyIdentity(file *multipart.FileHeader) (string, error) {
+	// 1. Abrir el archivo
+	src, err := file.Open()
+	if err != nil {
+		return "", err
+	}
+	defer src.Close()
+
+	// 2. Generar nombre único para el archivo (ej: id_scan_12345.jpg)
+	filename := fmt.Sprintf("id_scan_%s", filepath.Base(file.Filename))
+
+	// 3. Subir a MinIO (Bucket Privado)
+	ctx := context.Background()
+	_, err = s.minioClient.PutObject(ctx, s.bucketName, filename, src, file.Size, minio.PutObjectOptions{
+		ContentType: file.Header.Get("Content-Type"),
+	})
+	if err != nil {
+		return "", fmt.Errorf("error subiendo documento: %v", err)
 	}
 
-	// 4. Actualizar estado (R-SEC-01 cumplido)
-	// GORM update: actualizamos solo el campo IsVerified
-	user.IsVerified = true
-	if err := database.DB.Save(&user).Error; err != nil {
-		return err
-	}
-
-	log.Printf("✅ [MOCK OCR] Identidad verificada para el RUN: %s", user.Run)
-	return nil
+	// 4. MOCK OCR: Aquí llamaríamos a Google Vision API o Tesseract.
+	// Por ahora, simularemos que leímos el RUT exitosamente del nombre del archivo o devolvemos uno fijo.
+	// Simulamos que el sistema leyó el RUT que querías probar.
+	extractedRun := "11.111.111-1" 
+	
+	return extractedRun, nil
 }

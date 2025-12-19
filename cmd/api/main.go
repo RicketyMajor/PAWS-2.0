@@ -88,7 +88,6 @@ r := gin.Default()
 
 		// Verificación de Identidad
 		verification := api.Group("/verification")
-		verification.Use(middleware.AuthMiddleware())
 		{
 			verification.POST("/verify", identityHandler.Verify)
 		}

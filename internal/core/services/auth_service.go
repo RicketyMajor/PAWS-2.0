@@ -25,53 +25,44 @@ func NewAuthService(dbOrNil *gorm.DB) *AuthService {
 	return &AuthService{db: dbOrNil}
 }
 
-// Register crea un nuevo usuario aplicando reglas de seguridad
-func (s *AuthService) Register(name, email, password, run, role string) (*domain.User, error) {
-	// --- NUEVO: Validación R-SEC-03 (Blacklist) ---
-	var blacklistEntry domain.BlacklistEntry
-	// Buscamos si el RUN está en la lista negra
-	if err := database.DB.Where("run = ?", run).First(&blacklistEntry).Error; err == nil {
-		// Si err == nil, significa que LO ENCONTRÓ. ¡Peligro!
-		return nil, errors.New("registro rechazado: este RUN se encuentra en nuestra lista de bloqueo por: " + blacklistEntry.Reason)
+// Register crea un nuevo usuario, pero primero pasa por los filtros de seguridad (Evil PAWS)
+func (s *AuthService) Register(email, password, name, run, role string) error {
+	// 1. SEGURIDAD: Verificar si está en la Blacklist (R-SEC-03)
+	isBanned, err := s.CheckBlacklist(run)
+	if err != nil {
+		// Si falla la verificación (ej: DB caída), por seguridad rechazamos o logueamos error.
+		// Para este MVP, retornamos error.
+		return fmt.Errorf("error verificando antecedentes: %v", err)
 	}
-	// 1. Verificar si el RUN ya existe (R-SEC-02)
+	if isBanned {
+		// Mensaje genérico para no dar pistas, o específico si quieres ser claro.
+		return fmt.Errorf("registro denegado por políticas de seguridad (Evil PAWS)")
+	}
+
+	// 2. SEGURIDAD: Verificar Multicuentas (R-SEC-02)
+	// Buscamos si ya existe un usuario con ese RUN, independientemente del correo.
 	var existingUser domain.User
-	// Buscamos en la BD si alguien tiene ese RUN
-	result := database.DB.Where("run = ?", run).First(&existingUser)
+	result := s.db.Where("run = ?", run).First(&existingUser)
 	if result.Error == nil {
-		// Si NO hubo error al buscar, significa que LO ENCONTRÓ -> Bloqueamos
-		return nil, errors.New("el RUN ya está registrado en el sistema")
+		// Si NO hubo error al buscar, significa que LO ENCONTRÓ.
+		return fmt.Errorf("ya existe una cuenta asociada al RUN %s", run)
 	}
 
-	// 2. Verificar si el Email ya existe
-	result = database.DB.Where("email = ?", email).First(&existingUser)
-	if result.Error == nil {
-		return nil, errors.New("el correo electrónico ya está registrado")
-	}
-
-	// 3. Hashear la contraseña (Seguridad básica)
+	// 3. Si pasa los filtros, procedemos a crear el usuario (Hash password, etc.)
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	// 4. Crear el objeto Usuario
-	newUser := domain.User{
-		Name:       name,
-		Email:      email,
-		Run:        run,
-		Password:   string(hashedPassword),
-		Role:       role,
-		IsVerified: false, // Por defecto no verificado (R-SEC-01)
-		IsBanned:   false,
+	user := domain.User{
+		Email:    email,
+		Password: string(hashedPassword),
+		Name:     name,
+		Run:      run,
+		Role:     role,
 	}
 
-	// 5. Guardar en Base de Datos
-	if err := database.DB.Create(&newUser).Error; err != nil {
-		return nil, err
-	}
-
-	return &newUser, nil
+	return s.db.Create(&user).Error
 }
 
 func (s *AuthService) Login(email, password string) (string, error) {

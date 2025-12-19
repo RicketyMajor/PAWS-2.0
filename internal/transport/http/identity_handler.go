@@ -2,14 +2,9 @@ package http
 
 import (
 	"net/http"
-
-	"github.com/RicketyMajor/PAWS-2.0/internal/core/services" // <--- CAMBIA ESTO
 	"github.com/gin-gonic/gin"
+	"github.com/RicketyMajor/PAWS-2.0/internal/core/services"
 )
-
-type VerificationRequest struct {
-	DocumentImageURL string `json:"document_image_url" binding:"required"`
-}
 
 type IdentityHandler struct {
 	service *services.IdentityService
@@ -20,30 +15,24 @@ func NewIdentityHandler(service *services.IdentityService) *IdentityHandler {
 }
 
 func (h *IdentityHandler) Verify(c *gin.Context) {
-	// 1. Obtener ID del usuario del Token (Middleware)
-	userIDFloat, exists := c.Get("userID")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "no autorizado"})
-		return
-	}
-	userID := uint(userIDFloat.(float64))
-
-	// 2. Leer JSON (esperamos la URL de la foto que subió antes)
-	var req VerificationRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// 3. Llamar al servicio
-	err := h.service.VerifyIdentity(userID, req.DocumentImageURL)
+	// Recibir archivo del form-data (key: "document")
+	file, err := c.FormFile("document")
 	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Se requiere una imagen del documento"})
 		return
 	}
 
+	// Llamar al servicio
+	run, err := h.service.VerifyIdentity(file)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Retornar el RUN extraído (simulado) para que el frontend lo pre-llene
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Identidad verificada exitosamente. Ahora tienes acceso total.",
-		"status":  "verified",
+		"message": "Documento verificado",
+		"extracted_run": run,
+		"status": "verified",
 	})
 }
