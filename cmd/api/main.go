@@ -25,7 +25,7 @@ func main() {
 
 	// 2. Inyección de Dependencias
 	// Inicializamos el servicio y el handler
-	authService := services.NewAuthService()
+	authService := services.NewAuthService(database.DB)
 	petService := services.NewPetService()
 	fileService := services.NewFileService()
 	identityService := services.NewIdentityService()

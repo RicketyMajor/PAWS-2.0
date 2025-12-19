@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"time"
+	"gorm.io/gorm"
 
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/domain" // <--- CAMBIA ESTO
 	"github.com/RicketyMajor/PAWS-2.0/internal/platform/database" // <--- CAMBIA ESTO
@@ -13,10 +14,15 @@ import (
 )
 
 // AuthService agrupa la lógica de registro y login
-type AuthService struct{}
+type AuthService struct{
+	db *gorm.DB
+}
 
-func NewAuthService() *AuthService {
-	return &AuthService{}
+func NewAuthService(dbOrNil *gorm.DB) *AuthService {
+	if dbOrNil == nil {
+		return &AuthService{db: database.DB}
+	}
+	return &AuthService{db: dbOrNil}
 }
 
 // Register crea un nuevo usuario aplicando reglas de seguridad
@@ -111,28 +117,27 @@ func (s *AuthService) Login(email, password string) (string, error) {
 	return tokenString, nil
 }
 
-// CheckBlacklist verifica si un RUN está prohibido [cite: 70]
-// Retorna true si está bloqueado, false si está limpio.
+// CheckBlacklist VERSIÓN REAL (Conectada a BD)
 func (s *AuthService) CheckBlacklist(run string) (bool, error) {
-	// Validación básica: Si el RUN viene vacío, retornamos error (Caso 3 del UT) [cite: 73]
 	if run == "" {
 		return false, fmt.Errorf("el RUN no puede estar vacío")
 	}
 
-	// NOTA: En una implementación real, aquí consultaríamos a la BD:
-	// var entry domain.BlacklistEntry
-	// result := database.DB.Where("run = ?", run).First(&entry)
-	// return result.Error == nil, nil
+	var entry domain.BlacklistEntry
+	
+	// Buscamos en la tabla 'blacklist_entries'
+	// SELECT * FROM blacklist_entries WHERE run = '12345678-9' LIMIT 1
+	result := s.db.Where("run = ?", run).First(&entry)
 
-	// PARA EL TEST (MOCK): Simulamos una lista negra en memoria por ahora
-	// Esto nos permite probar la lógica sin depender de Postgres corriendo.
-	bannedRuns := []string{"12345678-9", "99999999-K"}
-
-	for _, banned := range bannedRuns {
-		if run == banned {
-			return true, nil // Está baneado (Caso 1) [cite: 71]
+	if result.Error != nil {
+		if result.Error == gorm.ErrRecordNotFound {
+			// No se encontró -> No está baneado -> Retorna FALSE
+			return false, nil 
 		}
+		// Hubo otro error (ej: DB caída)
+		return false, result.Error
 	}
 
-	return false, nil // Está limpio (Caso 2) [cite: 72]
+	// Si lo encontró -> Está baneado -> Retorna TRUE
+	return true, nil
 }
