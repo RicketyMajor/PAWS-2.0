@@ -8,11 +8,11 @@ import (
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/services"
 	"github.com/RicketyMajor/PAWS-2.0/internal/platform/database"
 	
-	// Unificamos el alias a 'httpTransport' para evitar duplicados
-	httpTransport "github.com/RicketyMajor/PAWS-2.0/internal/transport/http" 
+	// Unificamos el import del transporte HTTP para evitar confusión
+	httpTransport "github.com/RicketyMajor/PAWS-2.0/internal/transport/http"
 	"github.com/RicketyMajor/PAWS-2.0/internal/transport/http/middleware"
 	"github.com/RicketyMajor/PAWS-2.0/internal/transport/websocket"
-
+	
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 )
@@ -24,28 +24,25 @@ func main() {
 	}
 
 	database.Connect()
+	// Migramos todas las tablas necesarias
+	database.DB.AutoMigrate(&domain.User{}, &domain.BlacklistEntry{}, &domain.Report{})
 
 	// 2. Inyección de Dependencias (ORDEN CORREGIDO)
 	
-	// A. Servicios Base (Independientes)
+	// A. Primero: Servicios Base (No dependen de otros servicios)
 	authService := services.NewAuthService(nil) // Creamos este PRIMERO
 	petService := services.NewPetService()
 	fileService := services.NewFileService()
 	identityService := services.NewIdentityService()
-	
-	// B. Migraciones y Servicios Dependientes
-	// Agregamos Report a la migración
-	database.DB.AutoMigrate(&domain.User{}, &domain.BlacklistEntry{}, &domain.Report{}) 
-	
-	// ReportService necesita authService, por eso va después
-	reportService := services.NewReportService(database.DB, authService) 
-	matchService := services.NewMatchService(petService)
-	
-	// C. Websocket Hub
 	hub := websocket.NewHub()
 	go hub.Run()
 
-	// 3. Inicialización de Handlers (Usando el alias unificado httpTransport)
+	// B. Segundo: Servicios Dependientes (Usan los servicios base)
+	// Ahora sí podemos pasarle 'authService' porque ya existe
+	reportService := services.NewReportService(database.DB, authService) 
+	matchService := services.NewMatchService(petService)
+
+	// C. Tercero: Handlers
 	authHandler := httpTransport.NewAuthHandler(authService)
 	petHandler := httpTransport.NewPetHandler(petService)
 	uploadHandler := httpTransport.NewUploadHandler(fileService)
@@ -54,15 +51,13 @@ func main() {
 	wsHandler := httpTransport.NewWSHandler(hub)
 	reportHandler := httpTransport.NewReportHandler(reportService)
 
-	// 4. Configurar Router (Gin)
+	// 3. Configurar Router (Gin)
 	r := gin.Default()
 	r.Static("/uploads", "./uploads") // Servir imágenes estáticas
 
 	api := r.Group("/api/v1")
 	{
-		// ----------------------------
-		// RUTAS PÚBLICAS (Sin Token)
-		// ----------------------------
+		// --- RUTAS PÚBLICAS ---
 		
 		auth := api.Group("/auth")
 		{
@@ -70,33 +65,35 @@ func main() {
 			auth.POST("/login", authHandler.Login)
 		}
 
-		// Mascotas (Lectura)
 		petsPublic := api.Group("/pets")
 		{
 			petsPublic.GET("/search", petHandler.Search)
-			petsPublic.GET("/match", matchHandler.GetMatches)
 			petsPublic.GET("", petHandler.GetAll)
 		}
-
-		// Verificación de Identidad (Pública para registro)
+		
+		// Verificación de Identidad (Público para el registro)
 		verification := api.Group("/verification")
 		{
 			verification.POST("/verify", identityHandler.Verify)
 		}
 
-		// ----------------------------
-		// RUTAS PROTEGIDAS (Con Token)
-		// ----------------------------
+		// --- RUTAS PROTEGIDAS (Requieren Token) ---
 		
 		// Grupo general protegido
 		protected := api.Group("/")
-		protected.Use(middleware.AuthMiddleware()) // <--- IMPORTANTE: Descomentado para seguridad
+		protected.Use(middleware.AuthMiddleware()) // <--- IMPORTANTE: Descomentado para que funcione
 		{
-			// Reportes (Requiere saber quién reporta)
+			// Reportes: Necesitamos saber QUIÉN reporta (userID del token)
 			protected.POST("/report", reportHandler.Create)
 			
-			// Archivos
+			// Chat
+			protected.GET("/chat/ws", wsHandler.HandleConnections)
+			
+			// Subida de archivos
 			protected.POST("/files/upload", uploadHandler.Upload)
+
+			// Match (GET)
+			protected.GET("/pets/match", matchHandler.GetMatches)
 		}
 
 		// Mascotas (Escritura)
@@ -105,16 +102,9 @@ func main() {
 		{
 			petsProtected.POST("", petHandler.Create)
 		}
-
-		// Chat
-		chat := api.Group("/chat")
-		chat.Use(middleware.AuthMiddleware())
-		{
-			chat.GET("/ws", wsHandler.HandleConnections)
-		}
 	}
 
-	// 5. Arrancar Servidor
+	// 4. Arrancar Servidor
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
