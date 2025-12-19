@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 	"os"
-
+	"github.com/RicketyMajor/PAWS-2.0/internal/core/domain"
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/services"       // Ajustar Import
 	"github.com/RicketyMajor/PAWS-2.0/internal/platform/database"   // Ajustar Import
 	transport "github.com/RicketyMajor/PAWS-2.0/internal/transport/http" // Ajustar Import (alias transport)
@@ -11,6 +11,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/RicketyMajor/PAWS-2.0/internal/transport/http/middleware"
 	"github.com/RicketyMajor/PAWS-2.0/internal/transport/websocket"
+	httpTransport "github.com/RicketyMajor/PAWS-2.0/internal/transport/http"
 )
 
 func main() {
@@ -21,11 +22,12 @@ func main() {
 	}
 
 	database.Connect()
-	database.Migrate()
+	database.DB.AutoMigrate(&domain.User{}, &domain.BlacklistEntry{}, &domain.Report{}) // <--- ACTUALIZAR ESTO
+	reportService := services.NewReportService(database.DB, authService)
 
 	// 2. Inyección de Dependencias
 	// Inicializamos el servicio y el handler
-	authService := services.NewAuthService(database.DB)
+	authService := services.NewAuthService(nil)
 	petService := services.NewPetService()
 	fileService := services.NewFileService()
 	identityService := services.NewIdentityService()
@@ -36,9 +38,10 @@ func main() {
 	authHandler := transport.NewAuthHandler(authService)
 	petHandler := transport.NewPetHandler(petService)
 	uploadHandler := transport.NewUploadHandler(fileService)
-	identityHandler := transport.NewIdentityHandler(identityService)
+	identityHandler := httpTransport.NewIdentityHandler(identityService)
 	matchHandler := transport.NewMatchHandler(matchService)
 	wsHandler := transport.NewWSHandler(hub)
+	reportHandler := httpTransport.NewReportHandler(reportService)
 	
 
 	// 3. Configurar Router (Gin)
@@ -96,6 +99,12 @@ r := gin.Default()
         chat.Use(middleware.AuthMiddleware())
         {
             chat.GET("/ws", wsHandler.HandleConnections) // Endpoint WebSocket
+        }
+		protected := api.Group("/") 
+        // protected.Use(middleware.AuthMiddleware()) <--- Si tienes middleware, úsalo aquí
+        {
+            // Endpoint para reportar
+            protected.POST("/report", reportHandler.Create) // <--- NUEVO
         }
 	}
 

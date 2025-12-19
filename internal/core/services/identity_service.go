@@ -3,8 +3,11 @@ package services
 import (
 	"context"
 	"fmt"
+	"math/rand" // Para generar números aleatorios
 	"mime/multipart"
 	"path/filepath"
+	"strconv"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -16,8 +19,9 @@ type IdentityService struct {
 }
 
 func NewIdentityService() *IdentityService {
-	// ... (configuración del cliente igual que antes) ...
-	endpoint := "minio-service:9000"
+	// ... (La configuración de conexión y MakeBucket se mantiene IGUAL) ...
+    // Copia tu código de conexión existente aquí...
+    endpoint := "minio-service:9000"
 	accessKeyID := "minioadmin"
 	secretAccessKey := "minioadmin"
 	useSSL := false
@@ -28,25 +32,15 @@ func NewIdentityService() *IdentityService {
 	})
 	if err != nil {
 		fmt.Println("Error conectando a MinIO:", err)
-		return nil // O manejar mejor el error
+		return nil
 	}
 
-	// --- NUEVA LÓGICA DE AUTOMATIZACIÓN ---
 	bucketName := "paws-identity"
 	ctx := context.Background()
-	
-	// 1. Preguntamos si el bucket existe
 	exists, errBucket := client.BucketExists(ctx, bucketName)
 	if errBucket == nil && !exists {
-		// 2. Si no existe, lo creamos automáticamente
-		errCreate := client.MakeBucket(ctx, bucketName, minio.MakeBucketOptions{})
-		if errCreate != nil {
-			fmt.Println("Error creando bucket automático:", errCreate)
-		} else {
-			fmt.Println("Bucket 'paws-identity' creado automáticamente")
-		}
+		client.MakeBucket(ctx, bucketName, minio.MakeBucketOptions{})
 	}
-	// --------------------------------------
 
 	return &IdentityService{
 		minioClient: client,
@@ -54,19 +48,17 @@ func NewIdentityService() *IdentityService {
 	}
 }
 
-// VerifyIdentity recibe la imagen, la guarda y (simula) extraer el RUT
+// VerifyIdentity sube el archivo y retorna un RUN aleatorio simulado
 func (s *IdentityService) VerifyIdentity(file *multipart.FileHeader) (string, error) {
-	// 1. Abrir el archivo
 	src, err := file.Open()
 	if err != nil {
 		return "", err
 	}
 	defer src.Close()
 
-	// 2. Generar nombre único para el archivo (ej: id_scan_12345.jpg)
-	filename := fmt.Sprintf("id_scan_%s", filepath.Base(file.Filename))
+	// Guardamos con timestamp para que no se sobrescriban los archivos
+	filename := fmt.Sprintf("id_scan_%d_%s", time.Now().Unix(), filepath.Base(file.Filename))
 
-	// 3. Subir a MinIO (Bucket Privado)
 	ctx := context.Background()
 	_, err = s.minioClient.PutObject(ctx, s.bucketName, filename, src, file.Size, minio.PutObjectOptions{
 		ContentType: file.Header.Get("Content-Type"),
@@ -75,10 +67,47 @@ func (s *IdentityService) VerifyIdentity(file *multipart.FileHeader) (string, er
 		return "", fmt.Errorf("error subiendo documento: %v", err)
 	}
 
-	// 4. MOCK OCR: Aquí llamaríamos a Google Vision API o Tesseract.
-	// Por ahora, simularemos que leímos el RUT exitosamente del nombre del archivo o devolvemos uno fijo.
-	// Simulamos que el sistema leyó el RUT que querías probar.
-	extractedRun := "11.111.111-1" 
+	// MOCK MEJORADO: Generar un RUT aleatorio válido para permitir múltiples registros
+	mockRun := s.generateRandomRUN()
 	
-	return extractedRun, nil
+	return mockRun, nil
+}
+
+// generateRandomRUN crea un formato Chileno válido (ej: 12.345.678-K)
+func (s *IdentityService) generateRandomRUN() string {
+	// Semilla aleatoria
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	
+	// Número entre 10.000.000 y 25.000.000
+	number := r.Intn(15000000) + 10000000
+	
+	// Cálculo del Dígito Verificador (Algoritmo Módulo 11)
+	dv := calculateDV(number)
+	
+	// Formatear con puntos
+	return fmt.Sprintf("%s-%s", formatWithPoints(number), dv)
+}
+
+// Funciones auxiliares para el cálculo real del DV (Ingeniería de detalle)
+func calculateDV(rut int) string {
+	m := 0
+	s := 1
+	for rut != 0 {
+		s = (s + rut%10*(9-m%6)) % 11
+		rut /= 10
+		m++
+	}
+	if s != 0 {
+		return strconv.Itoa(s - 1)
+	}
+	return "K"
+}
+
+func formatWithPoints(n int) string {
+	s := strconv.Itoa(n)
+	// Hack simple para poner puntos a un número de 8 dígitos (ej: 12.345.678)
+	if len(s) == 8 {
+		return fmt.Sprintf("%s.%s.%s", s[0:2], s[2:5], s[5:8])
+	}
+	return s // Fallback simple
 }
