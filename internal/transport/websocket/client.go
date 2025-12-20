@@ -120,13 +120,13 @@ func (c *Client) WritePump() {
 			if err != nil {
 				return
 			}
-			_ = w.Write(message)
+			_, _ = w.Write(message)
 
 			// Agregar mensajes en cola al mismo paquete TCP si es posible (optimización)
 			n := len(c.Send)
 			for i := 0; i < n; i++ {
-				_ = w.Write([]byte{'\n'})
-				_ = w.Write(<-c.Send)
+				_, _ = w.Write([]byte{'\n'})
+				_, _ = w.Write(<-c.Send)
 			}
 
 			if err := w.Close(); err != nil {
