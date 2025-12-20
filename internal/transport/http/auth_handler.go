@@ -30,49 +30,100 @@ type RegisterRequest struct {
 // --- HANDLER ---
 
 type AuthHandler struct {
-	service *services.AuthService
+	authService *services.AuthService
+	otpService  *services.OTPService
 }
 
-func NewAuthHandler(service *services.AuthService) *AuthHandler {
-	return &AuthHandler{service: service}
+func NewAuthHandler(authService *services.AuthService, otpService *services.OTPService) *AuthHandler {
+	return &AuthHandler{
+		authService: authService,
+		otpService:  otpService,
+	}
 }
 
 // Register
 func (h *AuthHandler) Register(c *gin.Context) {
-    // CORRECCIÓN: Usamos 'RegisterRequest' local (sin 'domain.')
-    var req RegisterRequest 
-
-    if err := c.ShouldBindJSON(&req); err != nil {
-        c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-        return
-    }
-
-    // Llamamos al servicio pasando los campos individuales
-    err := h.service.Register(req.Email, req.Password, req.Name, req.Run, "adopter")
-    if err != nil {
-        c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-        return
-    }
-
-    c.JSON(http.StatusCreated, gin.H{"message": "Usuario creado exitosamente"})
-}
-
-// Login
-func (h *AuthHandler) Login(c *gin.Context) {
-	var req LoginRequest
-
+	var req RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	token, err := h.service.Login(req.Email, req.Password)
+	// CORRECCIÓN 1 y 2:
+	// - Pasamos req.Role (5to argumento).
+	// - Solo capturamos 'err' (porque el servicio ya no devuelve token, solo error).
+	err := h.authService.Register(req.Email, req.Password, req.Name, req.Run, req.Role)
+	
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// CORRECCIÓN 3:
+	// Como no tenemos token, respondemos con un mensaje de éxito.
+	// El usuario tendrá que hacer Login después para obtener el token.
+	c.JSON(http.StatusCreated, gin.H{"message": "Usuario registrado exitosamente. Por favor inicia sesión."})
+}
+
+// Login
+func (h *AuthHandler) Login(c *gin.Context) {
+	var req LoginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// ANTES: h.service.Login(...)
+	// AHORA: h.authService.Login(...)
+	token, err := h.authService.Login(req.Email, req.Password) // <--- CORREGIDO
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Credenciales inválidas"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"token": token})
+}
+
+func (h *AuthHandler) RequestOTP(c *gin.Context) {
+	var body struct {
+		Email string `json:"email" binding:"required,email"`
+	}
+
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Generar y "Enviar"
+	_, err := h.otpService.GenerateOTP(body.Email)
+	if err != nil {
+		// Ojo: En prod no daríamos detalles del error de Redis
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error generando código"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Código de verificación enviado a tu correo"})
+}
+
+func (h *AuthHandler) VerifyOTP(c *gin.Context) {
+	var body struct {
+		Email string `json:"email" binding:"required,email"`
+		Code  string `json:"code" binding:"required,len=6"`
+	}
+
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	isValid := h.otpService.VerifyOTP(body.Email, body.Code)
+	if !isValid {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Código inválido o expirado"})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"token": token,
+		"message": "¡Verificación exitosa!",
+		"status": "verified",
 	})
 }

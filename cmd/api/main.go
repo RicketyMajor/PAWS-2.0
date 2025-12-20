@@ -31,6 +31,8 @@ func main() {
 	// 2. Inyección de Dependencias (ORDEN CORREGIDO)
 	
 	// A. Primero: Servicios Base (No dependen de otros servicios)
+	// Servicios Base
+	otpService := services.NewOTPService() // <--- NUEVO: Inicializar Redis/OTP
 	authService := services.NewAuthService(nil) // Creamos este PRIMERO
 	petService := services.NewPetService()
 	fileService := services.NewFileService()
@@ -44,7 +46,7 @@ func main() {
 	matchService := services.NewMatchService(petService)
 
 	// C. Tercero: Handlers
-	authHandler := httpTransport.NewAuthHandler(authService)
+	authHandler := httpTransport.NewAuthHandler(authService, otpService)
 	petHandler := httpTransport.NewPetHandler(petService)
 	uploadHandler := httpTransport.NewUploadHandler(fileService)
 	identityHandler := httpTransport.NewIdentityHandler(identityService)
@@ -64,6 +66,8 @@ func main() {
 		{
 			auth.POST("/register", authHandler.Register)
 			auth.POST("/login", authHandler.Login)
+			auth.POST("/otp/request", authHandler.RequestOTP)
+			auth.POST("/otp/verify", authHandler.VerifyOTP)
 		}
 
 		petsPublic := api.Group("/pets")
