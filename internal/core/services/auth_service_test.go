@@ -14,9 +14,11 @@ func setupTestDB() *gorm.DB {
 	if err != nil {
 		panic("falló al conectar a base de datos de prueba")
 	}
-	// Migración automática: Crea la tabla BlacklistEntry en la memoria RAM
-	db.AutoMigrate(&domain.BlacklistEntry{})
-	return db
+	// CORRECCIÓN: Si falla la migración en test, entramos en pánico
+	if err := db.AutoMigrate(&domain.BlacklistEntry{}); err != nil {
+        panic("falló migración de test: " + err.Error())
+    }
+    return db
 }
 
 func TestCheckBlacklist(t *testing.T) {

@@ -39,7 +39,13 @@ func NewIdentityService() *IdentityService {
 	ctx := context.Background()
 	exists, errBucket := client.BucketExists(ctx, bucketName)
 	if errBucket == nil && !exists {
-		client.MakeBucket(ctx, bucketName, minio.MakeBucketOptions{})
+		// CORRECCIÓN: Asignamos el error a errCreate
+		errCreate := client.MakeBucket(ctx, bucketName, minio.MakeBucketOptions{})
+		if errCreate != nil {
+			fmt.Println("Error creando bucket automático:", errCreate)
+		} else {
+			fmt.Println("Bucket 'paws-identity' creado automáticamente")
+		}
 	}
 
 	return &IdentityService{

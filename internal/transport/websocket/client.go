@@ -44,8 +44,11 @@ func (c *Client) ReadPump() {
 	}()
 	
 	c.Conn.SetReadLimit(maxMessageSize)
-	c.Conn.SetReadDeadline(time.Now().Add(pongWait))
-	c.Conn.SetPongHandler(func(string) error { c.Conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })
+	_ = c.Conn.SetReadDeadline(time.Now().Add(pongWait))
+	c.Conn.SetPongHandler(func(string) error { 
+    _ = c.Conn.SetReadDeadline(time.Now().Add(pongWait)) 
+    return nil 
+})
 	
 	for {
 		_, message, err := c.Conn.ReadMessage()
@@ -106,10 +109,10 @@ func (c *Client) WritePump() {
 	for {
 		select {
 		case message, ok := <-c.Send:
-			c.Conn.SetWriteDeadline(time.Now().Add(writeWait))
+			_ = c.Conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
 				// El Hub cerró el canal
-				c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
+				_ = c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
 
@@ -117,13 +120,13 @@ func (c *Client) WritePump() {
 			if err != nil {
 				return
 			}
-			w.Write(message)
+			_ = w.Write(message)
 
 			// Agregar mensajes en cola al mismo paquete TCP si es posible (optimización)
 			n := len(c.Send)
 			for i := 0; i < n; i++ {
-				w.Write([]byte{'\n'})
-				w.Write(<-c.Send)
+				_ = w.Write([]byte{'\n'})
+				_ = w.Write(<-c.Send)
 			}
 
 			if err := w.Close(); err != nil {
@@ -132,7 +135,7 @@ func (c *Client) WritePump() {
 		
 		case <-ticker.C:
 			// Heartbeat para mantener viva la conexión
-			c.Conn.SetWriteDeadline(time.Now().Add(writeWait))
+			_ = c.Conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := c.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}

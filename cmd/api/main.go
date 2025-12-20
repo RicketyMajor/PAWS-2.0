@@ -26,7 +26,10 @@ func main() {
 	database.Connect()
 	// Migramos todas las tablas necesarias
 	database.DB.AutoMigrate(&domain.User{}, &domain.BlacklistEntry{}, &domain.Report{})
-
+// CORRECCIÓN 1: Chequear error de migración
+	if err := database.DB.AutoMigrate(&domain.User{}, &domain.BlacklistEntry{}, &domain.Report{}); err != nil {
+		log.Fatal("Error en migración de base de datos:", err)
+	}
 	// 2. Inyección de Dependencias (ORDEN CORREGIDO)
 	
 	// A. Primero: Servicios Base (No dependen de otros servicios)
@@ -109,6 +112,8 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
-	log.Printf("🚀 Servidor PAWS corriendo en puerto %s", port)
-	r.Run(":" + port)
+	log.Printf("Servidor PAWS corriendo en puerto %s", port)
+	if err := r.Run(":" + port); err != nil {
+		log.Fatal("Error al iniciar el servidor:", err)
+	}
 }
