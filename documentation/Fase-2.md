@@ -785,15 +785,6 @@ if user.Role == "rescuer" && !user.IsVerified {
 
 **Status Fase 2**: Funcional desde Fase 1, sin cambios
 
-## Próximos Pasos (Fase 3)
-
-1. **Geolocalización Avanzada**: PostGIS para búsquedas radiales
-2. **Filtros de Búsqueda**: Por tipo, edad, ubicación
-3. **Algoritmo de Matching**: Cruzar preferencias adoptante con mascotas
-4. **Perfil del Adoptante**: Preferencias y requisitos
-5. **Sistema de Favoritos**: Guardar mascotas de interés
-6. **Auditoría**: Registrar quién hizo qué y cuándo
-
 ## Stack de Dependencias Completo
 
 | Paquete             | Versión | Propósito                    | Fase Añadido |

@@ -10,20 +10,91 @@ PAWS conecta a personas que desean adoptar mascotas con organizaciones y rescati
 
 **Arquitectura**: Monorepo con separación Backend (cmd/, internal/) y Frontend (app/)
 
+## Características Principales por Fase
+
+### Fase 7: CI/CD y Testing Automático
+
+**Objetivos Logrados**:
+
+- Pipeline CI/CD completamente funcional en GitHub Actions
+- Análisis estático automático con golangci-lint (detecta bugs, style issues, code smells)
+- Escaneo automático de vulnerabilidades CVE con govulncheck
+- Tests unitarios integrados en pipeline (go test -v ./...)
+- Docker build & push automático a Docker Hub en cada push a main/develop
+- Cobertura de código con reportes HTML
+
+**Beneficios**:
+
+- Código de calidad garantizado antes de merge
+- Vulnerabilidades detectadas automáticamente
+- Imágenes Docker siempre actualizadas en Docker Hub
+- Confianza en que main branch siempre está funcional
+- Ahorro de 5+ minutos de testing manual por push
+
+### Fase 8: Seguridad Robusta (Evil PAWS)
+
+**Objetivos Logrados**:
+
+1. **R-SEC-01: Verificación de Identidad**
+
+   - Carga de documento de identidad a MinIO (S3-compatible)
+   - Validación automática de RUT chileno con algoritmo Módulo 11
+   - Generación de RUT válido con dígito verificador correcto
+   - Almacenamiento seguro en la nube
+
+2. **R-SEC-02: Anti-Multicuentas**
+
+   - Chequeo automático de RUN único en registro y login
+   - Prevención de múltiples cuentas por usuario
+   - Validación en base de datos con UNIQUE constraint
+
+3. **R-SEC-03: Blacklist System**
+
+   - Sistema de blacklist para usuarios baneados
+   - Chequeo en Register y Login
+   - Prevención de acceso a usuarios baneados
+
+4. **R-SEC-04: Sistema de Reportes con Auto-Ban**
+   - Usuarios pueden reportar comportamiento inapropiado
+   - Sistema automático: 3 reportes verificados = ban automático
+   - Sin intervención manual requerida
+   - Integración con blacklist automática
+
+**Servicios Nuevos**:
+
+- `IdentityService`: Gestión de verificación de identidad
+- `OTPService`: Generación de códigos OTP 6-dígito con TTL de 5 minutos
+- `ReportService`: Sistema de reportes con contador automático
+- Modelos: `Report`, `BlacklistEntry`
+
+**Algoritmos Implementados**:
+
+- Módulo 11 para validación de RUT chileno
+- Generación de RUT aleatorio válido
+- OTP de 6 dígitos con almacenamiento en Redis
+
 ## Requisitos Previos
 
 ### Backend
 
 - Docker y Docker Compose instalados
-- Go 1.18 o superior
+- Go 1.24 o superior
 - WSL2 (si estás en Windows)
 - Git (para clonar el repo)
 
-### Backend Testing (Fase 7)
+### Backend Testing y CI/CD (Fase 7)
 
 - Go testing tools (incluido en Go SDK)
 - GitHub Actions habilitado en el repositorio
-- (Opcional) golangci-lint para análisis estático local
+- golangci-lint para análisis estático local (ejecutado automáticamente en CI/CD)
+- govulncheck para escaneo de vulnerabilidades (ejecutado automáticamente en CI/CD)
+- Docker Hub account (opcional, para push de imágenes)
+
+### Backend Security (Fase 8)
+
+- MinIO S3-compatible storage (incluido en docker-compose)
+- Redis para OTP storage (incluido en docker-compose)
+- PostgreSQL con soporte para UNIQUE constraints (incluido en docker-compose)
 
 ### Frontend
 
@@ -236,41 +307,72 @@ flutter pub get
 flutter run
 ```
 
-## Estrategia de Testing (Fase 7)
+## Estrategia de Testing (Fase 7 y 8)
 
-### Unit Tests
+### Unit Tests (Fase 7)
 
-PAWS implementa unit tests para lógica crítica (UT-SEC-01):
+PAWS implementa unit tests para lógica crítica:
 
 ```bash
-# Ejecutar unit tests
+# Ejecutar todos los unit tests
+go test -v ./...
+
+# Ejecutar tests de un paquete específico
 go test -v ./internal/core/services/
 
-# Resultado esperado
---- PASS: TestCheckBlacklist
---- PASS: TestDummy
-ok      github.com/RicketyMajor/PAWS-2.0/internal/core/services  0.005s
+# Ejecutar con cobertura
+go test -cover ./...
+
+# Generar reporte HTML de cobertura
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out -o coverage.html
 ```
 
-### GitHub Actions (CI/CD)
+Esperado:
 
-El pipeline ejecuta automáticamente:
+```
+--- PASS: TestCheckBlacklist
+--- PASS: TestMathOperations
+--- PASS: TestThreeStrikesBan (Fase 8)
+ok      github.com/RicketyMajor/PAWS-2.0/internal/core/services  0.050s
+```
 
-1. `go build -v ./cmd/api` (Verifica compilación)
-2. `go test -v ./...` (Ejecuta todos los tests)
-3. Resultado en PR (verde = OK, rojo = falla)
+**Tests Implementados**:
 
-**Archivo**: [.github/workflows/ci.yml](.github/workflows/ci.yml)
+- `auth_service_test.go`: TestCheckBlacklist, TestRegisterDuplicate
+- `math_test.go`: TestMathOperations (benchmark)
+- `report_service_test.go`: TestThreeStrikesBan (Fase 8 - auto-ban después de 3 reports)
 
-### Tests de Seguridad (Futuro)
+### CI/CD Pipeline Automático (Fase 7)
 
-En Fase 8 agregaremos:
+Cuando hagas `git push` a main/develop, GitHub Actions ejecuta automáticamente:
 
-- SQL Injection testing (SECT-01)
-- File Upload validation (SECT-02)
-- Authentication bypass attempts
+1. **Quality Gate** (En cada push y PR):
 
-Consultar [Fase-7.md](documentation/Fase-7.md) para detalles exhaustivos.
+   - golangci-lint: Análisis estático de código (linting)
+   - govulncheck: Escaneo de vulnerabilidades CVE conocidas
+   - go build: Verifica que el código compile
+   - go test: Ejecuta todos los unit tests
+
+2. **Build & Push Docker** (Solo en push a main/develop, no en PR):
+   - Construye imagen Docker multi-stage
+   - Push a Docker Hub con tag SHA del commit
+   - Caché optimizado para builds rápidos
+
+**Archivo Pipeline**: [.github/workflows/ci.yml](.github/workflows/ci.yml)
+
+**Resultado**: PR con estado verde (OK para merge) o rojo (necesita fixes).
+
+### Tests de Seguridad (Fase 8)
+
+Fase 8 implementa verificación de seguridad:
+
+- **R-SEC-01**: Verificación de identidad (documento con MinIO)
+- **R-SEC-02**: Anti-multicuentas (único RUN por usuario)
+- **R-SEC-03**: Blacklist system (previene acceso de usuarios baneados)
+- **R-SEC-04**: Report system con auto-ban (3 reports verificados = ban automático)
+
+Consultar [Fase-8.md](documentation/Fase-8.md) para detalles exhaustivos.
 
 ## Pruebas Rápidas de Endpoints (Backend)
 
@@ -564,6 +666,9 @@ Consultar `documentation/` para documentación exhaustiva:
 - `Fase-3.md`: Matchmaking, geolocalización avanzada, búsqueda con filtros
 - `Fase-4.md`: Chat distribuido, WebSocket, Redis Pub/Sub, seguridad R-SEC-05
 - `Fase-5.md`: Frontend Flutter, Clean Architecture, BLoC, arquitectura híbrida
+- `Fase-6.md`: Dockerización, Kubernetes, orquestación de contenedores
+- `Fase-7.md`: CI/CD pipeline, testing unitario, análisis estático, seguridad de dependencias
+- `Fase-8.md`: Verificación de identidad, anti-multicuentas, blacklist, auto-ban system
 
 Estructura actual (Monorepo Backend + Frontend):
 
@@ -609,15 +714,23 @@ PAWS-2.0/                               # Raíz del monorepo
 │   ├── conectar_backend.ps1           # Script netsh para puente red
 │   └── android/                       # Configuración Android
 ├── cmd/
-│   └── api/                           # Backend (FASE 0-4)
+│   └── api/                           # Backend (FASE 0-8)
 │       └── main.go
 ├── internal/
 │   ├── core/
 │   │   ├── domain/
+│   │   │   ├── user.go
+│   │   │   ├── pet.go
+│   │   │   ├── report.go                              # (Fase 8)
+│   │   │   └── blacklist.go                           # (Fase 8)
 │   │   └── services/
-│   │       ├── auth_service.go                        # (Fase 1)
-│   │       ├── auth_service_test.go                   # ← NUEVO (Fase 7)
-│   │       ├── math_test.go                           # ← NUEVO (Fase 7)
+│   │       ├── auth_service.go                        # (Fase 1, actualizado Fase 8)
+│   │       ├── auth_service_test.go                   # (Fase 7)
+│   │       ├── identity_service.go                    # (Fase 8 - R-SEC-01)
+│   │       ├── otp_service.go                         # (Fase 8)
+│   │       ├── report_service.go                      # (Fase 8 - R-SEC-04)
+│   │       ├── report_service_test.go                 # (Fase 8)
+│   │       ├── math_test.go                           # (Fase 7)
 │   │       └── ...
 │   ├── transport/
 │   │   ├── http/
@@ -626,7 +739,7 @@ PAWS-2.0/                               # Raíz del monorepo
 │       └── database/
 ├── .github/                           # GitHub Actions (FASE 7)
 │   └── workflows/
-│       └── ci.yml                     # CI/CD Pipeline
+│       └── ci.yml                     # CI/CD Pipeline (2-job: quality-gate + build-and-push)
 ├── k8s/                               # Manifiestos Kubernetes (FASE 6)
 │   ├── backend.yaml                   # Deployment + LoadBalancer Service
 │   ├── postgres.yaml                  # Deployment + ClusterIP Service
@@ -643,6 +756,19 @@ PAWS-2.0/                               # Raíz del monorepo
 └── README.md                          # Este archivo
 ```
 
+**Servicios Implementados**:
+
+| Servicio          | Fase | Descripción                                  | Archivos            |
+| ----------------- | ---- | -------------------------------------------- | ------------------- |
+| AuthService       | 1,8  | Autenticación, JWT, blacklist check          | auth_service.go     |
+| PetService        | 2    | Gestión de mascotas, búsqueda                | pet_service.go      |
+| MatchService      | 3    | Algoritmo de matching con geolocalización    | match_service.go    |
+| ChatService       | 4    | WebSocket distribuido, Redis Pub/Sub         | chat_service.go     |
+| FileUploadService | 2    | Upload a MinIO, gestión de archivos          | upload_service.go   |
+| IdentityService   | 8    | Verificación de identidad, RUT validation    | identity_service.go |
+| OTPService        | 8    | Generación OTP 6-dígito, Redis storage       | otp_service.go      |
+| ReportService     | 8    | Sistema de reportes con auto-ban (3 strikes) | report_service.go   |
+
 **Notas Arquitectónicas**:
 
 - Backend: Mantiene estructura tradicional en raíz (cmd/, internal/)
@@ -652,6 +778,8 @@ PAWS-2.0/                               # Raíz del monorepo
 - Containerización (Fase 6): Dockerfile para Backend, multi-stage build
 - Orquestación (Fase 6): Kubernetes manifiestos YAML en carpeta k8s/
 - Networking (Fase 6): LoadBalancer para API/MinIO, ClusterIP para Postgres/Redis
+- CI/CD (Fase 7): GitHub Actions con 2 jobs (quality-gate + build-and-push)
+- Security (Fase 8): Identity verification, anti-multicuenta, blacklist, auto-ban after 3 reports
 
 ## Detener Servicios
 
@@ -676,8 +804,10 @@ Este proyecto se desarrolla en fases:
 - **Fase 4** (Completada): Chat distribuido con WebSocket, Redis Pub/Sub, seguridad R-SEC-05
 - **Fase 5** (Completada): Frontend Flutter, Clean Architecture, BLoC, arquitectura híbrida
 - **Fase 6** (Completada): Dockerización, Kubernetes, orquestación de contenedores
-- **Fase 7** (Completada): CI/CD pipeline, testing unitario, calidad de código
-- **Fase 8**: Evil PAWS - Seguridad robusta, verificación de identidad, anti-multicuentas
+- **Fase 7** (Completada): CI/CD pipeline, testing unitario, linting, vulnerability scanning, Docker push
+- **Fase 8** (Completada): Verificación de identidad (R-SEC-01), anti-multicuentas (R-SEC-02), blacklist (R-SEC-03), auto-ban system (R-SEC-04)
+- **Fase 9** (Planificada): Enhanced security, encryption at rest, audit logging
+- **Fase 10** (Planificada): Performance optimization, caching strategies, database indexing
 
 ## Documentación Adicional
 
@@ -688,6 +818,7 @@ Este proyecto se desarrolla en fases:
 - [Fase 4](documentation/Fase-4.md): Chat distribuido, WebSocket, Redis, seguridad real-time
 - [Fase 5](documentation/Fase-5.md): Frontend Flutter, Clean Architecture, BLoC, arquitectura híbrida
 - [Fase 6](documentation/Fase-6.md): Dockerización, Kubernetes, orquestación, LoadBalancer, ClusterIP
-- [Fase 7](documentation/Fase-7.md): CI/CD pipeline, testing unitario, GitHub Actions, calidad de código
+- [Fase 7](documentation/Fase-7.md): CI/CD pipeline, testing unitario, linting automático, escaneo de vulnerabilidades, Docker push
+- [Fase 8](documentation/Fase-8.md): Seguridad robusta, verificación de identidad, anti-multicuentas, sistema de reportes con auto-ban
 
 ## Autor

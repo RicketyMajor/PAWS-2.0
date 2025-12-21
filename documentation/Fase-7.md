@@ -17,9 +17,11 @@ Este cambio cultural es lo que diferencia a un desarrollador de un ingeniero de 
 2. Automatizar validación de código en cada push/PR
 3. Implementar Unit Testing para lógica crítica (UT-SEC-01)
 4. Crear structure para Security Testing (SECT-01)
-5. Ejecutar análisis estático (Linter)
-6. Documentar estrategia de testing de seguridad
-7. Establecer baseline de calidad para futuras fases
+5. Ejecutar análisis estático (Linter - golangci-lint)
+6. Ejecutar escaneo de vulnerabilidades (govulncheck)
+7. Construir e publicar imagen Docker a Docker Hub
+8. Documentar estrategia de testing de seguridad
+9. Establecer baseline de calidad para futuras fases
 
 ## Stack Tecnológico Nuevo - DevOps & Testing
 
@@ -41,8 +43,9 @@ Este cambio cultural es lo que diferencia a un desarrollador de un ingeniero de 
 
 - **Build Verification**: `go build -v ./cmd/api`
 - **Unit Tests**: `go test -v ./...`
-- **Future: Linter**: golangci-lint para análisis estático
-- **Future: Security Scanning**: gosec para vulnerabilidades conocidas
+- **Linter**: golangci-lint para análisis estático de código
+- **Security Scanning**: govulncheck para vulnerabilidades en dependencias
+- **Docker Build & Push**: Construcción automática y publicación a Docker Hub
 
 ## Cambios en la Estructura del Proyecto
 
@@ -73,7 +76,7 @@ PAWS-2.0/
 internal/core/services/      ← NUEVA estructura de tests
 ```
 
-## 7.1 Pipeline de CI/CD (GitHub Actions)
+## Pipeline de CI/CD (GitHub Actions)
 
 ### Filosofía
 
@@ -88,7 +91,7 @@ El pipeline es el "vigilante nocturno" del proyecto. Cada vez que alguien hace `
 ### Archivo: `.github/workflows/ci.yml`
 
 ```yaml
-name: PAWS Backend CI
+name: PAWS Backend CI/CD Pipeline
 
 # ¿Cuándo se activa el robot?
 on:
@@ -97,13 +100,14 @@ on:
     paths:
       - "**.go" # Solo si cambiamos archivos Go
       - "go.mod"
+      - ".github/workflows/ci.yml"
   pull_request:
     branches: ["main", "develop"]
 
 jobs:
-  # Definimos el trabajo de "Calidad"
-  quality-check:
-    name: Build & Test
+  # Fase 1: Validación de Calidad
+  quality-gate:
+    name: Quality Gate
     runs-on: ubuntu-latest # Usamos servidores Linux de GitHub
 
     steps:
@@ -115,72 +119,148 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.23" # La versión que usas en tu go.mod
+          go-version: "1.24" # La versión que usas en tu go.mod
 
       # 3. Bajar librerías (GORM, Gin, etc.)
       - name: Install Dependencies
         run: go mod download
 
-      # 4. Verificar que el código compila (Build)
+      # 4. Análisis de Código (Linter)
+      # Detecta errores de estilo, potenciales bugs, y problemas de optimización
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v4
+        with:
+          version: latest
+
+      # 5. Escaneo de Vulnerabilidades
+      # Verifica que las dependencias no tengan CVE conocidos
+      - name: Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      # 6. Verificar que el código compila (Build)
       # Esto detecta errores de sintaxis graves antes de testear
       - name: Verify Build
         run: go build -v ./cmd/api
 
-      # 5. Correr los Tests Unitarios
-      # Aquí es donde se ejecutarían los casos como UT-SEC-01
+      # 7. Correr los Tests Unitarios
+      # Aquí es donde se ejecutarían los casos como UT-SEC-01 y test de 3-strikes
       - name: Run Unit Tests
         run: go test -v ./...
+
+  # Fase 2: Build y Push Docker (Solo en push a main/develop, no en PR)
+  build-and-push:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    needs: quality-gate # Solo ejecuta si quality-gate pasó
+    if: github.event_name == 'push' && github.ref_name != 'refs/heads/**'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Login a Docker Hub para hacer push de la imagen
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # Build y push de la imagen Docker
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ secrets.DOCKER_USERNAME }}/paws:${{ github.sha }}
+          cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/paws:buildcache
+          cache-to: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/paws:buildcache,mode=max
 ```
 
 ### Flujo de Ejecución del Pipeline
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│ Developer: git push origin feature/auth                         │
-└────────────────────────┬────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│ Developer: git push origin develop                               │
+└────────────────────────┬─────────────────────────────────────────┘
                          │
                          ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ GitHub Actions Triggered                                        │
-│ (Webhook: Código detectado cambio en rama develop)             │
-└────────────────────────┬────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│ GitHub Actions Triggered (Webhook detecta push a develop/main)   │
+└────────────────────────┬─────────────────────────────────────────┘
                          │
-                    ┌────┴────┐
-                    │ ┌────────▼────────────┐
-                    │ │ Checkout            │
-                    │ │ - Clone repo        │
-                    │ └────────┬────────────┘
-                    │          │
-                    │ ┌────────▼────────────┐
-                    │ │ Setup Go            │
-                    │ │ - Instalar Go 1.23  │
-                    │ └────────┬────────────┘
-                    │          │
-                    │ ┌────────▼────────────┐
-                    │ │ go mod download     │
-                    │ │ - Bajar dependencias│
-                    │ └────────┬────────────┘
-                    │          │
-                    │ ┌────────▼────────────┐
-                    │ │ go build -v ./cmd.. │
-                    │ │ FALLO?           │
-                    │ └────────┬────────────┘
-                    │          │ (Si falla: enviar email + marcar rojo)
-                    │          │ (Si pasa: continuar)
-                    │          │
-                    │ ┌────────▼────────────┐
-                    │ │ go test -v ./...    │
-                    │ │ FALLO?           │
-                    │ └────────┬────────────┘
-                    │          │ (Si falla: mostrar qué test falló)
-                    │          │ (Si pasa: TODO BIEN)
-                    │          │
-                    └──────────┘
+        ┌────────────────┴────────────────┐
+        │                                 │
+        ▼                                 │
+   FASE 1: QUALITY GATE                   │
+   ════════════════════════              │
+        │                                │
+   ┌────┴────────┐                       │
+   │ Checkout +  │                       │
+   │ Setup Go    │                       │
+   │ 1.24        │                       │
+   └────┬────────┘                       │
+        │                                │
+   ┌────▼──────────────────┐            │
+   │ golangci-lint         │ (Linter)   │
+   │ - Sintaxis OK?        │            │
+   │ - Estilos?            │            │
+   │ - Code smells?        │            │
+   └────┬──────────────────┘            │
+        │                                │
+   ┌────▼──────────────────┐            │
+   │ govulncheck ./...     │ (CVE Scan) │
+   │ - ¿Deps vulnerables?  │            │
+   │ - ¿Updates needed?    │            │
+   └────┬──────────────────┘            │
+        │                                │
+   ┌────▼──────────────────┐            │
+   │ go build -v ./cmd/api │ (Build)    │
+   │ - ¿Compila?           │            │
+   └────┬──────────────────┘            │
+        │                                │
+   ┌────▼──────────────────┐            │
+   │ go test -v ./...      │ (Unit)     │
+   │ - 3-strike test OK?   │            │
+   │ - Auth tests OK?      │            │
+   └────┬──────────────────┘            │
+        │                                │
+        │ (PASS)                         │
+        │                                │
+        └────────────────┬───────────────┘
                          │
-                    ┌────▼─────┐
-                    │ GREEN    │  (Commit verificado)
-                    │ RED      │  (Rechazado, necesita fix)
-                    └──────────┘
+                         ▼
+        ┌────────────────────────────────┐
+        │ ALL QUALITY CHECKS PASSED      │ (BUILD → GREEN)
+        └────────────────┬───────────────┘
+                         │ (Solo si push, no PR)
+        ┌────────────────┴───────────────┐
+        │                                │
+        ▼                                ▼
+   FASE 2: DOCKER BUILD & PUSH
+   ════════════════════════════
+   ┌──────────────────────────────┐
+   │ 1. Login Docker Hub          │
+   │    (DOCKER_USERNAME/PASSWORD)│
+   │                              │
+   │ 2. Build Docker Image        │
+   │    - Multistage build        │
+   │    - Cache optimization      │
+   │    - Tags: latest, SHA commit│
+   │                              │
+   │ 3. Push to Docker Hub        │
+   │    → paws:${COMMIT_SHA}      │
+   │    → paws:${BRANCH}-latest   │
+   │    → paws:buildcache         │
+   └──────────────────────────────┘
+        │
+        ▼
+   ┌──────────────────────────────┐
+   │ DEPLOYMENT READY             │
+   │ Image available en Docker Hub│
+   │ Ready para K8s deployment    │
+   └──────────────────────────────┘
 ```
 
 ### Ventajas del Pipeline
@@ -193,7 +273,7 @@ jobs:
 | **Team Confidence** | Main branch siempre funciona        | Todos confían que lo que está en main no está roto        |
 | **History**         | Logs guardados para auditoría       | ¿Cuándo exactamente quebró esto? → Logs de GitHub Actions |
 
-## 7.2 Estrategia de Testing
+## Estrategia de Testing
 
 ### Jerarquía de Tests
 
@@ -692,48 +772,3 @@ jobs:
 | **Ondboarding**            | Desarrolladores novatos rompen cosas              | Protegidos por tests + CI        |
 
 ## Plan de Integración con Fases Futuras
-
-### Fase 8: Evil PAWS + Security Tests
-
-Expandiremos SECT-01, SECT-02 y crearé tests específicos para:
-
-- SQL Injection attempts
-- File upload validation
-- Authentication bypass attempts
-- Rate limiting testing
-
-### Fase 9-10: Matchmaking + Tests
-
-Para cada feature nuevo:
-
-1. Escribir tests PRIMERO (TDD - Test Driven Development)
-2. Implementar feature
-3. Tests pasan
-4. Merge a develop
-
-### Fase 11: Distributed Systems
-
-Tests para:
-
-- Event consumption (RabbitMQ)
-- Retry logic
-- Circuit breaker patterns
-
-## Conclusión
-
-Fase 7 transforma PAWS de un proyecto experimental a un proyecto profesional. El pipeline de CI/CD es el guardián silencioso que asegura que:
-
-Cada línea de código compilada
-Cada función testeada
-Cada cambio verificado
-Main branch confiable
-Deudas técnicas visibles temprano
-
-En las próximas fases, expandiremos esta foundation con:
-
-- Cobertura > 80%
-- Security-focused tests
-- Performance testing
-- Load testing
-
-El mensaje es claro: **en PAWS no confiamos, verificamos.**

@@ -41,7 +41,7 @@ jobs:
 
   # TRABAJO 2: CONSTRUCCIÓN Y PUBLICACIÓN (Solo si pasa calidad)
   build-and-push:
-    name: 🐳 Build & Push Docker Image
+    name: Build & Push Docker Image
     needs: quality-gate # Espera a que pase el anterior
     runs-on: ubuntu-latest
     if: github.event_name == 'push' # Solo corre en Pushes, no en PRs

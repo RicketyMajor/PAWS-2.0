@@ -785,25 +785,6 @@ feature/
 3. **Testeabilidad**: Cada capa se testea independientemente
 4. **Escalabilidad**: Equipo A trabaja en Auth, Equipo B en Pets, sin conflictos
 
-## Próximos Pasos (Fase 6)
-
-### Funcionalidades de App
-
-1. **Perfil de Usuario**: Editar nombre, foto, descripción
-2. **Favorites**: Guardar mascotas favoritas (REALM o SQLite local)
-3. **Notificaciones Push**: Firebase Cloud Messaging
-4. **Ubicación Real**: google_maps_flutter + geolocalización
-5. **Galería**: Cargar fotos del dispositivo
-6. **Videollamada**: Agora.io o Twilio
-
-### Infraestructura
-
-1. **Testing Automatizado**: Unit tests para BLoCs, Widget tests para UI
-2. **CI/CD**: GitHub Actions para build automático
-3. **Crashlytics**: Firebase Crashlytics para logging de errores
-4. **Analytics**: Firebase Analytics para tracking de eventos
-5. **Despliegue**: Deploy a Google Play Store y Apple App Store
-
 ## Referencias y Recursos
 
 - **Flutter Bloc Pattern**: https://bloclibrary.dev/

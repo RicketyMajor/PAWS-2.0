@@ -667,42 +667,6 @@ c.Send <- []byte("Mensaje bloqueado por sistema de seguridad")
 
 ### R-SEC-01: Sin cambios desde Fase 2
 
-## Próximos Pasos (Fase 5 y 6)
-
-### Fase 5: Frontend Flutter
-
-1. Conectar WebSocket desde Flutter
-2. Interfaz de chat UI
-3. Notificaciones push
-4. Upload de fotos perfil
-
-### Fase 6: Producción
-
-1. TLS/SSL para WebSocket (wss://)
-2. Rate limiting por usuario
-3. Persistencia de chat en BD (opcional)
-4. Logging centralizado
-5. Monitoring y alertas
-6. Kubernetes deployment
-
-## Testing y Evidencia
-
-### Evidencia Proporcionada
-
-**chat_test1.png**:
-
-- Captura de pantalla de chat funcional
-- Múltiples mensajes entre usuarios
-- Timestamps en tiempo real
-- Demuestra: Bidireccionalidad, persistencia de sesión
-
-**bad_word_test1.png**:
-
-- Captura de intento de envío de palabra prohibida
-- Mensaje bloqueado por sistema
-- Notificación "Mensaje bloqueado"
-- Demuestra: R-SEC-05 funcionando
-
 ## Stack de Dependencias Completo
 
 | Paquete             | Versión | Propósito                    | Fase Añadido |

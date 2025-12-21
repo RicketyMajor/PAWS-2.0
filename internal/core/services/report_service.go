@@ -69,7 +69,7 @@ func (s *ReportService) checkAndBanUser(userID uint) error {
 			return nil 
 		}
 
-		fmt.Printf("🚫 USUARIO BANEADO AUTOMÁTICAMENTE: %s (%s)\n", user.Name, user.Run)
+		fmt.Printf("USUARIO BANEADO AUTOMÁTICAMENTE: %s (%s)\n", user.Name, user.Run)
 	}
 
 	return nil

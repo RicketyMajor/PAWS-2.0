@@ -699,15 +699,6 @@ Futuro: Excluir mascotas de usuarios baneados:
 query = query.Where("user_id NOT IN (SELECT id FROM users WHERE is_banned = true)")
 ```
 
-## Próximos Pasos (Fase 4)
-
-1. **WebSocket para Chat**: Comunicación real-time
-2. **Sistema de Favoritos**: Guardar mascotas de interés
-3. **Ofertas de Adopción**: Adoptante -> Rescatista
-4. **Notificaciones**: New pets matching preferences
-5. **Índices de BD**: Optimizar queries geoespaciales
-6. **Caché Redis**: Cache de búsquedas frecuentes
-
 ## Stack de Dependencias (Sin cambios)
 
 Igual que Fase 2. PostgreSQL native functions suficientes para geolocalización básica.

@@ -114,7 +114,7 @@ class _ChatBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // Detectamos si es un mensaje de alerta del sistema (Evil PAWS)
-    final isSystem = message.text.contains("🚫");
+    final isSystem = message.text.contains("[SYSTEM]");
 
     return Align(
       alignment: isSystem ? Alignment.center : Alignment.centerLeft,

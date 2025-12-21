@@ -50,13 +50,13 @@ func (h *Hub) Run() {
 		select {
 		case client := <-h.Register:
 			h.Clients[client] = true
-			log.Printf("🔌 Cliente conectado: %s", client.UserID)
+			log.Printf("[CONNECT] Cliente conectado: %s", client.UserID)
 
 		case client := <-h.Unregister:
 			if _, ok := h.Clients[client]; ok {
 				delete(h.Clients, client)
 				close(client.Send)
-				log.Printf("❌ Cliente desconectado: %s", client.UserID)
+				log.Printf("[DISCONNECT] Cliente desconectado: %s", client.UserID)
 			}
 
 		case message := <-h.Broadcast:

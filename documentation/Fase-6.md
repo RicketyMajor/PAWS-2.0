@@ -651,14 +651,14 @@ kubectl apply -f k8s/
 
 ## Flujo de Deployment - Paso a Paso
 
-### Fase de Desarrollo (Fase 5)
+### Fase de Desarrollo
 
 ```bash
 $ go run ./cmd/api/main.go
 # Backend ejecuta directamente sin contenerización
 ```
 
-### Fase de Transición (Fase 6 - Parte 1)
+### Fase de Transición
 
 ```bash
 $ docker-compose up
@@ -668,7 +668,7 @@ $ docker-compose up
 # 4. Networking transparente (docker-compose lo maneja)
 ```
 
-### Fase Production-Ready (Fase 6 - Parte 2)
+### Fase Production-Ready
 
 ```bash
 # 1. Habilitar Kubernetes en Windows
@@ -696,37 +696,6 @@ docker push ...
 # 3. Aplicar en AWS EKS
 kubectl apply -f k8s/
 ```
-
-## Próximos Pasos (Fase 7)
-
-### Kubernetes Avanzado
-
-1. **Ingress Controller**: Una IP para múltiples servicios
-2. **ConfigMap**: Gestión centralizada de variables
-3. **Secrets**: Variables sensibles encriptadas
-4. **StatefulSets**: Para PostgreSQL (preserva identidad)
-5. **PersistentVolumes**: Almacenamiento que no se pierde
-
-### CI/CD Pipeline
-
-1. **GitHub Actions**: Build automático al pushear código
-2. **Docker Registry**: ECR/DockerHub para almacenar imágenes
-3. **Automated Deployment**: Deploy a K8s al mergear PR
-4. **Health Checks**: Liveness/Readiness probes
-
-### Monitoring y Observabilidad
-
-1. **Prometheus**: Recolectar métricas del cluster
-2. **Grafana**: Dashboards de visualización
-3. **ELK Stack**: Logging centralizado (Elasticsearch, Logstash, Kibana)
-4. **Distributed Tracing**: Jaeger para tracing de requests
-
-### Seguridad
-
-1. **Network Policies**: Firewall dentro del cluster
-2. **RBAC**: Control de acceso basado en roles
-3. **Pod Security Policies**: Restricciones de seguridad
-4. **TLS/HTTPS**: Cifrado en tránsito
 
 ## Comparativa: Antes vs Después Fase 6
 

@@ -355,7 +355,7 @@ func main() {
     if port == "" {
         port = "8080"
     }
-    log.Printf("🚀 Servidor PAWS corriendo en puerto %s", port)
+    log.Printf("[START] Servidor PAWS corriendo en puerto %s", port)
     r.Run(":" + port)
 }
 ```
@@ -374,9 +374,9 @@ Se añadió función `Migrate()`:
 func Migrate() {
     err := database.DB.AutoMigrate(&domain.User{}, &domain.BlacklistEntry{})
     if err != nil {
-        log.Fatal("❌ Error en la migración de base de datos: ", err)
+        log.Fatal("[ERROR] Error en la migración de base de datos: ", err)
     }
-    log.Println("✅ Migración de base de datos completada")
+    log.Println("[SUCCESS] Migración de base de datos completada")
 }
 ```
 
@@ -627,15 +627,6 @@ if user.IsBanned {
 ```
 
 **Mejora Futura**: Consultar Redis primero para performance.
-
-## Próximos Pasos (Fase 2)
-
-1. **Middleware de Autenticación**: Proteger endpoints con JWT
-2. **CRUD de Mascotas**: Endpoints para crear/editar fichas
-3. **Upload de Imágenes**: Implementar subida a MinIO
-4. **OCR Mock**: Servicio para validar DNI
-5. **Testing Unitario**: Tests de auth_service.go
-6. **Logging Estructurado**: Cambiar `log` a `slog` o similar
 
 ## Stack de Dependencias Completo
 

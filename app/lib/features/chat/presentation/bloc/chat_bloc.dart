@@ -114,9 +114,9 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         // Aquí asumimos que todo lo que llega es mensaje.
         // En un chat real validaríamos si el ID del emisor soy yo.
         // Como es un chat simple de prueba:
-        // Si el mensaje dice "🚫", es del sistema (Evil PAWS).
+        // Si el mensaje empieza con [SYSTEM], es del sistema (Evil PAWS).
 
-        bool isSystem = event.text.contains("🚫");
+        bool isSystem = event.text.contains("[SYSTEM]");
 
         // Truco visual simple: Si lo acabamos de mandar nosotros, no tenemos forma fácil de saberlo
         // sin un ID en el mensaje JSON. Por ahora, marcaremos todos como "recibidos" (izquierda)
