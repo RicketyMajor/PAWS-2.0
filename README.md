@@ -73,6 +73,50 @@ PAWS conecta a personas que desean adoptar mascotas con organizaciones y rescati
 - Generación de RUT aleatorio válido
 - OTP de 6 dígitos con almacenamiento en Redis
 
+### Fase 9: Matchmaking Inteligente y Perfiles Enriquecidos
+
+**Objetivos Logrados**:
+
+1. **Perfiles Enriquecidos (UserProfile)**
+
+   - Información demográfica del adoptante: vivienda (casa/depto/parcela), tiene patio, tiene niños, tiene otras mascotas
+   - Experiencia (principiante/intermedio/experto) y tiempo disponible (bajo/medio/alto)
+   - Relación 1-a-1 con User (único por usuario adoptante)
+
+2. **Compatibilidad de Mascotas**
+
+   - Extensión de modelo Pet con atributos de compatibilidad
+   - Nuevos campos: RequiresYard, GoodWithKids, GoodWithDogs, GoodWithCats, EnergyLevel
+   - Hard constraints para filtrado inteligente
+
+3. **Algoritmo Inteligente (GetSwipeDeck)**
+
+   - Filtrado servidor-side de candidatos compatibles
+   - Excluyente: Mascota que requiere patio + adoptante en depto = EXCLUIDA
+   - Excluyente: Mascota no segura con niños + adoptante con niños = EXCLUIDA
+   - Excluyente: Mascota no sociable + adoptante con otras mascotas = EXCLUIDA
+   - Exclusión de mascotas ya visitadas por el adoptante
+
+4. **Flujo de Matchmaking**
+
+   - Adopter: Swipe(Like) → Crea Match(status=pending)
+   - Rescatista: GetPending() → Ve solicitudes de sus mascotas
+   - Rescatista: Respond(Accept/Reject) → Actualiza Match(status=accepted/rejected)
+   - Integración con Fase 4 (Chat) una vez aceptado
+
+**Servicios Nuevos**:
+
+- `UserService`: CreateOrUpdateProfile, GetProfile
+- `MatchService`: GetSwipeDeck (algoritmo inteligente), Swipe, GetPendingRequests, RespondMatch
+- Modelos: `UserProfile`, `Match` con MatchStatus enum
+
+**Características Clave**:
+
+- Motor de compatibilidad real basado en atributos
+- Prevención de adopciones incompatibles desde el algoritmo
+- Estado Pending como sincronización entre partes
+- Preparado para ML/Scoring en futuras fases
+
 ## Requisitos Previos
 
 ### Backend
@@ -637,6 +681,148 @@ Respuesta exitosa (200):
 - Edad aceptable: +20 puntos
 - Ubicación disponible: +20 puntos
 
+### Actualizar Perfil de Adoptante (Fase 9 - Requiere Autenticación)
+
+```bash
+TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+curl -X PUT http://localhost:8080/api/v1/profile \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "housing": "apartment",
+    "has_yard": false,
+    "has_children": true,
+    "has_other_pets": false,
+    "experience": "beginner",
+    "time_available": "high"
+  }'
+```
+
+Respuesta exitosa (200):
+
+```json
+{ "message": "Perfil actualizado correctamente" }
+```
+
+### Obtener Candidatos Compatibles (Fase 9 - Requiere Autenticación)
+
+Retorna mascotas filtradas según algoritmo inteligente de compatibilidad.
+
+```bash
+TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+curl -X GET http://localhost:8080/api/v1/matches/candidates \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Respuesta exitosa (200):
+
+```json
+[
+  {
+    "id": 1,
+    "name": "Max",
+    "type": "Dog",
+    "breed": "Golden Retriever",
+    "age": 24,
+    "energy_level": "high",
+    "good_with_kids": true,
+    "good_with_dogs": true,
+    "requires_yard": false,
+    "status": "available"
+  },
+  {
+    "id": 5,
+    "name": "Luna",
+    "type": "Dog",
+    "breed": "Labrador",
+    "age": 36,
+    "energy_level": "medium",
+    "good_with_kids": true,
+    "good_with_dogs": false,
+    "requires_yard": false,
+    "status": "available"
+  }
+]
+```
+
+### Dar Like a Mascota (Fase 9 - Requiere Autenticación)
+
+```bash
+TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+curl -X POST http://localhost:8080/api/v1/matches/swipe \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "pet_id": 1,
+    "is_like": true
+  }'
+```
+
+Respuesta exitosa (200):
+
+```json
+{ "message": "Acción registrada" }
+```
+
+### Ver Solicitudes Pendientes (Fase 9 - Requiere Autenticación - Rescatista)
+
+Rescatista ve quién dio Like a sus mascotas.
+
+```bash
+TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+curl -X GET http://localhost:8080/api/v1/matches/requests \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Respuesta exitosa (200):
+
+```json
+[
+  {
+    "id": 42,
+    "adopter": {
+      "id": 1,
+      "name": "Juan Pérez",
+      "email": "juan@mail.com"
+    },
+    "pet": {
+      "id": 1,
+      "name": "Max",
+      "type": "Dog",
+      "breed": "Golden Retriever"
+    },
+    "status": "pending",
+    "created_at": "2025-12-22T10:30:00Z"
+  }
+]
+```
+
+### Responder a Solicitud de Match (Fase 9 - Requiere Autenticación - Rescatista)
+
+Rescatista acepta o rechaza solicitud de adopción.
+
+```bash
+TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+curl -X POST http://localhost:8080/api/v1/matches/respond \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "match_id": 42,
+    "accept": true
+  }'
+```
+
+Respuesta exitosa (200):
+
+```json
+{ "message": "Respuesta registrada" }
+```
+
 ## Acceso a Servicios
 
 ### Docker Compose
@@ -714,13 +900,15 @@ PAWS-2.0/                               # Raíz del monorepo
 │   ├── conectar_backend.ps1           # Script netsh para puente red
 │   └── android/                       # Configuración Android
 ├── cmd/
-│   └── api/                           # Backend (FASE 0-8)
+│   └── api/                           # Backend (FASE 0-9)
 │       └── main.go
 ├── internal/
 │   ├── core/
 │   │   ├── domain/
 │   │   │   ├── user.go
 │   │   │   ├── pet.go
+│   │   │   ├── user_profile.go                        # (Fase 9)
+│   │   │   ├── match.go                               # (Fase 9)
 │   │   │   ├── report.go                              # (Fase 8)
 │   │   │   └── blacklist.go                           # (Fase 8)
 │   │   └── services/
@@ -730,10 +918,15 @@ PAWS-2.0/                               # Raíz del monorepo
 │   │       ├── otp_service.go                         # (Fase 8)
 │   │       ├── report_service.go                      # (Fase 8 - R-SEC-04)
 │   │       ├── report_service_test.go                 # (Fase 8)
+│   │       ├── user_service.go                        # (Fase 9)
+│   │       ├── match_service.go                       # (Fase 9 - actualizado)
 │   │       ├── math_test.go                           # (Fase 7)
 │   │       └── ...
 │   ├── transport/
 │   │   ├── http/
+│   │   │   ├── user_handler.go                        # (Fase 9)
+│   │   │   ├── match_handler.go                       # (Fase 9 - actualizado)
+│   │   │   └── ...
 │   │   └── websocket/
 │   └── platform/
 │       └── database/
@@ -762,12 +955,13 @@ PAWS-2.0/                               # Raíz del monorepo
 | ----------------- | ---- | -------------------------------------------- | ------------------- |
 | AuthService       | 1,8  | Autenticación, JWT, blacklist check          | auth_service.go     |
 | PetService        | 2    | Gestión de mascotas, búsqueda                | pet_service.go      |
-| MatchService      | 3    | Algoritmo de matching con geolocalización    | match_service.go    |
+| MatchService      | 3,9  | Algoritmo de matching con compatibilidad     | match_service.go    |
 | ChatService       | 4    | WebSocket distribuido, Redis Pub/Sub         | chat_service.go     |
 | FileUploadService | 2    | Upload a MinIO, gestión de archivos          | upload_service.go   |
 | IdentityService   | 8    | Verificación de identidad, RUT validation    | identity_service.go |
 | OTPService        | 8    | Generación OTP 6-dígito, Redis storage       | otp_service.go      |
 | ReportService     | 8    | Sistema de reportes con auto-ban (3 strikes) | report_service.go   |
+| UserService       | 9    | Gestión de perfiles demográficos             | user_service.go     |
 
 **Notas Arquitectónicas**:
 
@@ -780,6 +974,7 @@ PAWS-2.0/                               # Raíz del monorepo
 - Networking (Fase 6): LoadBalancer para API/MinIO, ClusterIP para Postgres/Redis
 - CI/CD (Fase 7): GitHub Actions con 2 jobs (quality-gate + build-and-push)
 - Security (Fase 8): Identity verification, anti-multicuenta, blacklist, auto-ban after 3 reports
+- Matchmaking (Fase 9): GetSwipeDeck con hard constraints, UserProfile demográfico, Match state machine
 
 ## Detener Servicios
 
@@ -806,8 +1001,9 @@ Este proyecto se desarrolla en fases:
 - **Fase 6** (Completada): Dockerización, Kubernetes, orquestación de contenedores
 - **Fase 7** (Completada): CI/CD pipeline, testing unitario, linting, vulnerability scanning, Docker push
 - **Fase 8** (Completada): Verificación de identidad (R-SEC-01), anti-multicuentas (R-SEC-02), blacklist (R-SEC-03), auto-ban system (R-SEC-04)
-- **Fase 9** (Planificada): Enhanced security, encryption at rest, audit logging
-- **Fase 10** (Planificada): Performance optimization, caching strategies, database indexing
+- **Fase 9** (Completada): Matchmaking inteligente, perfiles enriquecidos, algoritmo de compatibilidad, flujo de swipe/pending/respond
+- **Fase 10** (Planificada): Integración de chat post-match, cierre de adopciones, feedback del adoptante
+- **Fase 11** (Planificada): Machine Learning para recomendaciones, scoring dinámico
 
 ## Documentación Adicional
 
@@ -820,5 +1016,6 @@ Este proyecto se desarrolla en fases:
 - [Fase 6](documentation/Fase-6.md): Dockerización, Kubernetes, orquestación, LoadBalancer, ClusterIP
 - [Fase 7](documentation/Fase-7.md): CI/CD pipeline, testing unitario, linting automático, escaneo de vulnerabilidades, Docker push
 - [Fase 8](documentation/Fase-8.md): Seguridad robusta, verificación de identidad, anti-multicuentas, sistema de reportes con auto-ban
+- [Fase 9](documentation/Fase-9.md): Matchmaking inteligente, perfiles enriquecidos, algoritmo de compatibilidad, flujo de interacción
 
 ## Autor
