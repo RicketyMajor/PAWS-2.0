@@ -1,42 +1,54 @@
 package domain
 
 import (
+	"time"
+
 	"gorm.io/gorm"
 )
 
-// PetStatus define en qué estado se encuentra la adopción
+// Definimos el tipo
 type PetStatus string
 
+// CONSTANTES (Combinamos nombres para que nada falle)
 const (
-	StatusAvailable PetStatus = "available"
+	// Nombres que espera tu pet_service.go actual
+	StatusAvailable PetStatus = "available" 
 	StatusAdopted   PetStatus = "adopted"
-	StatusPending   PetStatus = "pending"
+	
+	// Alias para el nuevo código (opcional, apuntan a lo mismo)
+	PetAvailable    PetStatus = "available"
+	PetAdopted      PetStatus = "adopted"
+	PetPending      PetStatus = "pending"
 )
 
 type Pet struct {
-	gorm.Model
+	ID          uint      `gorm:"primaryKey" json:"id"`
+	Name        string    `json:"name"`
+	Type        string    `json:"type"`   // dog, cat
+	
+	// --- CAMPOS RECUPERADOS (Que faltaban) ---
+	Breed       string    `json:"breed"`     // <--- Faltaba esto
+	Latitude    float64   `json:"latitude"`  // <--- Faltaba esto
+	Longitude   float64   `json:"longitude"` // <--- Faltaba esto
+	// -----------------------------------------
 
-	// Información Básica
-	Name        string    `gorm:"not null" json:"name"`
-	Type        string    `gorm:"not null" json:"type"` // Dog, Cat, etc.
-	Breed       string    `json:"breed"`                // Raza
-	Age         int       `json:"age"`                  // Edad en meses o años
+	Gender      string    `json:"gender"` // male, female
+	Age         int       `json:"age"`    
+	
+	Status      PetStatus `json:"status"` 
 	Description string    `json:"description"`
-	Status      PetStatus `gorm:"default:'available'" json:"status"`
+	
+	// --- CAMPOS NUEVOS (Matchmaking) ---
+	RequiresYard    bool   `json:"requires_yard"`
+	GoodWithKids    bool   `json:"good_with_kids"`
+	GoodWithDogs    bool   `json:"good_with_dogs"`
+	GoodWithCats    bool   `json:"good_with_cats"`
+	EnergyLevel     string `json:"energy_level"`
 
-	// Geolocalización (Para el futuro mapa)
-	// Guardaremos latitud y longitud como floats por ahora. 
-	// En la fase de PostGIS lo migraremos a tipo Geometry si es necesario.
-	Latitude  float64 `json:"latitude"`
-	Longitude float64 `json:"longitude"`
-
-	// Relación con el Dueño (Rescatista)
-	// Foreign Key: UserID conecta esta mascota con la tabla users
-	UserID uint `json:"user_id"` 
-	User   User `json:"-" gorm:"constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"` 
-	// 'json:"-"' evita que al pedir una mascota, se traiga todo el objeto usuario anidado siempre.
-
-	// Imágenes (URLs)
-	// Por simplicidad, guardaremos la URL de la foto principal aquí.
-	PhotoURL string `json:"photo_url"`
+	// Relaciones
+	UserID    uint           `json:"user_id"`
+	
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 }

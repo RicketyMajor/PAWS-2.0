@@ -25,9 +25,16 @@ func main() {
 
 	database.Connect()
 	// Migramos todas las tablas necesarias
-	if err := database.DB.AutoMigrate(&domain.User{}, &domain.BlacklistEntry{}, &domain.Report{}); err != nil {
-    log.Fatal("Error migrando la base de datos:", err)
-}
+	if err := database.DB.AutoMigrate(
+		&domain.User{}, 
+		&domain.BlacklistEntry{}, 
+		&domain.Report{},
+		&domain.UserProfile{}, // <--- NUEVO
+		&domain.Pet{},         // <--- ACTUALIZADO
+		&domain.Match{},       // <--- NUEVO
+	); err != nil {
+    		log.Fatal("Error migrando la base de datos:", err)
+	}
 	// 2. Inyección de Dependencias (ORDEN CORREGIDO)
 	
 	// A. Primero: Servicios Base (No dependen de otros servicios)
@@ -37,13 +44,16 @@ func main() {
 	petService := services.NewPetService()
 	fileService := services.NewFileService()
 	identityService := services.NewIdentityService()
+	// NUEVO: User Service
+	userService := services.NewUserService(database.DB)
 	hub := websocket.NewHub()
 	go hub.Run()
 
 	// B. Segundo: Servicios Dependientes (Usan los servicios base)
 	// Ahora sí podemos pasarle 'authService' porque ya existe
 	reportService := services.NewReportService(database.DB, authService) 
-	matchService := services.NewMatchService(petService)
+	// ACTUALIZADO: Match Service ahora pide DB y PetService
+	matchService := services.NewMatchService(database.DB, petService)
 
 	// C. Tercero: Handlers
 	authHandler := httpTransport.NewAuthHandler(authService, otpService)
@@ -53,6 +63,8 @@ func main() {
 	matchHandler := httpTransport.NewMatchHandler(matchService)
 	wsHandler := httpTransport.NewWSHandler(hub)
 	reportHandler := httpTransport.NewReportHandler(reportService)
+	// NUEVO: User Handler
+	userHandler := httpTransport.NewUserHandler(userService, matchService)
 
 	// 3. Configurar Router (Gin)
 	r := gin.Default()
@@ -99,6 +111,16 @@ func main() {
 
 			// Match (GET)
 			protected.GET("/pets/match", matchHandler.GetMatches)
+			// Perfil de Usuario
+			protected.PUT("/profile", userHandler.UpdateProfile)
+
+			// Matchmaking
+			protected.GET("/matches/candidates", userHandler.GetSwipeDeck) // Ya existía
+			
+			// NUEVAS RUTAS
+			protected.POST("/matches/swipe", matchHandler.Swipe)        // Adoptante da Like
+			protected.GET("/matches/requests", matchHandler.GetPending) // Rescatista ve Likes
+			protected.POST("/matches/respond", matchHandler.Respond)    // Rescatista acepta/rechaza
 		}
 
 		// Mascotas (Escritura)
