@@ -6,9 +6,11 @@ import (
 
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/domain"
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/services"
+	"github.com/RicketyMajor/PAWS-2.0/internal/core/workers"
+	"github.com/RicketyMajor/PAWS-2.0/internal/infrastructure/email"
+	"github.com/RicketyMajor/PAWS-2.0/internal/infrastructure/messaging"
 	"github.com/RicketyMajor/PAWS-2.0/internal/platform/database"
 	
-	// Unificamos el import del transporte HTTP para evitar confusión
 	httpTransport "github.com/RicketyMajor/PAWS-2.0/internal/transport/http"
 	"github.com/RicketyMajor/PAWS-2.0/internal/transport/http/middleware"
 	
@@ -17,142 +19,167 @@ import (
 )
 
 func main() {
-	// 1. Configuración inicial
+	// =========================================================================
+	// 1. CONFIGURACIÓN E INFRAESTRUCTURA
+	// =========================================================================
+	
+	// Cargar variables de entorno
 	if err := godotenv.Load(); err != nil {
-		log.Println("No se encontró archivo .env, usando variables de entorno del sistema")
+		log.Println("Info: No se encontró archivo .env, usando variables del sistema")
 	}
 
+	// Conexión a Base de Datos
 	database.Connect()
-	// Migramos todas las tablas necesarias
+
+	// Migraciones (Esquema completo)
 	if err := database.DB.AutoMigrate(
 		&domain.User{}, 
-		&domain.BlacklistEntry{}, 
-		&domain.Report{},
-		&domain.UserProfile{}, // <--- NUEVO
-		&domain.Pet{},         // <--- ACTUALIZADO
+		&domain.UserProfile{},
+		&domain.Pet{},
 		&domain.Match{},
 		&domain.Message{}, 
-		&domain.Review{},       // <--- NUEVO
+		&domain.Review{},
+		&domain.Report{},
+		&domain.BlacklistEntry{},
 	); err != nil {
-    		log.Fatal("Error migrando la base de datos:", err)
+		log.Fatal("Error crítico migrando BD:", err)
 	}
-	// 2. Inyección de Dependencias (ORDEN CORREGIDO)
-	
-	// A. Primero: Servicios Base (No dependen de otros servicios)
-	// Servicios Base
-	otpService := services.NewOTPService() // <--- NUEVO: Inicializar Redis/OTP
-	authService := services.NewAuthService(nil) // Creamos este PRIMERO
-	petService := services.NewPetService()
-	fileService := services.NewFileService()
-	identityService := services.NewIdentityService()
-	chatService := services.NewChatService(database.DB)
-	reviewService := services.NewReviewService(database.DB)
-	// NUEVO: User Service
-	userService := services.NewUserService(database.DB)
+
+	// RabbitMQ (Messaging)
+	mqClient, err := messaging.ConnectRabbitMQ("amqp://guest:guest@rabbitmq-service:5672/")
+	if err != nil {
+		log.Println("RabbitMQ no disponible. El sistema funcionará, pero sin eventos asíncronos (OTP en logs).")
+	} else {
+		defer mqClient.Close()
+		log.Println("Conectado a RabbitMQ")
+	}
+
+	// Cliente de Email (SendGrid)
+	emailClient := email.NewEmailClient()
+
+	// Worker de Email (Consumidor)
+	if mqClient != nil {
+		workers.StartEmailConsumer(mqClient, emailClient)
+	}
+
+	// WebSocket Hub (Motor de chat)
 	hub := httpTransport.NewHub()
 	go hub.Run()
 
-	// B. Segundo: Servicios Dependientes (Usan los servicios base)
-	// Ahora sí podemos pasarle 'authService' porque ya existe
-	reportService := services.NewReportService(database.DB, authService) 
-	// ACTUALIZADO: Match Service ahora pide DB y PetService
-	matchService := services.NewMatchService(database.DB, petService)
+	// =========================================================================
+	// 2. INYECCIÓN DE DEPENDENCIAS (SERVICIOS)
+	// =========================================================================
 
-	// C. Tercero: Handlers
-	authHandler := httpTransport.NewAuthHandler(authService, otpService)
-	petHandler := httpTransport.NewPetHandler(petService)
-	uploadHandler := httpTransport.NewUploadHandler(fileService)
+	// Nivel 1: Servicios Base
+	otpService      := services.NewOTPService(mqClient)
+	authService     := services.NewAuthService(database.DB) // Asumimos que requiere DB
+	petService      := services.NewPetService(database.DB)
+	userService     := services.NewUserService(database.DB)
+	chatService     := services.NewChatService(database.DB)
+	reviewService   := services.NewReviewService(database.DB)
+	fileService     := services.NewFileService()
+	identityService := services.NewIdentityService()
+
+	// Nivel 2: Servicios Compuestos (Dependen de otros)
+	reportService   := services.NewReportService(database.DB, authService)
+	matchService    := services.NewMatchService(database.DB, petService)
+
+	// =========================================================================
+	// 3. HANDLERS (CONTROLADORES HTTP)
+	// =========================================================================
+
+	authHandler     := httpTransport.NewAuthHandler(authService, otpService)
+	petHandler      := httpTransport.NewPetHandler(petService)
+	userHandler     := httpTransport.NewUserHandler(userService, matchService)
+	matchHandler    := httpTransport.NewMatchHandler(matchService)
+	socialHandler   := httpTransport.NewSocialHandler(chatService, reviewService)
+	reportHandler   := httpTransport.NewReportHandler(reportService)
+	uploadHandler   := httpTransport.NewUploadHandler(fileService)
 	identityHandler := httpTransport.NewIdentityHandler(identityService)
-	matchHandler := httpTransport.NewMatchHandler(matchService)
-	// HANDLER WEBSOCKET (ACTUALIZADO)
-	// Antes: wsHandler := httpTransport.NewWSHandler(hub)
-	// Ahora: Pasamos también chatService
-	wsHandler := httpTransport.NewWSHandler(hub, chatService)
-	reportHandler := httpTransport.NewReportHandler(reportService)
-	// NUEVO: User Handler
-	userHandler := httpTransport.NewUserHandler(userService, matchService)
-	socialHandler := httpTransport.NewSocialHandler(chatService, reviewService)
+	
+	// WebSocket Handler (Inyectamos Hub y ChatService para persistencia)
+	wsHandler       := httpTransport.NewWSHandler(hub, chatService)
 
-	// 3. Configurar Router (Gin)
+	// =========================================================================
+	// 4. RUTAS (ROUTER)
+	// =========================================================================
+
 	r := gin.Default()
-	r.Static("/uploads", "./uploads") // Servir imágenes estáticas
+	r.Static("/uploads", "./uploads") // Servir imágenes
 
 	api := r.Group("/api/v1")
 	{
-		// --- RUTAS PÚBLICAS ---
+		// ---------------------------------------------------------------------
+		// A. RUTAS PÚBLICAS (Sin Token)
+		// ---------------------------------------------------------------------
 		
+		// Auth & OTP
 		auth := api.Group("/auth")
 		{
 			auth.POST("/register", authHandler.Register)
 			auth.POST("/login", authHandler.Login)
-			auth.POST("/otp/request", authHandler.RequestOTP)
+			auth.POST("/otp/request", authHandler.RequestOTP) // Asumiendo que RequestOTP está en AuthHandler u OTPHandler
 			auth.POST("/otp/verify", authHandler.VerifyOTP)
-			
 		}
 
+		// Verificación de Identidad (Registro)
+		api.POST("/verification/verify", identityHandler.Verify)
+
+		// Mascotas (Lectura y Búsqueda)
 		petsPublic := api.Group("/pets")
 		{
-			petsPublic.GET("/search", petHandler.Search)
-			petsPublic.GET("", petHandler.GetAll)
-		}
-		
-		// Verificación de Identidad (Público para el registro)
-		verification := api.Group("/verification")
-		{
-			verification.POST("/verify", identityHandler.Verify)
+			petsPublic.GET("", petHandler.GetAll)           // Listar con filtros básicos
+			petsPublic.GET("/:id", petHandler.GetPetByID)   // Ver detalle
+			petsPublic.GET("/nearby", petHandler.GetNearby) // Geo-búsqueda (PostGIS/Haversine)
 		}
 
-		// --- RUTAS PROTEGIDAS (Requieren Token) ---
+		// ---------------------------------------------------------------------
+		// B. RUTAS PROTEGIDAS (Con Token JWT)
+		// ---------------------------------------------------------------------
 		
-		// Grupo general protegido
 		protected := api.Group("/")
-		protected.Use(middleware.AuthMiddleware()) // <--- IMPORTANTE: Descomentado para que funcione
+		protected.Use(middleware.AuthMiddleware())
 		{
-			// Reportes: Necesitamos saber QUIÉN reporta (userID del token)
-			protected.POST("/report", reportHandler.Create)
-			
-			// Chat
-			protected.GET("/chat/ws", wsHandler.HandleConnections)
-			
-			// Subida de archivos
-			protected.POST("/files/upload", uploadHandler.Upload)
-
-			// Match (GET)
-			protected.GET("/pets/match", matchHandler.GetMatches)
-			// Perfil de Usuario
+			// Usuario
 			protected.PUT("/profile", userHandler.UpdateProfile)
 
-			// Matchmaking
-			protected.GET("/matches/candidates", userHandler.GetSwipeDeck) // Ya existía
-			
-			// NUEVAS RUTAS
-			protected.POST("/matches/swipe", matchHandler.Swipe)        // Adoptante da Like
-			protected.GET("/matches/requests", matchHandler.GetPending) // Rescatista ve Likes
-			protected.POST("/matches/respond", matchHandler.Respond)    // Rescatista acepta/rechaza
-			// CHAT HISTORY
-			protected.GET("/matches/:id/messages", socialHandler.GetChatHistory)
+			// Mascotas (Escritura)
+			protected.POST("/pets", petHandler.Create) // Publicar mascota
 
-			// REVIEWS
+			// Archivos
+			protected.POST("/files/upload", uploadHandler.Upload)
+
+			// Matchmaking (Tinder Logic)
+			match := protected.Group("/matches")
+			{
+				match.GET("/candidates", userHandler.GetSwipeDeck) // Obtener cartas
+				match.POST("/swipe", matchHandler.Swipe)           // Dar Like/Dislike
+				match.GET("/requests", matchHandler.GetPending)    // Ver quién me dio like
+				match.POST("/respond", matchHandler.Respond)       // Aceptar/Rechazar match
+				match.GET("/:id/messages", socialHandler.GetChatHistory) // Historial de chat
+			}
+
+			// Social & Comunidad
 			protected.POST("/reviews", socialHandler.CreateReview)
-			// WEBSOCKET (¡Ponlo aquí!)
-			protected.GET("/ws", wsHandler.HandleConnections)
-		}
+			protected.POST("/report", reportHandler.Create)
 
-		// Mascotas (Escritura)
-		petsProtected := api.Group("/pets")
-		petsProtected.Use(middleware.AuthMiddleware())
-		{
-			petsProtected.POST("", petHandler.Create)
+			// WebSocket (Chat Realtime)
+			// Unificado en una sola ruta estándar
+			protected.GET("/ws", wsHandler.HandleConnections)
 		}
 	}
 
-	// 4. Arrancar Servidor
+	// =========================================================================
+	// 5. ARRANCAR
+	// =========================================================================
+	
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
-	log.Printf("Servidor PAWS corriendo en puerto %s", port)
+	log.Printf("Servidor PAWS iniciado en puerto %s", port)
+	
 	if err := r.Run(":" + port); err != nil {
-		log.Fatal("Error al iniciar el servidor:", err)
+		log.Fatal("Error fatal en servidor:", err)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/services"
+	"strconv"
 	"github.com/gin-gonic/gin"
 )
 
@@ -96,4 +97,53 @@ func (h *PetHandler) Search(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, pets)
+}
+
+// GetNearby (GET /pets/nearby?lat=-33.4&lng=-70.6&dist=10)
+func (h *PetHandler) GetNearby(c *gin.Context) {
+	// Parsear Query Params
+	latStr := c.Query("lat")
+	lngStr := c.Query("lng")
+	distStr := c.Query("dist") // Distancia en KM
+
+	if latStr == "" || lngStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Latitud y Longitud requeridas"})
+		return
+	}
+
+	// Conversión a float
+	lat, _ := strconv.ParseFloat(latStr, 64)
+	lng, _ := strconv.ParseFloat(lngStr, 64)
+	dist, _ := strconv.ParseFloat(distStr, 64)
+	
+	if dist == 0 {
+		dist = 10.0 // Default 10km
+	}
+
+	pets, err := h.service.SearchNearby(lat, lng, dist)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error calculando cercanía"})
+		return
+	}
+
+	c.JSON(http.StatusOK, pets)
+}
+
+// GetPetByID (GET /pets/:id)
+func (h *PetHandler) GetPetByID(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID inválido"})
+		return
+	}
+
+	// Llamamos al servicio (Asumiendo que existe el método en el servicio)
+	pet, err := h.service.GetByID(uint(id))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Mascota no encontrada"})
+		return
+	}
+
+	c.JSON(http.StatusOK, pet)
 }
