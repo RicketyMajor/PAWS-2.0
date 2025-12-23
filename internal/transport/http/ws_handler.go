@@ -1,16 +1,16 @@
 package http
 
 import (
-	"fmt" // <--- IMPORTANTE: Asegúrate de agregar este import
 	"log"
 	"net/http"
 
-	"github.com/RicketyMajor/PAWS-2.0/internal/transport/websocket" // <--- Ajusta TU_USUARIO
 	"github.com/gin-gonic/gin"
-	gws "github.com/gorilla/websocket"
+	"github.com/gorilla/websocket"
+	"github.com/RicketyMajor/PAWS-2.0/internal/core/services"
 )
 
-var upgrader = gws.Upgrader{
+// Configuración de WebSocket (CORS permisivo para desarrollo)
+var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
@@ -18,43 +18,86 @@ var upgrader = gws.Upgrader{
 	},
 }
 
+// IncomingMessage define la estructura JSON que envía la App Móvil
+type IncomingMessage struct {
+	MatchID uint   `json:"match_id"`
+	Content string `json:"content"`
+}
+
+// WSHandler orquesta todo
 type WSHandler struct {
-	hub *websocket.Hub
+	hub         *Hub
+	chatService *services.ChatService
 }
 
-func NewWSHandler(hub *websocket.Hub) *WSHandler {
-	return &WSHandler{hub: hub}
+// NewWSHandler recibe el Hub y el Servicio de Chat
+func NewWSHandler(hub *Hub, chatService *services.ChatService) *WSHandler {
+	return &WSHandler{
+		hub:         hub,
+		chatService: chatService,
+	}
 }
 
+// HandleConnections es el endpoint GET /ws
 func (h *WSHandler) HandleConnections(c *gin.Context) {
-	// 1. Obtener UserID del token
-	userIDFloat, exists := c.Get("userID")
+	// 1. Identificar al usuario (gracias al Middleware)
+	userIDVal, exists := c.Get("userID")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "No autorizado"})
 		return
 	}
+	userID := userIDVal.(uint)
 
-	// 2. CORRECCIÓN: Usar la variable userIDFloat
-	// El JWT devuelve números como float64. Lo convertimos a entero y luego a texto.
-	id := int(userIDFloat.(float64)) 
-	userID := fmt.Sprintf("user_%d", id) // Ej: "user_1"
-
-	// 3. Actualizar a WebSocket
+	// 2. Upgrade HTTP -> WebSocket
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		log.Println("Error upgrading to websocket:", err)
+		log.Println("Error upgrade websocket:", err)
 		return
 	}
 
-	// 4. Registrar cliente
-	client := &websocket.Client{
-		Hub:    h.hub,
-		Conn:   conn,
-		Send:   make(chan []byte, 256),
-		UserID: userID,
+	// 3. Crear Cliente y registrarlo en el Hub
+	client := &Client{
+		hub:    h.hub,
+		conn:   conn,
+		send:   make(chan []byte, 256),
+		userID: userID,
 	}
-	client.Hub.Register <- client
+	h.hub.register <- client
 
-	go client.WritePump()
-	go client.ReadPump()
+	// Limpieza al desconectar
+	defer func() {
+		h.hub.unregister <- client
+		conn.Close()
+	}()
+
+	// BUCLE DE LECTURA (Aquí interceptamos los mensajes)
+	for {
+		var req IncomingMessage
+		// Leer JSON del WebSocket
+		err := conn.ReadJSON(&req)
+		if err != nil {
+			// Si el cliente se desconecta, salimos del bucle
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				log.Printf("error websocket: %v", err)
+			}
+			break
+		}
+
+		// --- PUNTO CLAVE: PERSISTENCIA ---
+		// Intentamos guardar en BD usando el ChatService.
+		// Esto valida "Evil PAWS" y guarda en Postgres.
+		msgSaved, err := h.chatService.SaveMessage(req.MatchID, userID, req.Content)
+		if err != nil {
+			// Si falla (ej: mala palabra), enviamos error solo a este usuario
+			errMsg := map[string]string{"error": "Mensaje rechazado: " + err.Error()}
+			conn.WriteJSON(errMsg)
+			continue
+		}
+
+		// --- PUNTO CLAVE: DIFUSIÓN ---
+		// Si se guardó con éxito, lo enviamos al Hub para que lo vean los demás.
+		// Enviamos solo el contenido por ahora.
+		response := []byte(msgSaved.Content) 
+		h.hub.broadcast <- response
+	}
 }

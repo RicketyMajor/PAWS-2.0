@@ -11,7 +11,6 @@ import (
 	// Unificamos el import del transporte HTTP para evitar confusión
 	httpTransport "github.com/RicketyMajor/PAWS-2.0/internal/transport/http"
 	"github.com/RicketyMajor/PAWS-2.0/internal/transport/http/middleware"
-	"github.com/RicketyMajor/PAWS-2.0/internal/transport/websocket"
 	
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -31,7 +30,9 @@ func main() {
 		&domain.Report{},
 		&domain.UserProfile{}, // <--- NUEVO
 		&domain.Pet{},         // <--- ACTUALIZADO
-		&domain.Match{},       // <--- NUEVO
+		&domain.Match{},
+		&domain.Message{}, 
+		&domain.Review{},       // <--- NUEVO
 	); err != nil {
     		log.Fatal("Error migrando la base de datos:", err)
 	}
@@ -44,9 +45,11 @@ func main() {
 	petService := services.NewPetService()
 	fileService := services.NewFileService()
 	identityService := services.NewIdentityService()
+	chatService := services.NewChatService(database.DB)
+	reviewService := services.NewReviewService(database.DB)
 	// NUEVO: User Service
 	userService := services.NewUserService(database.DB)
-	hub := websocket.NewHub()
+	hub := httpTransport.NewHub()
 	go hub.Run()
 
 	// B. Segundo: Servicios Dependientes (Usan los servicios base)
@@ -61,10 +64,14 @@ func main() {
 	uploadHandler := httpTransport.NewUploadHandler(fileService)
 	identityHandler := httpTransport.NewIdentityHandler(identityService)
 	matchHandler := httpTransport.NewMatchHandler(matchService)
-	wsHandler := httpTransport.NewWSHandler(hub)
+	// HANDLER WEBSOCKET (ACTUALIZADO)
+	// Antes: wsHandler := httpTransport.NewWSHandler(hub)
+	// Ahora: Pasamos también chatService
+	wsHandler := httpTransport.NewWSHandler(hub, chatService)
 	reportHandler := httpTransport.NewReportHandler(reportService)
 	// NUEVO: User Handler
 	userHandler := httpTransport.NewUserHandler(userService, matchService)
+	socialHandler := httpTransport.NewSocialHandler(chatService, reviewService)
 
 	// 3. Configurar Router (Gin)
 	r := gin.Default()
@@ -80,6 +87,7 @@ func main() {
 			auth.POST("/login", authHandler.Login)
 			auth.POST("/otp/request", authHandler.RequestOTP)
 			auth.POST("/otp/verify", authHandler.VerifyOTP)
+			
 		}
 
 		petsPublic := api.Group("/pets")
@@ -121,6 +129,13 @@ func main() {
 			protected.POST("/matches/swipe", matchHandler.Swipe)        // Adoptante da Like
 			protected.GET("/matches/requests", matchHandler.GetPending) // Rescatista ve Likes
 			protected.POST("/matches/respond", matchHandler.Respond)    // Rescatista acepta/rechaza
+			// CHAT HISTORY
+			protected.GET("/matches/:id/messages", socialHandler.GetChatHistory)
+
+			// REVIEWS
+			protected.POST("/reviews", socialHandler.CreateReview)
+			// WEBSOCKET (¡Ponlo aquí!)
+			protected.GET("/ws", wsHandler.HandleConnections)
 		}
 
 		// Mascotas (Escritura)
