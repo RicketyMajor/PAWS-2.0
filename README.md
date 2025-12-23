@@ -117,6 +117,50 @@ PAWS conecta a personas que desean adoptar mascotas con organizaciones y rescati
 - Estado Pending como sincronización entre partes
 - Preparado para ML/Scoring en futuras fases
 
+### Fase 10: Chat Persistente, Filtrado Inteligente y Sistema de Reputación
+
+**Objetivos Logrados**:
+
+1. **Chat Persistente e Híbrido (HTTP + WebSockets)**
+
+   - Cambio fundamental: Mensajes guardados en Postgres (antes eran tubo hueco)
+   - Flujo: Celular → WebSocket → ChatService → Postgres → Hub → WebSocket → Destinatario
+   - Historial persistente recuperable via GET /matches/:id/messages
+   - Si servidor se reinicia, conversación sigue intacta
+
+2. **Filtro "Evil PAWS" (Detección de Estafas)**
+
+   - Validación de contenido en tiempo real contra palabras clave prohibidas
+   - Detección de términos sospechosos: "depósito", "transferencia inmediata", "estafa"
+   - Bloqueo silencioso: Mensaje rechazado sin guardar ni difundir
+   - Protección proactiva de adoptantes vulnerables
+   - Implementado con containsForbiddenContent en ChatService
+
+3. **Sistema de Reputación (Reviews 1-5 estrellas)**
+
+   - Rating granular (1-5) en lugar de binario
+   - AuthorID y TargetID automáticamente deducidos de Match y roles
+   - Adopter → Califica a Rescatista
+   - Rescatista → Califica a Adopter
+   - Comentarios libres para contexto (ej: "llegó tarde", "perro estaba sucio")
+   - Auto-regulación comunitaria sin intervención manual
+
+**Servicios Nuevos/Actualizados**:
+
+- `ChatService`: SaveMessage (validación + persistencia), GetHistory, containsForbiddenContent
+- `ReviewService`: CreateReview (con lógica automática de roles)
+- `SocialHandler`: GetChatHistory, CreateReview endpoints
+- `WSHandler`: Actualizado para inyectar ChatService en ciclo WebSocket
+- Modelos: `Message`, `Review`
+
+**Características Clave**:
+
+- Chat seguro integrado en WebSocket
+- Validación pasiva contra estafas (sin reports)
+- Reputación basada en interacciones completadas
+- Flujo de confianza construido por historial
+- Preparado para NLP y IA en futuras fases
+
 ## Requisitos Previos
 
 ### Backend
@@ -823,6 +867,79 @@ Respuesta exitosa (200):
 { "message": "Respuesta registrada" }
 ```
 
+### Conectar a Chat Persistente (Fase 10 - Requiere Autenticación - WebSocket)
+
+```bash
+TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+# Conectar WebSocket (con historial persistente)
+wscat -c "ws://localhost:8080/api/v1/ws" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Enviar mensaje
+> {"match_id": 5, "content": "Hola Maria, cómo está Max?"}
+
+# Recibir respuesta (guardado en Postgres, visible incluso después de reinicio)
+< "Hola Juan, está muy feliz contigo!"
+```
+
+### Obtener Historial de Chat (Fase 10 - Requiere Autenticación)
+
+```bash
+TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+curl -X GET http://localhost:8080/api/v1/matches/5/messages \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Respuesta exitosa (200):
+
+```json
+[
+  {
+    "id": 10,
+    "match_id": 5,
+    "sender_id": 10,
+    "content": "Hola Maria, Max se ve increíble",
+    "is_read": true,
+    "created_at": "2025-12-21T10:30:00Z"
+  },
+  {
+    "id": 11,
+    "match_id": 5,
+    "sender_id": 2,
+    "content": "Hola Juan! Es una ternura, verdad?",
+    "is_read": true,
+    "created_at": "2025-12-21T10:31:00Z"
+  }
+]
+```
+
+### Crear Review (Fase 10 - Requiere Autenticación)
+
+Calificar la interacción después de adopción completada.
+
+```bash
+TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+curl -X POST http://localhost:8080/api/v1/reviews \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "match_id": 5,
+    "rating": 5,
+    "comment": "Maria es increíble, Max está en excelentes manos"
+  }'
+```
+
+Respuesta exitosa (201):
+
+```json
+{ "message": "Reseña guardada" }
+```
+
+Nota: Rating debe estar entre 1-5. AuthorID y TargetID se deducen automáticamente del Match.
+
 ## Acceso a Servicios
 
 ### Docker Compose
@@ -855,6 +972,8 @@ Consultar `documentation/` para documentación exhaustiva:
 - `Fase-6.md`: Dockerización, Kubernetes, orquestación de contenedores
 - `Fase-7.md`: CI/CD pipeline, testing unitario, análisis estático, seguridad de dependencias
 - `Fase-8.md`: Verificación de identidad, anti-multicuentas, blacklist, auto-ban system
+- `Fase-9.md`: Matchmaking mejorado, perfiles demográficos, compatibilidad avanzada
+- `Fase-10.md`: Chat persistente, filtro "Evil PAWS", sistema de reputación
 
 Estructura actual (Monorepo Backend + Frontend):
 
@@ -909,6 +1028,8 @@ PAWS-2.0/                               # Raíz del monorepo
 │   │   │   ├── pet.go
 │   │   │   ├── user_profile.go                        # (Fase 9)
 │   │   │   ├── match.go                               # (Fase 9)
+│   │   │   ├── message.go                             # (Fase 10 - Chat persistencia)
+│   │   │   ├── review.go                              # (Fase 10 - Reputación)
 │   │   │   ├── report.go                              # (Fase 8)
 │   │   │   └── blacklist.go                           # (Fase 8)
 │   │   └── services/
@@ -920,12 +1041,16 @@ PAWS-2.0/                               # Raíz del monorepo
 │   │       ├── report_service_test.go                 # (Fase 8)
 │   │       ├── user_service.go                        # (Fase 9)
 │   │       ├── match_service.go                       # (Fase 9 - actualizado)
+│   │       ├── chat_service.go                        # (Fase 10 - Validación + persistencia)
+│   │       ├── review_service.go                      # (Fase 10 - Reputación)
 │   │       ├── math_test.go                           # (Fase 7)
 │   │       └── ...
 │   ├── transport/
 │   │   ├── http/
 │   │   │   ├── user_handler.go                        # (Fase 9)
 │   │   │   ├── match_handler.go                       # (Fase 9 - actualizado)
+│   │   │   ├── social_handler.go                      # (Fase 10 - Chat + Reviews)
+│   │   │   ├── ws_handler.go                          # (Fase 10 - Actualizado con ChatService)
 │   │   │   └── ...
 │   │   └── websocket/
 │   └── platform/
@@ -956,12 +1081,13 @@ PAWS-2.0/                               # Raíz del monorepo
 | AuthService       | 1,8  | Autenticación, JWT, blacklist check          | auth_service.go     |
 | PetService        | 2    | Gestión de mascotas, búsqueda                | pet_service.go      |
 | MatchService      | 3,9  | Algoritmo de matching con compatibilidad     | match_service.go    |
-| ChatService       | 4    | WebSocket distribuido, Redis Pub/Sub         | chat_service.go     |
+| ChatService       | 4,10 | Validación, persistencia, filtrado "Evil"    | chat_service.go     |
 | FileUploadService | 2    | Upload a MinIO, gestión de archivos          | upload_service.go   |
 | IdentityService   | 8    | Verificación de identidad, RUT validation    | identity_service.go |
 | OTPService        | 8    | Generación OTP 6-dígito, Redis storage       | otp_service.go      |
 | ReportService     | 8    | Sistema de reportes con auto-ban (3 strikes) | report_service.go   |
 | UserService       | 9    | Gestión de perfiles demográficos             | user_service.go     |
+| ReviewService     | 10   | Sistema de reputación 1-5 estrellas          | review_service.go   |
 
 **Notas Arquitectónicas**:
 
@@ -1002,8 +1128,9 @@ Este proyecto se desarrolla en fases:
 - **Fase 7** (Completada): CI/CD pipeline, testing unitario, linting, vulnerability scanning, Docker push
 - **Fase 8** (Completada): Verificación de identidad (R-SEC-01), anti-multicuentas (R-SEC-02), blacklist (R-SEC-03), auto-ban system (R-SEC-04)
 - **Fase 9** (Completada): Matchmaking inteligente, perfiles enriquecidos, algoritmo de compatibilidad, flujo de swipe/pending/respond
-- **Fase 10** (Planificada): Integración de chat post-match, cierre de adopciones, feedback del adoptante
-- **Fase 11** (Planificada): Machine Learning para recomendaciones, scoring dinámico
+- **Fase 10** (Completada): Chat persistente, filtro "Evil PAWS" contra estafas, sistema de reputación 1-5 estrellas
+- **Fase 11** (Planificada): Integración de closures, conclusión de adopciones, feedback final
+- **Fase 12** (Planificada): Machine Learning para recomendaciones, scoring dinámico, predicción de éxito
 
 ## Documentación Adicional
 
@@ -1017,5 +1144,17 @@ Este proyecto se desarrolla en fases:
 - [Fase 7](documentation/Fase-7.md): CI/CD pipeline, testing unitario, linting automático, escaneo de vulnerabilidades, Docker push
 - [Fase 8](documentation/Fase-8.md): Seguridad robusta, verificación de identidad, anti-multicuentas, sistema de reportes con auto-ban
 - [Fase 9](documentation/Fase-9.md): Matchmaking inteligente, perfiles enriquecidos, algoritmo de compatibilidad, flujo de interacción
+- [Fase 10](documentation/Fase-10.md): Chat persistente, filtro "Evil PAWS", sistema de reputación comunitaria
+
+## Notas Arquitectónicas
+
+- **Chat Híbrido (Fase 10)**: WebSocket + HTTP. Los mensajes persisten en Postgres antes de broadcast. ChatService valida contra forbiddenWords.
+- **Evil PAWS Filter (Fase 10)**: Detección pasiva de estafas. Palabras bloqueadas: estafa, depósito, transferencia inmediata, odio, matar.
+- **Reviews (Fase 10)**: Sistema 1-5 estrellas con deducción automática de roles (Adoptant → califica Rescatista, Rescatista → califica Adoptant).
+- **Monorepo (Fase 5)**: Backend (Go) y Frontend (Flutter) en un repositorio, directorios separados (cmd/ y app/).
+- **Seguridad (Fases 1, 8)**: JWT + Bcrypt + Identity Verification + Anti-multicuenta + Auto-ban después de 3 reportes.
+- **Geolocalización (Fase 3)**: Búsqueda SQL con radio_km, latitud/longitud, filtros demográficos (edad, género, tamaño mascota).
+- **Kubernetes (Fase 6)**: Backend, Postgres, Redis, MinIO como servicios separados con servicios ClusterIP/LoadBalancer.
+- **CI/CD (Fase 7)**: GitHub Actions con 2 jobs: quality-gate (testing, linting, vulnerabilities) y build-and-push (Docker).
 
 ## Autor

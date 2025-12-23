@@ -60,7 +60,7 @@ Esta es la fase que diferencia una plataforma de transacciones de una plataforma
 
 ### Nuevos Archivos Creados
 
-#### 1. domain/user_profile.go (40 líneas)
+#### 1. domain/user_profile.go
 
 Modelo que representa la información sociodemográfica del adoptante:
 
@@ -89,7 +89,7 @@ type UserProfile struct {
 
 **Propósito**: Almacenar una sola instancia de preferencias/capacidades por usuario (relación 1-a-1 con User).
 
-#### 2. domain/match.go (50 líneas)
+#### 2. domain/match.go
 
 Modelo que representa un Like/Dislike y su evolución:
 
@@ -117,7 +117,7 @@ type Match struct {
 
 **Propósito**: Rastrear todas las interacciones (swipes) entre usuarios y mascotas, permitiendo que rescatistas respondan.
 
-#### 3. services/user_service.go (40 líneas)
+#### 3. services/user_service.go
 
 Servicio para gestionar perfiles de usuario:
 
@@ -141,7 +141,7 @@ func (s *UserService) GetProfile(userID uint) (*domain.UserProfile, error) {
 - Crear/actualizar perfil del adoptante
 - Recuperar perfil para consultas de compatibilidad
 
-#### 4. services/match_service.go (150 líneas)
+#### 4. services/match_service.go
 
 Corazón del algoritmo de matchmaking:
 
@@ -248,7 +248,7 @@ func (s *MatchService) RespondMatch(rescuerID, matchID uint, accept bool) error 
 ]
 ```
 
-#### 5. handlers/user_handler.go (60 líneas)
+#### 5. handlers/user_handler.go
 
 Endpoints para gestionar perfil e interacciones:
 
@@ -264,7 +264,7 @@ func (h *UserHandler) GetSwipeDeck(c *gin.Context) {
 }
 ```
 
-#### 6. handlers/match_handler.go (120 líneas)
+#### 6. handlers/match_handler.go
 
 Endpoints para el flujo de matchmaking:
 

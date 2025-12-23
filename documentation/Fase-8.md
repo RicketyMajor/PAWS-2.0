@@ -56,27 +56,27 @@ El nombre "Evil PAWS" representa el enfoque: **piensa como el atacante, construy
 
 ### Nuevos Archivos Creados
 
-#### 1. identity_service.go (119 líneas)
+#### 1. identity_service.go
 
 - Implementa R-SEC-01
 - Conecta a MinIO para almacenar fotos de documentos
 - Genera RUN válido (mock) con dígito verificador correcto
 - Funciones auxiliares: calculateDV(), formatWithPoints()
 
-#### 2. otp_service.go (76 líneas)
+#### 2. otp_service.go
 
 - Genera OTP de 6 dígitos
 - Almacena en Redis con TTL de 5 minutos
 - Verifica código y lo borra tras uso exitoso
 - Logs simulan envío de email
 
-#### 3. report_service.go (76 líneas)
+#### 3. report_service.go
 
 - CreateReport(): Registra denuncia
 - checkAndBanUser(): Regla de los 3 strikes
 - Integración con AuthService para baneos automáticos
 
-#### 4. report_service_test.go (50 líneas)
+#### 4. report_service_test.go
 
 - TestThreeStrikesBan(): Verifica lógica de 3 reportes = ban
 - Usa setupTestDB() con SQLite
