@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:paws_app/features/pets/presentation/screens/match_screen.dart';
 import '../../data/auth_repository.dart';
 import '../bloc/login_bloc.dart';
 import 'register_screen.dart';
-import '../../../pets/presentation/screens/feed_screen.dart'; // <--- Importa FeedScreen
+import '../../../pets/presentation/screens/match_screen.dart'; // <--- Importa MatchScreen
 
 class LoginScreen extends StatelessWidget {
   const LoginScreen({super.key});
@@ -56,7 +57,7 @@ class _LoginFormState extends State<_LoginForm> {
           Navigator.pushAndRemoveUntil(
             context,
             MaterialPageRoute(
-              builder: (context) => const FeedScreen(),
+              builder: (context) => const MatchScreen(),
             ), // Importa FeedScreen
             (route) =>
                 false, // Esto borra la pantalla de login del historial (no puedes volver atrás)

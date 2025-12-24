@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../../core/constants/api_constants.dart';
 import '../domain/pet_model.dart';
 
@@ -9,26 +10,47 @@ class PetsRepository {
       receiveTimeout: const Duration(seconds: 10),
     ),
   );
+  final FlutterSecureStorage _storage = const FlutterSecureStorage();
 
-  Future<List<Pet>> getPets() async {
+  // Helper para headers con token
+  Future<Options> _getAuthOptions() async {
+    final token = await _storage.read(key: 'jwt_token');
+    return Options(headers: {'Authorization': 'Bearer $token'});
+  }
+
+  // 1. Obtener el Mazo de Cartas (Algoritmo Inteligente Fase 9)
+  Future<List<Pet>> getSwipeDeck() async {
     try {
-      // Llamamos al endpoint público de mascotas
-      final response = await _dio.get('${ApiConstants.baseUrl}/pets');
+      final options = await _getAuthOptions();
+      // Endpoint: /matches/candidates
+      final response = await _dio.get(
+        '${ApiConstants.baseUrl}${ApiConstants.swipeDeck}',
+        options: options,
+      );
 
       if (response.statusCode == 200) {
-        // La respuesta de Go suele ser { "data": [...] } o directamente [...]
-        // Ajustamos según tu estructura. Asumiremos que viene una lista directa o dentro de 'pets'
-
-        // Si tu backend responde: [{"ID":1...}, {"ID":2...}]
         List<dynamic> data = response.data;
-
-        // Mapeamos cada item del JSON a un objeto Pet
         return data.map((json) => Pet.fromJson(json)).toList();
-      } else {
-        throw Exception('Error al cargar mascotas');
       }
+      return [];
+    } on DioException catch (e) {
+      throw Exception(e.response?.data['error'] ?? 'Error cargando mascotas');
+    }
+  }
+
+  // 2. Ejecutar Swipe (Like/Dislike)
+  Future<void> swipePet({required int petId, required bool isLike}) async {
+    try {
+      final options = await _getAuthOptions();
+      // Endpoint: /matches/swipe
+      await _dio.post(
+        '${ApiConstants.baseUrl}${ApiConstants.swipeAction}',
+        options: options,
+        data: {'pet_id': petId, 'is_like': isLike},
+      );
     } catch (e) {
-      throw Exception('Error de conexión: $e');
+      print("Error en swipe: $e");
+      // No lanzamos excepción para no interrumpir la UI fluida
     }
   }
 }

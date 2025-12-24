@@ -2,46 +2,43 @@ package http
 
 import (
 	"net/http"
-
 	"github.com/gin-gonic/gin"
-	
-	// ELIMINAMOS "domain" PORQUE USAREMOS LOS STRUCTS LOCALES
-	// "github.com/RicketyMajor/PAWS-2.0/internal/core/domain"
-	
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/services"
 )
-
-// --- DTOs (Data Transfer Objects) LOCALES ---
-// Es correcto definir esto aquí porque son exclusivos para recibir JSON
-
-type LoginRequest struct {
-	Email    string `json:"email" binding:"required,email"`
-	Password string `json:"password" binding:"required"`
-}
 
 type RegisterRequest struct {
 	Name     string `json:"name" binding:"required"`
 	Email    string `json:"email" binding:"required,email"`
 	Password string `json:"password" binding:"required,min=6"`
 	Run      string `json:"run" binding:"required"`
-	Role     string `json:"role" binding:"required,oneof=adopter rescuer"`
+	Role     string `json:"role"`
 }
 
-// --- HANDLER ---
+type LoginRequest struct {
+	Email    string `json:"email" binding:"required,email"`
+	Password string `json:"password" binding:"required"`
+}
+
+type OTPRequest struct {
+	Email string `json:"email" binding:"required,email"`
+}
+
+type OTPVerifyRequest struct {
+	Email string `json:"email" binding:"required,email"`
+	Code  string `json:"code" binding:"required,len=6"`
+}
 
 type AuthHandler struct {
-	authService *services.AuthService
-	otpService  *services.OTPService
+	service    *services.AuthService
+	otpService *services.OTPService // Ya inyectado en main.go
 }
 
-func NewAuthHandler(authService *services.AuthService, otpService *services.OTPService) *AuthHandler {
-	return &AuthHandler{
-		authService: authService,
-		otpService:  otpService,
-	}
+// Constructor (Ya lo tienes así en main.go, no cambiar)
+func NewAuthHandler(s *services.AuthService, otp *services.OTPService) *AuthHandler {
+	return &AuthHandler{service: s, otpService: otp}
 }
 
-// Register
+// Register: Crea usuario Y envía OTP
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -49,23 +46,35 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	// CORRECCIÓN 1 y 2:
-	// - Pasamos req.Role (5to argumento).
-	// - Solo capturamos 'err' (porque el servicio ya no devuelve token, solo error).
-	err := h.authService.Register(req.Email, req.Password, req.Name, req.Run, req.Role)
-	
+	// 1. Crear Usuario en BD
+	user, err := h.service.Register(req.Name, req.Email, req.Password, req.Run, req.Role)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// CORRECCIÓN 3:
-	// Como no tenemos token, respondemos con un mensaje de éxito.
-	// El usuario tendrá que hacer Login después para obtener el token.
-	c.JSON(http.StatusCreated, gin.H{"message": "Usuario registrado exitosamente. Por favor inicia sesión."})
+	// 2. ¡NUEVO! Generar y Enviar OTP Automáticamente
+	// Esto dispara el evento a RabbitMQ -> Worker -> Email
+	_, err = h.otpService.GenerateOTP(req.Email)
+	if err != nil {
+		// Si falla el OTP, no fallamos el registro, pero avisamos (o logueamos)
+		// En un sistema estricto, podríamos hacer rollback, pero para MVP está bien.
+		// El usuario siempre puede pedir "Reenviar código" después.
+		c.JSON(http.StatusCreated, gin.H{
+			"message": "Usuario registrado, pero hubo error enviando OTP. Intente reenviar.",
+			"user_id": user.ID,
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message": "Usuario registrado exitosamente. Código de verificación enviado.",
+		"user_id": user.ID,
+	})
 }
 
-// Login
+// ... (Resto de funciones Login, RequestOTP, VerifyOTP se mantienen igual) ...
+
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -73,11 +82,9 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	// ANTES: h.service.Login(...)
-	// AHORA: h.authService.Login(...)
-	token, err := h.authService.Login(req.Email, req.Password) // <--- CORREGIDO
+	token, err := h.service.Login(req.Email, req.Password)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Credenciales inválidas"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -85,45 +92,35 @@ func (h *AuthHandler) Login(c *gin.Context) {
 }
 
 func (h *AuthHandler) RequestOTP(c *gin.Context) {
-	var body struct {
-		Email string `json:"email" binding:"required,email"`
-	}
-
-	if err := c.ShouldBindJSON(&body); err != nil {
+	var req OTPRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Generar y "Enviar"
-	_, err := h.otpService.GenerateOTP(body.Email)
+	_, err := h.otpService.GenerateOTP(req.Email)
 	if err != nil {
-		// Ojo: En prod no daríamos detalles del error de Redis
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error generando código"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error generando OTP"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Código de verificación enviado a tu correo"})
+	c.JSON(http.StatusOK, gin.H{"message": "Código enviado"})
 }
 
 func (h *AuthHandler) VerifyOTP(c *gin.Context) {
-	var body struct {
-		Email string `json:"email" binding:"required,email"`
-		Code  string `json:"code" binding:"required,len=6"`
-	}
-
-	if err := c.ShouldBindJSON(&body); err != nil {
+	var req OTPVerifyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	isValid := h.otpService.VerifyOTP(body.Email, body.Code)
-	if !isValid {
+	valid := h.otpService.VerifyOTP(req.Email, req.Code)
+	if !valid {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Código inválido o expirado"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "¡Verificación exitosa!",
-		"status": "verified",
-	})
+	// Aquí podrías generar un token JWT si el OTP fuera para login sin password
+	// Por ahora solo confirmamos validez
+	c.JSON(http.StatusOK, gin.H{"message": "Código verificado correctamente"})
 }

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../../core/constants/api_constants.dart';
@@ -6,13 +7,26 @@ class AuthRepository {
   final Dio _dio = Dio(
     BaseOptions(
       connectTimeout: const Duration(
-        seconds: 5,
+        seconds: 10,
       ), // Falla si no conecta en 5 segs
-      receiveTimeout: const Duration(seconds: 5),
+      receiveTimeout: const Duration(seconds: 10),
     ),
   );
   // Almacenamiento seguro para el Token (Keychain en iOS, Keystore en Android)
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
+
+  // --- AGREGA ESTE CONSTRUCTOR ---
+  AuthRepository() {
+    // Esto imprimirá TODO lo que pasa por la red en tu terminal
+    _dio.interceptors.add(
+      LogInterceptor(
+        request: true,
+        requestBody: true,
+        responseBody: true,
+        error: true,
+      ),
+    );
+  }
 
   // Función para hacer Login
   Future<void> login(String email, String password) async {
@@ -73,7 +87,24 @@ class AuthRepository {
     }
   }
 
-  // Función para leer el token guardado (útil para saber si ya está logueado)
+  // --- NUEVO MÉTODO: VERIFICAR OTP (Fase 11) ---
+  Future<bool> verifyOtp(String email, String code) async {
+    try {
+      // Según tu main.go backend: auth.POST("/otp/verify", authHandler.VerifyOTP)
+      final response = await _dio.post(
+        '${ApiConstants.baseUrl}/auth/otp/verify',
+        data: {'email': email, 'code': code},
+      );
+
+      // Si el backend responde 200, el código es válido
+      return response.statusCode == 200;
+    } on DioException catch (e) {
+      print("Error OTP: ${e.response?.data}");
+      return false; // Si falla, retornamos falso para mostrar error en UI
+    }
+  }
+
+  // --- GET TOKEN (Mantenemos igual) ---
   Future<String?> getToken() async {
     return await _storage.read(key: 'jwt_token');
   }

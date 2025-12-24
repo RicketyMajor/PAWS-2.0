@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:dio/dio.dart';
 import 'package:image_picker/image_picker.dart'; // <--- FALTABA ESTA IMPORTACIÓN
 import '../../data/auth_repository.dart';
+import 'otp_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -22,6 +23,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _isVerifying = false;
   final ImagePicker _picker = ImagePicker();
 
+  // --- LÓGICA MODIFICADA PARA FASE 11 ---
   Future<void> _submitRegister() async {
     if (_nameController.text.isEmpty || _runController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -32,6 +34,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     setState(() => _isLoading = true);
     try {
+      // 1. Llamamos al registro (Esto dispara RabbitMQ -> Email)
       await context.read<AuthRepository>().register(
         email: _emailController.text,
         password: _passwordController.text,
@@ -40,13 +43,21 @@ class _RegisterScreenState extends State<RegisterScreen> {
       );
 
       if (mounted) {
+        // 2. Feedback visual
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('¡Cuenta creada! Inicia sesión.'),
-            backgroundColor: Colors.green,
+            content: Text('Registro exitoso. Revisa tu correo.'),
+            backgroundColor: Colors.blue, // Azul para indicar "info/espera"
           ),
         );
-        Navigator.pop(context);
+
+        // 3. CAMBIO CLAVE FASE 11: Navegar a OTP en lugar de cerrar
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => OTPScreen(email: _emailController.text),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -99,7 +110,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text("✅ Identidad Verificada: RUN detectado"),
+              content: Text("Identidad Verificada: RUN detectado"),
               backgroundColor: Colors.green,
             ),
           );

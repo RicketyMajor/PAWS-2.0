@@ -1,13 +1,15 @@
 class Pet {
-  final int id; // Go usa uint, aquí int está bien
+  final int id;
   final String name;
-  final String type;
+  final String type; // Dog, Cat
   final String breed;
   final int age;
   final String description;
-  final String status;
-  // Agregamos imagen por defecto si no viene una
-  final String imageUrl;
+  final String? imageUrl; // Puede ser null si no tiene foto
+  // Nuevos campos de Fase 9 (Matchmaking)
+  final bool goodWithKids;
+  final bool goodWithDogs;
+  final bool requiresYard;
 
   Pet({
     required this.id,
@@ -16,25 +18,26 @@ class Pet {
     required this.breed,
     required this.age,
     required this.description,
-    required this.status,
-    required this.imageUrl,
+    this.imageUrl,
+    this.goodWithKids = false,
+    this.goodWithDogs = false,
+    this.requiresYard = false,
   });
 
-  // Factory para crear una Mascota desde el JSON de Go
   factory Pet.fromJson(Map<String, dynamic> json) {
     return Pet(
-      id: json['ID'] ?? 0, // Go devuelve mayúsculas (ID, Name, etc)
-      name: json['Name'] ?? 'Sin nombre',
-      type: json['Type'] ?? '',
-      breed: json['Breed'] ?? '',
-      age: json['Age'] ?? 0,
-      description: json['Description'] ?? '',
-      status: json['Status'] ?? 'Available',
-      // Si el backend no manda foto, usamos una de placeholder
-      imageUrl:
-          json['ImageURL'] != null && json['ImageURL'].toString().isNotEmpty
-          ? json['ImageURL']
-          : 'https://images.unsplash.com/photo-1543466835-00a7907e9de1?auto=format&fit=crop&q=80&w=1000',
+      id: json['id'],
+      name: json['name'],
+      type: json['type'],
+      breed: json['breed'] ?? 'Mestizo',
+      age: json['age'] ?? 0,
+      description: json['description'] ?? '',
+      // Si el backend envía URL relativa (/uploads/...), concatenar base si es necesario
+      // Ojo: En tu backend actual la URL viene en 'image_url' o similar, ajusta según JSON real
+      imageUrl: json['image_url'],
+      goodWithKids: json['good_with_kids'] ?? false,
+      goodWithDogs: json['good_with_dogs'] ?? false,
+      requiresYard: json['requires_yard'] ?? false,
     );
   }
 }

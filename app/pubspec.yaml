@@ -45,6 +45,15 @@ dependencies:
   cached_network_image: ^3.4.1
   web_socket_channel: ^3.0.3
   image_picker: ^1.2.1
+  lottie: ^3.1.0           # Animaciones (como el check de éxito)
+  # --- State Management ---
+  provider: ^6.1.1         # Simple y efectivo para este nivel
+  # --- Utils ---
+  jwt_decoder: ^2.0.1      # Para leer el ID del usuario desde el token
+  # Hardware del teléfono
+  geolocator: ^10.1.0 # Para obtener lat/long del usuario
+  # Arquitectura y Estado
+  get_it: ^7.6.0 # Inyección de dependencias (opcional pero recomendada)
 
 dev_dependencies:
   flutter_test:

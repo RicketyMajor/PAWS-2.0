@@ -1,6 +1,16 @@
 class ApiConstants {
-  // 10.0.2.2 es la dirección IP especial que usa el Emulador de Android
-  // para referirse al "localhost" de tu computadora.
-  static const String baseUrl = 'http://192.168.0.4:8080/api/v1';
-  static const String wsUrl = 'ws://192.168.0.4:8080/api/v1/chat/ws';
+  // CAMBIA ESTO por la IP de tu PC donde corre Docker/Kubernetes
+  // Si usas emulador Android standard: 10.0.2.2
+  // Si usas dispositivo real: Tu IP local (ej: 192.168.1.15)
+  static const String baseUrl = 'http://10.0.2.2:8080/api/v1';
+  static const String wsUrl = 'ws://10.0.2.2:8080/api/v1';
+
+  // Endpoints Auth
+  static const String login = '/auth/login';
+  static const String register = '/auth/register';
+  static const String verifyOtp = '/auth/otp/verify'; // <--- NUEVO
+
+  // Endpoints Match
+  static const String swipeDeck = '/matches/candidates';
+  static const String swipeAction = '/matches/swipe';
 }
