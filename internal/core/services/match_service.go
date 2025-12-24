@@ -22,10 +22,17 @@ func NewMatchService(db *gorm.DB, petService *PetService) *MatchService {
 func (s *MatchService) GetSwipeDeck(userID uint) ([]domain.Pet, error) {
 	// 1. Obtener Perfil del Usuario
 	var profile domain.UserProfile
-	if err := s.db.Where("user_id = ?", userID).First(&profile).Error; err != nil {
-		// Si no tiene perfil, retornamos error o lista vacía pidiendo que complete perfil
-		return nil, err 
-	}
+    err := s.db.Where("user_id = ?", userID).First(&profile).Error
+    
+    // CAMBIO: Si no hay perfil (usuario nuevo), retornamos TODAS las disponibles (excepto las ya vistas)
+    // Esto asegura que el feed no esté vacío al principio.
+    if err != nil {
+        // Lógica simple: Traer todas las 'available' limitadas a 20
+        var pets []domain.Pet
+        // Aquí deberías agregar la lógica NOT IN (swipedPetIDs) si ya la tienes implementada
+        result := s.db.Where("status = ?", domain.PetAvailable).Limit(20).Find(&pets)
+        return pets, result.Error
+    }
 
 	// 2. Iniciar la Query base (Mascotas disponibles)
 	query := s.db.Model(&domain.Pet{}).Where("status = ?", domain.PetAvailable)

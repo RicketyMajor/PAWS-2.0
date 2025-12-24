@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
-import '../../data/auth_repository.dart'; // Importa tu repo
+import '../../data/auth_repository.dart';
+// Importamos la pantalla principal (MatchScreen)
+// Ajusta la ruta si tu carpeta se llama distinto, pero según tu estructura es esta:
+import '../../../../features/pets/presentation/screens/match_screen.dart';
 
 class OTPScreen extends StatefulWidget {
-  final String email; // Necesitamos el email para verificar
+  final String email;
 
   const OTPScreen({Key? key, required this.email}) : super(key: key);
 
@@ -17,28 +20,40 @@ class _OTPScreenState extends State<OTPScreen> {
 
   void _verify() async {
     setState(() => _isLoading = true);
+
+    // Llamada al repositorio
     final success = await _authRepo.verifyOtp(
       widget.email,
       _codeController.text,
     );
+
     setState(() => _isLoading = false);
 
     if (success) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('¡Cuenta verificada! Inicia sesión.'),
+            content: Text('¡Cuenta verificada!'),
             backgroundColor: Colors.green,
           ),
         );
-        // Esto hace "pop" de todo hasta volver a la primera pantalla (Login)
-        Navigator.of(context).popUntil((route) => route.isFirst);
+
+        // --- CAMBIO CLAVE AQUÍ ---
+        // En lugar de volver al Login, entramos directo a la App (MatchScreen)
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (context) => const MatchScreen()),
+          (route) => false, // Esto borra todo el historial anterior
+        );
       }
     } else {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Código incorrecto')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Código incorrecto'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     }
   }

@@ -34,7 +34,26 @@ class PetsRepository {
       }
       return [];
     } on DioException catch (e) {
-      throw Exception(e.response?.data['error'] ?? 'Error cargando mascotas');
+      // --- INICIO DE LA CORRECCIÓN ---
+      String errorMessage = 'Error cargando mascotas';
+
+      if (e.response != null) {
+        final data = e.response!.data;
+
+        // Verificamos el tipo de dato antes de leerlo
+        if (data is Map<String, dynamic>) {
+          // Si es un JSON normal (ej: {"error": "No autorizado"})
+          errorMessage = data['error'] ?? errorMessage;
+        } else {
+          // Si es Texto plano (ej: "panic: interface conversion...")
+          // Esto evita el error: type 'String' is not a subtype of type 'int' of 'index'
+          errorMessage = data.toString();
+        }
+      }
+
+      print("ERROR REAL DEL BACKEND: $errorMessage");
+      throw Exception(errorMessage);
+      // --- FIN DE LA CORRECCIÓN ---
     }
   }
 

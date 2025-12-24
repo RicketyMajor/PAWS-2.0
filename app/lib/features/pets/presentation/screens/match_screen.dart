@@ -1,43 +1,30 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:flutter_card_swiper/flutter_card_swiper.dart'; // Asegúrate de tener esta dependencia
+import 'package:flutter_card_swiper/flutter_card_swiper.dart';
 import '../bloc/pets_bloc.dart';
 import '../../data/pets_repository.dart';
 import '../../domain/pet_model.dart';
-import '../../../chat/presentation/screens/chat_screen.dart';
+// Eliminamos import del chat global
+// import '../../../chat/presentation/screens/chat_screen.dart';
 
 class MatchScreen extends StatelessWidget {
   const MatchScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    // Inyectamos el BLoC aquí mismo o en un nivel superior
     return BlocProvider(
       create: (context) =>
           PetsBloc(repository: RepositoryProvider.of<PetsRepository>(context))
-            ..add(LoadSwipeDeck()), // Cargar al iniciar
+            ..add(LoadSwipeDeck()),
       child: Scaffold(
         appBar: AppBar(
-          title: const Text("Encuentra tu compañero"),
+          title: const Text("PAWS"), // Título más limpio
           backgroundColor: Colors.white,
           elevation: 0,
-          foregroundColor: Colors.black,
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.chat),
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const ChatScreen(
-                      matchId: 1,
-                      peerName: "Rescatista Demo",
-                    ),
-                  ),
-                );
-              },
-            ),
-          ],
+          foregroundColor: const Color(0xFFE91E63),
+          centerTitle: true,
+          // Eliminamos 'actions' con el botón de chat.
+          // En el futuro aquí pondremos un botón para ver "Mis Matches"
         ),
         body: const MatchView(),
       ),
@@ -53,12 +40,54 @@ class MatchView extends StatelessWidget {
     return BlocBuilder<PetsBloc, PetsState>(
       builder: (context, state) {
         if (state is PetsLoading) {
-          return const Center(child: CircularProgressIndicator());
+          return const Center(
+            child: CircularProgressIndicator(color: Color(0xFFE91E63)),
+          );
         } else if (state is PetsError) {
-          return Center(child: Text("Error: ${state.message}"));
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.error_outline, size: 48, color: Colors.grey),
+                const SizedBox(height: 16),
+                Text(
+                  "Algo salió mal: ${state.message}",
+                  textAlign: TextAlign.center,
+                ),
+                TextButton(
+                  onPressed: () =>
+                      context.read<PetsBloc>().add(LoadSwipeDeck()),
+                  child: const Text("Reintentar"),
+                ),
+              ],
+            ),
+          );
         } else if (state is PetsLoaded) {
           if (state.pets.isEmpty) {
-            return const Center(child: Text("No hay más mascotas por hoy 🐶"));
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.pets, size: 64, color: Colors.grey),
+                  const SizedBox(height: 16),
+                  const Text(
+                    "No hay mascotas nuevas cerca de ti.",
+                    style: TextStyle(fontSize: 16),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    "¡Vuelve a intentar más tarde!",
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                  const SizedBox(height: 20),
+                  ElevatedButton(
+                    onPressed: () =>
+                        context.read<PetsBloc>().add(LoadSwipeDeck()),
+                    child: const Text("Actualizar"),
+                  ),
+                ],
+              ),
+            );
           }
           return _buildSwiper(context, state.pets);
         }

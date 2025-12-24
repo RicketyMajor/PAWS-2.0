@@ -1,23 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:paws_app/features/pets/presentation/screens/match_screen.dart';
 import '../../data/auth_repository.dart';
 import '../bloc/login_bloc.dart';
 import 'register_screen.dart';
-import '../../../pets/presentation/screens/match_screen.dart'; // <--- Importa MatchScreen
+// Import único y correcto de MatchScreen
+import '../../../pets/presentation/screens/match_screen.dart';
 
 class LoginScreen extends StatelessWidget {
   const LoginScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    // YA NO necesitamos RepositoryProvider aquí.
-    // Solo necesitamos el BlocProvider para la lógica visual del Login.
     return BlocProvider(
-      create: (context) => LoginBloc(
-        // Ahora context.read busca hasta el main.dart y lo encuentra :)
-        authRepository: context.read<AuthRepository>(),
-      ),
+      create: (context) =>
+          LoginBloc(authRepository: context.read<AuthRepository>()),
       child: const _LoginForm(),
     );
   }
@@ -37,14 +33,12 @@ class _LoginFormState extends State<_LoginForm> {
 
   @override
   Widget build(BuildContext context) {
-    // 2. BlocListener escucha cambios de estado para mostrar SnackBar o navegar
     return BlocListener<LoginBloc, LoginState>(
       listener: (context, state) {
         if (state is LoginFailure) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text(state.error), backgroundColor: Colors.red),
           );
-          // ... dentro del BlocListener
         } else if (state is LoginSuccess) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -53,17 +47,13 @@ class _LoginFormState extends State<_LoginForm> {
             ),
           );
 
-          // --- CAMBIO AQUÍ: Navegar al Feed y borrar historial de atrás ---
+          // Navegar a MatchScreen y borrar historial
           Navigator.pushAndRemoveUntil(
             context,
-            MaterialPageRoute(
-              builder: (context) => const MatchScreen(),
-            ), // Importa FeedScreen
-            (route) =>
-                false, // Esto borra la pantalla de login del historial (no puedes volver atrás)
+            MaterialPageRoute(builder: (context) => const MatchScreen()),
+            (route) => false,
           );
         }
-        // ...
       },
       child: Scaffold(
         body: SafeArea(
@@ -119,7 +109,6 @@ class _LoginFormState extends State<_LoginForm> {
                     ),
                     const SizedBox(height: 24),
 
-                    // 3. BlocBuilder reconstruye el botón según el estado
                     BlocBuilder<LoginBloc, LoginState>(
                       builder: (context, state) {
                         if (state is LoginLoading) {
@@ -130,7 +119,6 @@ class _LoginFormState extends State<_LoginForm> {
 
                         return FilledButton(
                           onPressed: () {
-                            // Disparamos el evento al BLoC
                             context.read<LoginBloc>().add(
                               LoginButtonPressed(
                                 email: _emailController.text,
@@ -163,7 +151,6 @@ class _LoginFormState extends State<_LoginForm> {
                       },
                       child: const Text('¿No tienes cuenta? Regístrate aquí'),
                     ),
-                    // Asegúrate de importar el archivo register_screen.dart arriba
                   ],
                 ),
               ),

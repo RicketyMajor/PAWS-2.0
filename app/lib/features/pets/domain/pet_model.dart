@@ -1,12 +1,11 @@
 class Pet {
   final int id;
   final String name;
-  final String type; // Dog, Cat
+  final String type;
   final String breed;
   final int age;
   final String description;
-  final String? imageUrl; // Puede ser null si no tiene foto
-  // Nuevos campos de Fase 9 (Matchmaking)
+  final String? imageUrl;
   final bool goodWithKids;
   final bool goodWithDogs;
   final bool requiresYard;
@@ -25,19 +24,31 @@ class Pet {
   });
 
   factory Pet.fromJson(Map<String, dynamic> json) {
+    // Función auxiliar para forzar conversión a int
+    int parseInt(dynamic value) {
+      if (value is int) return value;
+      if (value is String) return int.tryParse(value) ?? 0;
+      return 0;
+    }
+
+    // Función auxiliar para bool
+    bool parseBool(dynamic value) {
+      if (value is bool) return value;
+      if (value is String) return value.toLowerCase() == 'true';
+      return false;
+    }
+
     return Pet(
-      id: json['id'],
-      name: json['name'],
-      type: json['type'],
+      id: parseInt(json['id']),
+      name: json['name'] ?? 'Sin Nombre',
+      type: json['type'] ?? 'Desconocido',
       breed: json['breed'] ?? 'Mestizo',
-      age: json['age'] ?? 0,
+      age: parseInt(json['age']),
       description: json['description'] ?? '',
-      // Si el backend envía URL relativa (/uploads/...), concatenar base si es necesario
-      // Ojo: En tu backend actual la URL viene en 'image_url' o similar, ajusta según JSON real
       imageUrl: json['image_url'],
-      goodWithKids: json['good_with_kids'] ?? false,
-      goodWithDogs: json['good_with_dogs'] ?? false,
-      requiresYard: json['requires_yard'] ?? false,
+      goodWithKids: parseBool(json['good_with_kids']),
+      goodWithDogs: parseBool(json['good_with_dogs']),
+      requiresYard: parseBool(json['requires_yard']),
     );
   }
 }
