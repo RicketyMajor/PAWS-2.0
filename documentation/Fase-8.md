@@ -562,6 +562,79 @@ OTPService.VerifyOTP("user@email.com", "123456")
 Permiso para continuar con Register
 ```
 
+
+### Actualización Etapa 1: OTP Async/Sync Condicional
+
+A partir de Etapa 1, el OTPService se integra con el patrón Kill Switch de ENABLE_ASYNC_FEATURES, permitiendo funcionar tanto en modo asincrónico como sincrónico sin cambios de interfaz.
+
+**Cambio de Arquitectura**:
+
+```go
+type OTPService struct {
+    redisClient *redis.Client     // Siempre presente (almacena códigos)
+    mqClient    *messaging.RabbitMQClient  // Opcional (puede ser nil)
+}
+
+func NewOTPService(redis *redis.Client, mq *messaging.RabbitMQClient) *OTPService {
+    return &OTPService{
+        redisClient: redis,
+        mqClient:    mq,  // Puede ser nil si ENABLE_ASYNC_FEATURES=false
+    }
+}
+
+func (s *OTPService) GenerateOTP(email string) (string, error) {
+    code := fmt.Sprintf("%06d", rand.Intn(1000000))
+    
+    // Guardar en Redis (ambos modos)
+    key := fmt.Sprintf("otp:%s", email)
+    s.redisClient.Set(ctx, key, code, 5*time.Minute)
+    
+    // Envío condicional
+    if s.mqClient != nil {
+        // Modo Async: Publicar a cola RabbitMQ
+        s.mqClient.Publish("email_notifications", map[string]interface{}{
+            "email": email,
+            "code":  code,
+            "type":  "otp",
+        })
+        log.Printf("[ASYNC MODE] OTP publicado a RabbitMQ para %s", email)
+    } else {
+        // Modo Sync: Log directo (Etapa 1 default)
+        log.Printf("[DEV MODE] OTP para %s: %s", email, code)
+    }
+    
+    return code, nil
+}
+```
+
+**Impacto en Etapa 1**:
+
+- **ENABLE_ASYNC_FEATURES=false** (default): OTP aparece en logs, ideal para testing local
+- **ENABLE_ASYNC_FEATURES=true**: OTP se publica a RabbitMQ, worker externo envía email
+- **VerifyOTP** sin cambios: Funciona igual en ambos modos (verifica en Redis)
+- **Graceful Degradation**: Si RabbitMQ no está disponible, sistema sigue funcionando en sync
+
+**Testing en Etapa 1**:
+
+```bash
+# Modo desarrollo (default)
+docker-compose up
+# En logs verás:
+# [DEV MODE] OTP para user@example.com: 456789
+
+# Modo asincrónico (requiere RabbitMQ)
+ENABLE_ASYNC_FEATURES=true docker-compose -f docker-compose.yml -f docker-compose.rabbitmq.yml up
+# En logs verás:
+# [ASYNC MODE] OTP publicado a RabbitMQ para user@example.com
+```
+
+**Notas de Compatibilidad**:
+
+- Redis sigue siendo obligatorio (almacena códigos generados)
+- RabbitMQ es opcional (solo para envío async de emails)
+- La interfaz de OTPService.GenerateOTP() no cambia
+- Los tests de VerifyOTP siguen siendo los mismos
+
 ## Estándares de Testing Fase 8
 
 ### Regla 1: Test R-SEC-04 Crítico

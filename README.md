@@ -10,6 +10,131 @@ PAWS conecta a personas que desean adoptar mascotas con organizaciones y rescati
 
 **Arquitectura**: Monorepo con separación Backend (cmd/, internal/) y Frontend (app/)
 
+
+## Etapa 1: Estabilización y Networking (Completada)
+
+La Etapa 1 de Operación PAWS Real representa la estabilización de infraestructura crítica y preparación para desarrollo sin dependencias pesadas. Se ha implementado un sistema "Kill Switch" para características asincrónicas y soporte completo para acceso desde navegadores web.
+
+### Componentes Implementados
+
+#### 1. Kill Switch para RabbitMQ (Asincronía Opcional)
+
+**Problema Resuelto**: El desarrollo local requería ejecutar RabbitMQ solo para enviar emails via OTP, bloqueando a desarrolladores sin acceso a infraestructura pesada.
+
+**Solución**: Variable de entorno `ENABLE_ASYNC_FEATURES` controla si el sistema usa asincronía:
+
+- **ENABLE_ASYNC_FEATURES=true**: Sistema conecta a RabbitMQ y ejecuta tareas en background
+- **ENABLE_ASYNC_FEATURES=false (default)**: Sistema degrada gracefully, generando OTP y logeando a consola en desarrollo
+
+**Implementación**:
+```go
+// cmd/api/main.go
+var mqClient *messaging.RabbitMQClient
+if os.Getenv("ENABLE_ASYNC_FEATURES") == "true" {
+    mqClient, err := messaging.ConnectRabbitMQ(...)
+    // Log: "Async Features activadas..."
+} else {
+    log.Println("Async Features desactivadas (modo sincrónico)")
+}
+```
+
+**OTPService Fallback**: Cuando mqClient es nil, el servicio genera OTP y loguea a consola en lugar de publicar a queue:
+```go
+if s.mqClient != nil {
+    s.mqClient.Publish("email_notifications", ...)
+} else {
+    log.Printf("[DEV MODE] OTP Code: %s", code)
+}
+```
+
+**Ventajas**: Desarrollo sin RabbitMQ, producción con async completo, graceful degradation garantizada.
+
+#### 2. CORS Middleware para Flutter Web
+
+**Problema Resuelto**: Aplicaciones Flutter Web compiladas a HTML/JavaScript no pueden hacer peticiones HTTP a un dominio diferente debido a la política de mismo-origen del navegador.
+
+**Solución**: Middleware `CORSMiddleware()` en `internal/transport/http/middleware/cors.go` autoriza explícitamente requests desde cualquier origen:
+
+**Headers Configurados**:
+- `Access-Control-Allow-Origin: *` (desarrollo), con lista de dominios en producción
+- `Access-Control-Allow-Methods: POST, OPTIONS, GET, PUT, DELETE`
+- `Access-Control-Allow-Headers: ..., Authorization, ...` (permite JWT)
+- Manejo de preflight requests (OPTIONS) con respuesta 204 No Content
+
+**Aplicación Global** en main.go:
+```go
+r := gin.Default()
+r.Use(middleware.CORSMiddleware())  // Aplicado ANTES de rutas
+// Todas las rutas heredan CORS automáticamente
+```
+
+**Impacto**: Flutter Web ahora se ejecuta en localhost:3000 sin bloqueos CORS, Frontend y Backend pueden estar en puertos diferentes.
+
+#### 3. Flujo de Autenticación Mejorado con OTP
+
+**Cambios en Register**:
+- Parámetro `role` agregado (adopter | rescatista)
+- Genera automáticamente código OTP después de crear usuario
+- Responde "Código de verificación enviado a tu email"
+
+**Nuevos Endpoints**:
+- `POST /auth/otp/request`: Solicita código (si no se envió en register)
+- `POST /auth/otp/verify`: Verifica código y marca usuario como verificado
+
+**Frontend Integration** (app/lib/features/auth/):
+- `RegisterScreen`: Obtiene rol del usuario, muestra feedback de OTP enviado
+- Navega a `OTPScreen(email)` para entrada de código de 6 dígitos
+- `AuthRepository`: Método `verifyOtp(email, code)` para completar verificación
+
+#### 4. RepositoryProvider Inyectado (ChatRepository)
+
+**Change en main.dart**:
+```dart
+MultiRepositoryProvider(
+  providers: [
+    RepositoryProvider(create: (context) => AuthRepository()),
+    RepositoryProvider(create: (context) => ChatRepository()),  // NUEVO
+    RepositoryProvider(create: (context) => PetsRepository()),
+  ],
+)
+```
+
+**Impacto**: ChatRepository disponible en cualquier screen sin BLoC extra, preparado para chat real-time en Fase 4.
+
+#### 5. Configuración de Infraestructura
+
+**docker-compose.yml** ajustado:
+- No incluye RabbitMQ por defecto (consistent con Kill Switch)
+- Servicios incluidos: PostgreSQL, Redis, MinIO, Backend
+- Backend sin `ENABLE_ASYNC_FEATURES` → modo sincrónico por defecto
+- Ideal para desarrollo sin overhead de cola de mensajes
+
+### Validación y Testing
+
+**Kill Switch Validatable**:
+```bash
+# Modo sincrónico (default)
+docker-compose up
+
+# Modo asincrónico (requiere RabbitMQ en host local)
+ENABLE_ASYNC_FEATURES=true docker-compose up
+```
+
+**CORS Verificable**: Aplicación Flutter Web accede a http://localhost:8080/api/v1 sin errores de navegador
+
+**OTP Generado**: En modo sincrónico, códigos aparecen en logs del backend:
+```
+[DEV MODE] OTP Code for user@example.com: 123456
+```
+
+### Salidas a Etapa 2
+
+La Etapa 1 prepara el camino para:
+- **Identidad y Perfiles**: Completar perfil del adoptante con datos demográficos
+- **Rescatista Dashboard**: Backend listo para endpoints sin CORS issues
+- **Chat Real-time**: RepositoryProvider inyectado, solo necesita WebSocket implementation
+- **Producción**: Kill Switch permite escalar fácilmente a asincronía completa
+
 ## Características Principales por Fase
 
 ### Fase 7: CI/CD y Testing Automático

@@ -359,6 +359,234 @@ WHERE ST_DWithin(
 - Si existe Servidor A y B, ambos se conectan al mismo Redis
 - Usuario en Servidor A puede chatear con usuario en Servidor B
 
+
+## Actualización Etapa 1: Kill Switch de RabbitMQ (Asincronía Condicional)
+
+La Etapa 1 de Operación PAWS Real introduce un mecanismo crítico de "Kill Switch" que permite que el sistema funcione sin RabbitMQ, una dependencia pesada no adecuada para desarrollo local rápido.
+
+### Problema de Infraestructura
+
+El envío de emails (especialmente códigos OTP) requería integración con RabbitMQ para:
+- Desacoplar el servicio de autenticación de la tarea de envío de email
+- Permitir reintentos automáticos si el servicio de email falla
+- Escalar el envío de notificaciones en producción
+
+Sin embargo, esto creaba un obstáculo para desarrolladores locales:
+- Instalación y configuración de RabbitMQ es pesada
+- Requiere conocimiento de colas y pub/sub
+- Ralentiza el ciclo de desarrollo (iniciar múltiples servicios)
+- No todos los desarrolladores tienen acceso a infraestructura completa
+
+### Solución: Kill Switch con ENABLE_ASYNC_FEATURES
+
+Se implementó un patrón de "Kill Switch" que permite alternar entre modo asincrónico (con RabbitMQ) y sincrónico (con logging a consola).
+
+#### Variable de Entorno
+
+```bash
+# En .env o variables del sistema
+ENABLE_ASYNC_FEATURES=true    # Activa RabbitMQ y procesamiento async
+ENABLE_ASYNC_FEATURES=false   # (default) Sincrónico, RabbitMQ opcional
+```
+
+#### Implementación en main.go
+
+```go
+package main
+
+import (
+    "os"
+    "log"
+    "github.com/joho/godotenv"
+    "internal/messaging"
+)
+
+func main() {
+    godotenv.Load()
+    
+    // KILL SWITCH: Decidir si usar RabbitMQ
+    var mqClient *messaging.RabbitMQClient
+    var err error
+    
+    if os.Getenv("ENABLE_ASYNC_FEATURES") == "true" {
+        mqClient, err = messaging.ConnectRabbitMQ(
+            "amqp://guest:guest@rabbitmq:5672/",
+        )
+        if err != nil {
+            log.Printf("[WARNING] No se pudo conectar a RabbitMQ: %v", err)
+            log.Printf("[INFO] Sistema degradado a modo sincrónico")
+            mqClient = nil  // Fallback seguro
+        } else {
+            log.Println("[INFO] Async Features ACTIVADAS - RabbitMQ conectado")
+        }
+    } else {
+        log.Println("[INFO] Async Features DESACTIVADAS - Modo sincrónico")
+    }
+    
+    // Inyectar mqClient (puede ser nil) en servicios
+    otpService := services.NewOTPService(mqClient)
+    authHandler := handlers.NewAuthHandler(otpService)
+    
+    r := gin.Default()
+    // ... resto de configuración
+}
+```
+
+#### Flujo por Modo
+
+**Modo Asincrónico (ENABLE_ASYNC_FEATURES=true)**:
+```
+Usuario registra → AuthHandler.Register()
+    → OTPService.GenerateOTP()
+    → Publica a RabbitMQ queue "email_notifications"
+    → Responde inmediatamente al usuario
+    → Worker externo consume queue y envía email
+```
+
+**Modo Sincrónico (default)**:
+```
+Usuario registra → AuthHandler.Register()
+    → OTPService.GenerateOTP()
+    → mqClient es nil → Loguea a consola [DEV MODE]
+    → Responde inmediatamente al usuario
+    → En logs aparece el código OTP para testing
+```
+
+### OTPService Manejo de Fallback
+
+```go
+// internal/core/services/otp_service.go
+
+type OTPService struct {
+    mqClient *messaging.RabbitMQClient  // Puede ser nil
+}
+
+func NewOTPService(mq *messaging.RabbitMQClient) *OTPService {
+    return &OTPService{mqClient: mq}
+}
+
+func (s *OTPService) GenerateOTP(email string) (string, error) {
+    code := s.generateRandomCode(6)  // "123456"
+    
+    if s.mqClient != nil {
+        // Modo async: Publicar a cola
+        err := s.mqClient.Publish("email_notifications", OTPEvent{
+            Email: email,
+            Code:  code,
+        })
+        if err != nil {
+            // Fallback si falla publish
+            log.Printf("[FALLBACK] No se pudo publicar a RabbitMQ: %v. Logeando.", err)
+            log.Printf("[DEV MODE] OTP para %s: %s", email, code)
+        }
+    } else {
+        // Modo sync: Loguear directamente
+        log.Printf("[DEV MODE] OTP generado para %s: %s", email, code)
+    }
+    
+    return code, nil
+}
+```
+
+### Configuración de docker-compose.yml
+
+La configuración de docker-compose.yml deliberadamente **NO incluye RabbitMQ**:
+
+```yaml
+version: '3.8'
+
+services:
+  db:
+    image: postgis/postgis:15-3.3
+    # ...
+  
+  redis:
+    image: redis:alpine
+    # ...
+  
+  backend:
+    build: .
+    environment:
+      ENABLE_ASYNC_FEATURES: "false"  # Explícitamente desactivado
+    ports:
+      - "8080:8080"
+    # ... NO incluye RabbitMQ
+
+volumes:
+  postgres_data:
+  redis_data:
+```
+
+**Razón**: Los desarrolladores pueden iniciar `docker-compose up` y tener un sistema completamente funcional sin dependencias extra.
+
+### Ventajas del Kill Switch
+
+1. **Desarrollo Rápido**: `docker-compose up` → sistema listo en 10 segundos
+2. **Graceful Degradation**: Si RabbitMQ falla, sistema sigue funcionando
+3. **Testing Fácil**: En modo sincrónico, codes aparecen en logs
+4. **Escalabilidad**: En producción, `ENABLE_ASYNC_FEATURES=true` + RabbitMQ = full async
+5. **Flexibilidad Arquitectónica**: Cambiar de sync a async sin recompilación
+
+### Casos de Uso
+
+#### Caso 1: Desarrollo Local (Default)
+
+```bash
+cd PAWS-2.0
+docker-compose up                    # RabbitMQ no necesario
+# Backend accesible en http://localhost:8080
+# OTP codes aparecen en logs de backend
+```
+
+#### Caso 2: Testing con Async
+
+```bash
+# Instalar RabbitMQ localmente
+docker run -d --name rabbitmq -p 5672:5672 rabbitmq:3.12
+
+# Activar async
+ENABLE_ASYNC_FEATURES=true docker-compose up
+
+# Backend intenta conectar a RabbitMQ y procesa async
+```
+
+#### Caso 3: Producción
+
+```bash
+# En servidor de producción
+ENABLE_ASYNC_FEATURES=true
+RABBITMQ_URL=amqp://user:pass@rabbitmq-prod:5672/
+
+# Ejecutar con email worker + notifications processor
+# Sistema completamente asincrónico y escalable
+```
+
+### Testing de Kill Switch
+
+Para verificar que el Kill Switch funciona:
+
+```bash
+# Verificar modo sincrónico (default)
+docker-compose up
+# En logs deberías ver:
+# [INFO] Async Features DESACTIVADAS - Modo sincrónico
+
+# Registrar usuario:
+curl -X POST http://localhost:8080/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@example.com", "password":"pass123", "role":"adopter"}'
+
+# En logs del backend aparecerá:
+# [DEV MODE] OTP generado para user@example.com: 456789
+```
+
+### Salidas hacia Etapa 2
+
+- **Identidad y Perfiles**: OTP completamente validado y listo para verificación de email
+- **Rescatista Dashboard**: Backend puede escalar a async en producción sin cambios de código
+- **Chat Real-time**: Redis ya está disponible para pub/sub
+- **Producción**: Infraestructura preparada para full async con RabbitMQ
+
 ## Referencias y Documentación
 
 - Go Standard Project Layout: https://github.com/golang-standards/project-layout

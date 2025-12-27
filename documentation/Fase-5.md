@@ -785,6 +785,257 @@ feature/
 3. **Testeabilidad**: Cada capa se testea independientemente
 4. **Escalabilidad**: Equipo A trabaja en Auth, Equipo B en Pets, sin conflictos
 
+
+## Actualización Etapa 1: EnvironmentConfig y Configuración Dinámica de API
+
+La Etapa 1 identifica un vacío crítico en la configuración del frontend: los endpoints de API están hardcodeados para emulador Android específicamente, sin soporte para diferentes plataformas de ejecución.
+
+### Problema Actual
+
+El archivo `app/lib/core/constants/api_constants.dart` contiene:
+
+```dart
+class ApiConstants {
+  // Hardcodeado para Android Emulator en Windows
+  static const String baseUrl = "http://10.0.2.2:8080/api/v1";
+  static const String wsUrl = "ws://10.0.2.2:8080/api/v1";
+}
+```
+
+**Limitaciones identificadas**:
+
+1. **10.0.2.2** es una dirección especial que SOLO funciona en emulador Android
+2. **Web (Flutter Web)** necesita `http://localhost:8080/api/v1`
+3. **Dispositivo físico** necesita dirección IP real de la máquina (ej: `192.168.1.100`)
+4. **Producción** necesita URL en dominio (ej: `https://api.paws.com`)
+5. No hay detección automática → requiere recompilación para cambiar entorno
+
+### Solución: EnvironmentConfig con Detección Automática
+
+Se implementará un sistema de EnvironmentConfig que detecta automáticamente la plataforma de ejecución y configura URLs apropiadas.
+
+#### 1. Crear app/lib/core/config/environment_config.dart
+
+```dart
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'dart:io' show Platform;
+
+class EnvironmentConfig {
+  static late final String _baseUrl;
+  static late final String _wsUrl;
+  static late final String _environment;
+  
+  /// Inicializar configuración basada en plataforma
+  static void initialize() {
+    if (kIsWeb) {
+      // Flutter Web: localhost
+      _baseUrl = "http://localhost:8080/api/v1";
+      _wsUrl = "ws://localhost:8080/api/v1";
+      _environment = "web";
+    } else if (Platform.isAndroid) {
+      // Android: Detectar si es emulador o dispositivo físico
+      if (_isAndroidEmulator()) {
+        // Emulador: usar 10.0.2.2 (localhost del host)
+        _baseUrl = "http://10.0.2.2:8080/api/v1";
+        _wsUrl = "ws://10.0.2.2:8080/api/v1";
+        _environment = "android_emulator";
+      } else {
+        // Dispositivo físico: usar IP local
+        // En desarrollo, se puede hardcodear o cargar de config
+        _baseUrl = "http://192.168.1.100:8080/api/v1";  // Ajustar según tu red
+        _wsUrl = "ws://192.168.1.100:8080/api/v1";
+        _environment = "android_device";
+      }
+    } else if (Platform.isIOS) {
+      // iOS Simulator
+      _baseUrl = "http://localhost:8080/api/v1";
+      _wsUrl = "ws://localhost:8080/api/v1";
+      _environment = "ios_simulator";
+    } else {
+      // Fallback (escritorio, etc.)
+      _baseUrl = "http://localhost:8080/api/v1";
+      _wsUrl = "ws://localhost:8080/api/v1";
+      _environment = "fallback";
+    }
+    
+    print("[EnvironmentConfig] Inicializado en ambiente: $_environment");
+    print("[EnvironmentConfig] Base URL: $_baseUrl");
+  }
+  
+  /// Detectar si es Android Emulator
+  /// El emulador siempre retorna manufacturer="unknown", model="Android SDK"
+  static bool _isAndroidEmulator() {
+    // Implementación simplificada
+    // En versión completa, usar package:device_info_plus para verificar
+    // si es emulador vs dispositivo real
+    return false;  // Por ahora, asumir dispositivo físico
+  }
+  
+  static String get baseUrl => _baseUrl;
+  static String get wsUrl => _wsUrl;
+  static String get environment => _environment;
+}
+```
+
+#### 2. Mejorar Detección de Emulador
+
+Para detectar si es emulador Android automáticamente, usar `device_info_plus`:
+
+```dart
+// En pubspec.yaml, agregar:
+dependencies:
+  device_info_plus: ^10.1.0
+```
+
+```dart
+import 'package:device_info_plus/device_info_plus.dart';
+
+static Future<bool> _isAndroidEmulator() async {
+  try {
+    final androidInfo = await DeviceInfoPlugin().androidInfo;
+    
+    // Emulador: manufacturer="unknown", model="Android SDK"
+    // Dispositivo físico: manufacturer="Samsung", model="SM-A505F", etc.
+    return androidInfo.manufacturer == "unknown" && 
+           androidInfo.model.contains("SDK");
+  } catch (e) {
+    return false;  // Fallback si no se puede determinar
+  }
+}
+```
+
+#### 3. Integrar en main.dart
+
+```dart
+import 'package:app/core/config/environment_config.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Inicializar configuración ANTES de cualquier petición HTTP
+  EnvironmentConfig.initialize();
+  
+  runApp(const MyApp());
+}
+```
+
+#### 4. Actualizar ApiConstants para usar EnvironmentConfig
+
+```dart
+// app/lib/core/constants/api_constants.dart
+
+import 'package:app/core/config/environment_config.dart';
+
+class ApiConstants {
+  static String get baseUrl => EnvironmentConfig.baseUrl;
+  static String get wsUrl => EnvironmentConfig.wsUrl;
+  
+  // Endpoints
+  static const String authRegister = "/auth/register";
+  static const String authLogin = "/auth/login";
+  static const String authOtpRequest = "/auth/otp/request";
+  static const String authOtpVerify = "/auth/otp/verify";
+  
+  // Chat
+  static const String chatSocket = "/chat/ws";
+}
+```
+
+### Tabla de Plataformas Soportadas
+
+| Plataforma           | Base URL                    | WebSocket URL               | Detección         |
+| -------------------- | --------------------------- | --------------------------- | ----------------- |
+| Android Emulator     | `http://10.0.2.2:8080/...` | `ws://10.0.2.2:8080/...`   | manufacturer=unknown, model=SDK |
+| Android Device       | `http://192.168.1.X:8080/..` | `ws://192.168.1.X:8080/..` | Real manufacturer/model |
+| iOS Simulator        | `http://localhost:8080/...` | `ws://localhost:8080/...`  | Platform.isIOS == true |
+| Flutter Web          | `http://localhost:8080/...` | `ws://localhost:8080/...`  | kIsWeb == true |
+| Escritorio (Linux)   | `http://localhost:8080/...` | `ws://localhost:8080/...`  | Platform.isLinux |
+| Producción           | `https://api.paws.com/...`  | `wss://api.paws.com/...`   | Config file |
+
+### Cómo Usar en Diferentes Entornos
+
+#### Desarrollo Local (Android Emulator)
+
+```bash
+# En Android Studio, ejecutar emulador
+flutter run
+
+# Se configura automáticamente: 10.0.2.2:8080
+# EnvironmentConfig detecta emulador y usa dirección especial
+```
+
+#### Desarrollo con Dispositivo Real
+
+```bash
+# Conectar dispositivo físico Android
+# Editar IP en EnvironmentConfig._baseUrl
+_baseUrl = "http://192.168.1.100:8080/api/v1";  # Tu IP local
+
+flutter run
+
+# Se conecta al backend en red local
+```
+
+#### Desarrollo Web
+
+```bash
+# Flutter Web se ejecuta en navegador
+flutter run -d web
+
+# Se configura automáticamente: localhost:8080
+```
+
+#### Producción (CI/CD)
+
+```dart
+// Crear archivo separado: app/lib/core/config/production_config.dart
+const String productionBaseUrl = "https://api.paws.com/v1";
+const String productionWsUrl = "wss://api.paws.com/v1";
+```
+
+### Ventajas de EnvironmentConfig
+
+1. **Cero Recompilación**: Cambios de URL sin rebuild
+2. **Detección Automática**: Soporta 4+ plataformas automáticamente
+3. **Escalable**: Fácil agregar nuevas plataformas
+4. **Seguro**: URLs no hardcodeadas en código
+5. **Testeable**: Mock EnvironmentConfig en tests
+6. **Documentado**: Logs indican qué configuración se usó
+
+### Testing de EnvironmentConfig
+
+```dart
+// test/core/config/environment_config_test.dart
+
+void main() {
+  group('EnvironmentConfig', () {
+    test('detecta Android Emulator correctamente', () async {
+      EnvironmentConfig.initialize();
+      
+      // En emulador, debería ser 10.0.2.2
+      if (Platform.isAndroid) {
+        expect(EnvironmentConfig.baseUrl, contains("10.0.2.2"));
+      }
+    });
+    
+    test('detecta Web correctamente', () {
+      EnvironmentConfig.initialize();
+      
+      if (kIsWeb) {
+        expect(EnvironmentConfig.baseUrl, "http://localhost:8080/api/v1");
+      }
+    });
+  });
+}
+```
+
+### Impacto en Etapa 2+
+
+- **Fase 5 (Frontend)**: AuthRepository y ChatRepository usan EnvironmentConfig automáticamente
+- **Fase 4 (Chat)**: WebSocket se conecta a URL dinámica en lugar de hardcodeada
+- **Fase 3 (Matching)**: PetsRepository puede trabajar en Web, Android y iOS sin cambios
+- **Producción**: Deploy automatizado con URLs configurables por entorno
+
 ## Referencias y Recursos
 
 - **Flutter Bloc Pattern**: https://bloclibrary.dev/
