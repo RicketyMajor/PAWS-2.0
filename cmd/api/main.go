@@ -12,7 +12,7 @@ import (
 	"github.com/RicketyMajor/PAWS-2.0/internal/platform/database"
 	
 	httpTransport "github.com/RicketyMajor/PAWS-2.0/internal/transport/http"
-	"github.com/RicketyMajor/PAWS-2.0/internal/transport/http/middleware"
+	"github.com/RicketyMajor/PAWS-2.0/internal/transport/http/middleware" // Asegúrate que importe el paquete donde pusiste cors.go y auth.go
 	
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -23,15 +23,13 @@ func main() {
 	// 1. CONFIGURACIÓN E INFRAESTRUCTURA
 	// =========================================================================
 	
-	// Cargar variables de entorno
 	if err := godotenv.Load(); err != nil {
 		log.Println("Info: No se encontró archivo .env, usando variables del sistema")
 	}
 
-	// Conexión a Base de Datos
 	database.Connect()
 
-	// Migraciones (Esquema completo)
+	// Migraciones
 	if err := database.DB.AutoMigrate(
 		&domain.User{}, 
 		&domain.UserProfile{},
@@ -45,34 +43,44 @@ func main() {
 		log.Fatal("Error crítico migrando BD:", err)
 	}
 
-	// RabbitMQ (Messaging)
-	mqClient, err := messaging.ConnectRabbitMQ("amqp://guest:guest@rabbitmq-service:5672/")
-	if err != nil {
-		log.Println("RabbitMQ no disponible. El sistema funcionará, pero sin eventos asíncronos (OTP en logs).")
+	// -------------------------------------------------------------------------
+	// KILL SWITCH: RabbitMQ & Async (Etapa 1)
+	// -------------------------------------------------------------------------
+	var mqClient *messaging.RabbitMQClient
+	var err error
+	
+	// Solo intentamos conectar si esta variable NO es "false"
+	// Esto te permite trabajar en frontend sin levantar infraestructura pesada
+	if os.Getenv("ENABLE_ASYNC_FEATURES") == "true" {
+		mqClient, err = messaging.ConnectRabbitMQ("amqp://guest:guest@rabbitmq-service:5672/")
+		if err != nil {
+			log.Println("RabbitMQ error: El sistema funcionará en MODO SÍNCRONO (fallback).")
+		} else {
+			defer mqClient.Close()
+			log.Println("Conectado a RabbitMQ (Modo Asíncrono Activado)")
+		}
 	} else {
-		defer mqClient.Close()
-		log.Println("Conectado a RabbitMQ")
+		log.Println("Async Features desactivadas (ENABLE_ASYNC_FEATURES != true). Usando modo síncrono simple.")
 	}
 
-	// Cliente de Email (SendGrid)
 	emailClient := email.NewEmailClient()
 
-	// Worker de Email (Consumidor)
+	// Worker solo arranca si hay conexión real
 	if mqClient != nil {
 		workers.StartEmailConsumer(mqClient, emailClient)
 	}
 
-	// WebSocket Hub (Motor de chat)
+	// WebSocket Hub
 	hub := httpTransport.NewHub()
 	go hub.Run()
 
 	// =========================================================================
-	// 2. INYECCIÓN DE DEPENDENCIAS (SERVICIOS)
+	// 2. INYECCIÓN DE DEPENDENCIAS
 	// =========================================================================
 
-	// Nivel 1: Servicios Base
-	otpService      := services.NewOTPService(mqClient)
-	authService     := services.NewAuthService(database.DB) // Asumimos que requiere DB
+	// IMPORTANTE: Los servicios deben saber manejar mqClient == nil
+	otpService      := services.NewOTPService(mqClient) 
+	authService     := services.NewAuthService(database.DB)
 	petService      := services.NewPetService(database.DB)
 	userService     := services.NewUserService(database.DB)
 	chatService     := services.NewChatService(database.DB)
@@ -80,12 +88,11 @@ func main() {
 	fileService     := services.NewFileService()
 	identityService := services.NewIdentityService()
 
-	// Nivel 2: Servicios Compuestos (Dependen de otros)
 	reportService   := services.NewReportService(database.DB, authService)
 	matchService    := services.NewMatchService(database.DB, petService)
 
 	// =========================================================================
-	// 3. HANDLERS (CONTROLADORES HTTP)
+	// 3. HANDLERS
 	// =========================================================================
 
 	authHandler     := httpTransport.NewAuthHandler(authService, otpService)
@@ -97,74 +104,60 @@ func main() {
 	uploadHandler   := httpTransport.NewUploadHandler(fileService)
 	identityHandler := httpTransport.NewIdentityHandler(identityService)
 	
-	// WebSocket Handler (Inyectamos Hub y ChatService para persistencia)
 	wsHandler       := httpTransport.NewWSHandler(hub, chatService)
 
 	// =========================================================================
-	// 4. RUTAS (ROUTER)
+	// 4. RUTAS & MIDDLEWARE
 	// =========================================================================
 
 	r := gin.Default()
-	r.Static("/uploads", "./uploads") // Servir imágenes
+	
+	// APLICAR CORS: Fundamental para Flutter Web
+	r.Use(middleware.CORSMiddleware())
+
+	r.Static("/uploads", "./uploads")
 
 	api := r.Group("/api/v1")
 	{
-		// ---------------------------------------------------------------------
-		// A. RUTAS PÚBLICAS (Sin Token)
-		// ---------------------------------------------------------------------
-		
-		// Auth & OTP
+		// RUTAS PÚBLICAS
 		auth := api.Group("/auth")
 		{
 			auth.POST("/register", authHandler.Register)
 			auth.POST("/login", authHandler.Login)
-			auth.POST("/otp/request", authHandler.RequestOTP) // Asumiendo que RequestOTP está en AuthHandler u OTPHandler
+			auth.POST("/otp/request", authHandler.RequestOTP)
 			auth.POST("/otp/verify", authHandler.VerifyOTP)
 		}
 
-		// Verificación de Identidad (Registro)
 		api.POST("/verification/verify", identityHandler.Verify)
 
-		// Mascotas (Lectura y Búsqueda)
 		petsPublic := api.Group("/pets")
 		{
-			petsPublic.GET("", petHandler.GetAll)           // Listar con filtros básicos
-			petsPublic.GET("/:id", petHandler.GetPetByID)   // Ver detalle
-			petsPublic.GET("/nearby", petHandler.GetNearby) // Geo-búsqueda (PostGIS/Haversine)
+			petsPublic.GET("", petHandler.GetAll)
+			petsPublic.GET("/:id", petHandler.GetPetByID)
+			petsPublic.GET("/nearby", petHandler.GetNearby)
 		}
 
-		// ---------------------------------------------------------------------
-		// B. RUTAS PROTEGIDAS (Con Token JWT)
-		// ---------------------------------------------------------------------
-		
+		// RUTAS PROTEGIDAS
 		protected := api.Group("/")
-		protected.Use(middleware.AuthMiddleware())
+		protected.Use(middleware.AuthMiddleware()) // Tu auth.go original
 		{
-			// Usuario
 			protected.PUT("/profile", userHandler.UpdateProfile)
-
-			// Mascotas (Escritura)
-			protected.POST("/pets", petHandler.Create) // Publicar mascota
-
-			// Archivos
+			protected.POST("/pets", petHandler.Create)
 			protected.POST("/files/upload", uploadHandler.Upload)
 
-			// Matchmaking (Tinder Logic)
 			match := protected.Group("/matches")
 			{
-				match.GET("/candidates", userHandler.GetSwipeDeck) // Obtener cartas
-				match.POST("/swipe", matchHandler.Swipe)           // Dar Like/Dislike
-				match.GET("/requests", matchHandler.GetPending)    // Ver quién me dio like
-				match.POST("/respond", matchHandler.Respond)       // Aceptar/Rechazar match
-				match.GET("/:id/messages", socialHandler.GetChatHistory) // Historial de chat
+				match.GET("/candidates", userHandler.GetSwipeDeck)
+				match.POST("/swipe", matchHandler.Swipe)
+				match.GET("/requests", matchHandler.GetPending)
+				match.POST("/respond", matchHandler.Respond)
+				match.GET("/:id/messages", socialHandler.GetChatHistory)
 			}
 
-			// Social & Comunidad
 			protected.POST("/reviews", socialHandler.CreateReview)
 			protected.POST("/report", reportHandler.Create)
 
-			// WebSocket (Chat Realtime)
-			// Unificado en una sola ruta estándar
+			// WebSocket unificado
 			protected.GET("/ws", wsHandler.HandleConnections)
 		}
 	}
@@ -179,6 +172,7 @@ func main() {
 	}
 	log.Printf("Servidor PAWS iniciado en puerto %s", port)
 	
+	// En Web/Vercel no usamos localhost, usamos 0.0.0.0 implícitamente al omitir IP
 	if err := r.Run(":" + port); err != nil {
 		log.Fatal("Error fatal en servidor:", err)
 	}
