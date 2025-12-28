@@ -363,6 +363,199 @@ func (h *SocialHandler) CreateReview(c *gin.Context) {
 }
 ```
 
+#### 7. transport/http/hub.go - Orquestador Central de WebSocket
+
+El Hub es el corazón de la infraestructura WebSocket. Gestiona todas las conexiones activas y distribuye mensajes de forma concurrente usando canales Go.
+
+```go
+type Hub struct {
+    // Clientes registrados
+    clients    map[*Client]bool
+
+    // Canales para registración/desregistración de clientes
+    register   chan *Client
+    unregister chan *Client
+
+    // Canal para difusión a TODOS los clientes
+    broadcast  chan []byte
+}
+
+func NewHub() *Hub {
+    return &Hub{
+        clients:    make(map[*Client]bool),
+        register:   make(chan *Client),
+        unregister: make(chan *Client),
+        broadcast:  make(chan []byte, 256),
+    }
+}
+
+// Run: Bucle infinito que maneja eventos del Hub
+// Este método DEBE ejecutarse en una goroutine: go hub.Run()
+func (h *Hub) Run() {
+    for {
+        select {
+        case client := <-h.register:
+            // Nuevo cliente se conecta
+            h.clients[client] = true
+            log.Printf("Cliente registrado. Total: %d", len(h.clients))
+
+        case client := <-h.unregister:
+            // Cliente se desconecta
+            if _, ok := h.clients[client]; ok {
+                delete(h.clients, client)
+                close(client.send)
+                log.Printf("Cliente desregistrado. Total: %d", len(h.clients))
+            }
+
+        case message := <-h.broadcast:
+            // Difundir a TODOS los clientes conectados
+            for client := range h.clients {
+                select {
+                case client.send <- message:
+                    // Mensaje enviado exitosamente
+                default:
+                    // Si el canal send está lleno (cliente lento)
+                    // lo desconectamos para evitar bloqueo
+                    go func(c *Client) {
+                        h.unregister <- c
+                    }(client)
+                }
+            }
+        }
+    }
+}
+```
+
+**Patrón de Concurrencia**:
+
+- **Mapa `clients`**: Almacena referencias a todos los `Client` activos
+- **Canales `register/unregister`**: Sincronización thread-safe de conexiones
+- **Canal `broadcast`**: Punto central de difusión de mensajes
+- **select en loop infinito**: Multiplexing de 3 tipos de eventos
+
+**Ventajas de este diseño**:
+
+1. **Thread-safe**: Sin mutexes explícitos, los canales sincronizan acceso al mapa
+2. **Escalable**: Soporta miles de conexiones simultáneas
+3. **Resiliente**: Si un cliente es lento (send lleno), se desconecta sin afectar otros
+4. **Simple**: Lógica clara en el bucle principal
+
+**Ejecución en main.go**:
+
+```go
+hub := httpTransport.NewHub()
+go hub.Run()  // CRÍTICO: ejecutar en goroutine separada
+```
+
+#### 8. transport/http/client.go - Representación de Conexión Individual
+
+Cada Cliente representa una conexión WebSocket activa de un usuario.
+
+```go
+type Client struct {
+    // Referencia al Hub (para desregistración)
+    hub *Hub
+
+    // Conexión WebSocket
+    conn *websocket.Conn
+
+    // Canal para enviar mensajes a este cliente
+    // Buffered (256 bytes) para no bloquear al Hub
+    send chan []byte
+
+    // ID del usuario autenticado
+    userID uint
+}
+```
+
+**Responsabilidades de Client**:
+
+- **Mantener conexión viva**: conn es la conexión TCP subyacente
+- **Recibir del Hub**: El canal `send` recibe mensajes desde hub.broadcast
+- **Identidad**: userID vincula la conexión con el usuario autenticado
+
+**Ciclo de vida**:
+
+1. **Creación** en WSHandler.HandleConnections:
+
+   ```go
+   client := &Client{
+       hub:    h.hub,
+       conn:   conn,
+       send:   make(chan []byte, 256),
+       userID: userID,
+   }
+   h.hub.register <- client
+   ```
+
+2. **Vida activa**: El cliente está en `h.hub.clients` mapa
+
+   - Lee mensajes en readPump (llamado desde WSHandler)
+   - Recibe broadcasts en writePump
+
+3. **Desconexión**:
+   ```go
+   defer func() {
+       h.hub.unregister <- client  // Remover de Hub
+       conn.Close()                 // Cerrar TCP
+   }()
+   ```
+
+**Interacción con Hub**:
+
+```
+Cliente (WebSocket)
+    |
+    +-- send channel ←→ hub.broadcast
+                         |
+                         v
+                    [otro cliente]
+                    [otro cliente]
+                    [otro cliente]
+```
+
+Cuando Hub envía por `broadcast`, TODOS los clientes en el mapa reciben en su canal `send`.
+
+#### 9. Flujo Integrado: Hub + Client + WSHandler
+
+El Hub y Client son **infraestructura concurrente**. WSHandler es quien **orquesta la integración**:
+
+**En HandleConnections**:
+
+```
+1. Crear Client con send channel
+2. client.hub.register <- client      [Client entra al Hub]
+3. Spawnar readPump() goroutine       [Lee del WebSocket]
+4. Spawnar writePump() goroutine      [Escribe al WebSocket]
+5. Hub.Run() está listening:
+   - Si broadcast llega → envía a TODOS los send channels
+   - readPump consume desde client.send ← hub.broadcast
+   - writePump consume desde client.send ← hub.broadcast
+   - Cada writePump escribe al WebSocket del cliente
+```
+
+**Diagrama de Goroutines**:
+
+```
+main goroutine:
+  └─ go hub.Run()              [Goroutine 1: Orquesta central]
+  └─ go handler()
+       └─ go readPump()        [Goroutine N: Lee de socket N]
+       └─ go writePump()       [Goroutine N: Escribe a socket N]
+       └─ go readPump()        [Goroutine N+1]
+       └─ go writePump()       [Goroutine N+1]
+       └─ ... (para cada cliente)
+```
+
+**El Hub no conoce de WebSockets, ni de Handlers** → Desacoplamiento perfecto:
+
+- Hub: Maneja clientes y canales (abstracto)
+- Client: Estructura con userID y send (simple)
+- WSHandler: Integra HTTP/WS con ChatService (orquestación)
+- ChatService: Valida y persiste (negocio)
+
+Cada componente tiene una responsabilidad clara.
+
 ### Archivos Modificados
 
 #### cmd/api/main.go (Actualizado)

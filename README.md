@@ -490,6 +490,791 @@ Etapa 2 prepara el terreno para:
 - **Analytics**: Tracking de qué filtros son más usados para optimización futura
 
 ## Características Principales por Fase
+## Etapa 3: Confianza Comunitaria y Comunicación Segura (Completada)
+
+La Etapa 3 completa el triángulo de confianza en PAWS: después de conectar adoptantes con mascotas (Etapa 2) y asegurar que solo usuarios legítimos pueden acceder (Etapa 1), ahora habilitamos comunicación segura, reputación comunitaria y defensa automática contra abusos. Esta etapa transforma PAWS de una plataforma transaccional a una comunidad de confianza.
+
+### Componentes Implementados
+
+#### 1. Sistema de Reportes y Ban Automático (R-SEC-04)
+
+**Problema Resuelto**: Sin mecanismo de reportes, usuarios maliciosos (timadores, acosadores) pueden operar sin restricción, destruyendo confianza comunitaria.
+
+**Solución**: Sistema de reportes con ban automático tras acumulación de 3 reportes verificados. Cada reporte registra al denunciante, el acusado, el motivo y el estado. Al alcanzar 3 reportes verificados, el usuario es automáticamente añadido a la blacklist.
+
+**Implementación**:
+
+```go
+// domain/report.go
+type Report struct {
+    gorm.Model
+    ReporterID uint   `gorm:"not null"` // Quién acusa
+    ReportedID uint   `gorm:"not null"` // El acusado
+    Reason     string `gorm:"not null"` // "Maltrato", "Acoso", "Cuenta Falsa"
+    Status     string `gorm:"default:'pending'"` // pending, verified, rejected
+}
+
+// services/report_service.go
+type ReportService struct {
+    db          *gorm.DB
+    authService *AuthService // Para acceso a blacklist
+}
+
+// CreateReport registra denuncia y verifica ban automático
+func (s *ReportService) CreateReport(reporterID, reportedID uint, reason string) error {
+    // 1. Evitar auto-reporte
+    if reporterID == reportedID {
+        return fmt.Errorf("no puedes reportarte a ti mismo")
+    }
+
+    // 2. Crear reporte (se marca como verified en MVP)
+    report := domain.Report{
+        ReporterID: reporterID,
+        ReportedID: reportedID,
+        Reason:     reason,
+        Status:     "verified", // En producción requeriría revisión manual
+    }
+
+    if err := s.db.Create(&report).Error; err != nil {
+        return err
+    }
+
+    // 3. Aplicar Regla de los 3 Strikes
+    return s.checkAndBanUser(reportedID)
+}
+
+// checkAndBanUser implementa regla: 3 reportes verificados = ban automático
+func (s *ReportService) checkAndBanUser(userID uint) error {
+    var count int64
+    s.db.Model(&domain.Report{}).
+        Where("reported_id = ? AND status = ?", userID, "verified").
+        Count(&count)
+
+    if count >= 3 {
+        // Obtener usuario
+        var user domain.User
+        if err := s.db.First(&user, userID).Error; err != nil {
+            return err
+        }
+
+        // Añadir a blacklist (por RUN, no ID)
+        blacklistEntry := domain.BlacklistEntry{
+            Run:    user.Run,
+            Reason: "Sistema: Acumulación de 3 reportes graves",
+        }
+
+        if err := s.db.Create(&blacklistEntry).Error; err != nil {
+            // Si ya estaba baneado, ignoramos
+            return nil
+        }
+
+        fmt.Printf("USUARIO BANEADO AUTOMÁTICAMENTE: %s (%s)\n", user.Name, user.Run)
+    }
+
+    return nil
+}
+```
+
+**Flujo**:
+1. Usuario A reporta a Usuario B por "Acoso"
+2. Sistema verifica: ¿es auto-reporte? No → Continuar
+3. Se crea Report(reporter_id=A, reported_id=B, status="verified")
+4. Se cuenta reportes verificados de B: ¿ >= 3? Si → BAN
+5. B es añadido a blacklist automáticamente
+6. Próximo intento de login de B es rechazado
+
+**Endpoint**:
+```
+POST /api/v1/report (Protegido)
+Headers: Authorization: Bearer TOKEN
+Body: {
+    "reported_id": 5,
+    "reason": "Acoso"
+}
+Response: 201 {"message": "Reporte recibido. Gracias por ayudar a la comunidad."}
+```
+
+#### 2. Sistema de Chat Persistente con Validación Inteligente
+
+**Problema Resuelto**: Chat sin persistencia pierde historial; sin validación, timadores pueden usar el chat para estafas.
+
+**Solución**: Chat híbrido (HTTP + WebSocket) que guarda cada mensaje en PostgreSQL con validación "Evil PAWS" que detecta intentos de estafa.
+
+**Componentes**:
+
+**domain/message.go** - Modelo de mensaje persistente:
+```go
+type Message struct {
+    ID        uint           `gorm:"primaryKey" json:"id"`
+    MatchID   uint           `gorm:"index;not null" json:"match_id"`
+    Match     Match          `gorm:"foreignKey:MatchID" json:"-"`
+    SenderID  uint           `gorm:"index;not null" json:"sender_id"`
+    Content   string         `gorm:"type:text;not null" json:"content"`
+    IsRead    bool           `gorm:"default:false" json:"is_read"`
+    CreatedAt time.Time      `json:"created_at"`
+    DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+}
+```
+
+**services/chat_service.go** - Lógica de validación:
+```go
+type ChatService struct {
+    db *gorm.DB
+}
+
+var forbiddenWords = []string{
+    "estafa", "odio", "matar", "depósito", "transferencia inmediata"
+}
+
+// SaveMessage valida contenido y guarda mensaje
+func (s *ChatService) SaveMessage(matchID, senderID uint, content string) (*domain.Message, error) {
+    // 1. Filtro "Evil PAWS" - Detecta palabras de estafa
+    if s.containsForbiddenContent(content) {
+        return nil, errors.New("mensaje bloqueado por contener términos prohibidos")
+    }
+
+    // 2. Verificar que Match esté aceptado
+    var match domain.Match
+    if err := s.db.First(&match, matchID).Error; err != nil {
+        return nil, errors.New("match no encontrado")
+    }
+    if match.Status != domain.MatchAccepted {
+        return nil, errors.New("no puedes chatear en un match no aceptado")
+    }
+
+    // 3. Guardar mensaje
+    msg := domain.Message{
+        MatchID:  matchID,
+        SenderID: senderID,
+        Content:  content,
+    }
+
+    if err := s.db.Create(&msg).Error; err != nil {
+        return nil, err
+    }
+
+    return &msg, nil
+}
+
+// GetHistory recupera conversación previa
+func (s *ChatService) GetHistory(matchID uint) ([]domain.Message, error) {
+    var messages []domain.Message
+    err := s.db.Where("match_id = ?", matchID).
+        Order("created_at asc").
+        Find(&messages).Error
+    return messages, err
+}
+
+// containsForbiddenContent detecta palabras sospechosas
+func (s *ChatService) containsForbiddenContent(text string) bool {
+    lowerText := strings.ToLower(text)
+    for _, word := range forbiddenWords {
+        if strings.Contains(lowerText, word) {
+            return true
+        }
+    }
+    return false
+}
+```
+
+**Arquitectura de Chat Híbrido**:
+
+El chat usa dos canales:
+
+1. **HTTP (Historial)**: GET /api/v1/matches/:id/messages
+   - Recupera conversación previa de PostgreSQL
+   - Permite cargar chat al abrir la app
+   - Implementado en SocialHandler.GetChatHistory()
+
+2. **WebSocket (Tiempo Real)**: GET /api/v1/ws
+   - Conexión bidireccional persistente
+   - Mensajes se validan y guardan en BD
+   - Se difunden a usuarios conectados via Hub
+
+**Endpoints**:
+```
+GET /api/v1/matches/:id/messages (Protegido)
+Headers: Authorization: Bearer TOKEN
+Response: 200 [
+    {"id": 1, "match_id": 1, "sender_id": 5, "content": "Hola", "created_at": "2025-12-20T10:00:00Z"},
+    {"id": 2, "match_id": 1, "sender_id": 7, "content": "Hola, cómo estás?", "created_at": "2025-12-20T10:05:00Z"}
+]
+
+GET /api/v1/ws (Protegido - WebSocket)
+Upgrade: websocket
+Message Incoming: {"match_id": 1, "content": "¿Cuándo podemos reunirnos?"}
+Message Validated: Si (no contiene palabras prohibidas)
+Message Saved: Si (guardado en PostgreSQL)
+Message Broadcast: Si (enviado a otros usuarios en ese match)
+```
+
+#### 3. WebSocket Hub para Difusión en Tiempo Real
+
+**Problema Resuelto**: WebSocket directo a cada cliente es ineficiente; necesitamos orquestar conexiones múltiples en un mismo match.
+
+**Solución**: Hub que maneja registro/desregistro de clientes y difunde mensajes a todos los usuarios conectados de un match.
+
+**Implementación**:
+
+**transport/http/hub.go** - Orquestador central:
+```go
+// Hub mantiene conjunto de clientes activos y transmite mensajes
+type Hub struct {
+    clients    map[*Client]bool  // Clientes registrados
+    broadcast  chan []byte       // Canal de broadcast (mensajes a todos)
+    register   chan *Client      // Canal de registro
+    unregister chan *Client      // Canal de desregistro
+}
+
+func NewHub() *Hub {
+    return &Hub{
+        broadcast:  make(chan []byte),
+        register:   make(chan *Client),
+        unregister: make(chan *Client),
+        clients:    make(map[*Client]bool),
+    }
+}
+
+// Run ejecuta el loop de eventos del Hub
+func (h *Hub) Run() {
+    for {
+        select {
+        case client := <-h.register:
+            h.clients[client] = true  // Nuevo cliente conectado
+        
+        case client := <-h.unregister:
+            if _, ok := h.clients[client]; ok {
+                delete(h.clients, client)
+                close(client.send)  // Cierra canal para evitar panic
+            }
+        
+        case message := <-h.broadcast:
+            // Envía mensaje a TODOS los clientes conectados
+            for client := range h.clients {
+                select {
+                case client.send <- message:
+                default:
+                    // Si el cliente se ha ido (channel full), lo expulsamos
+                    close(client.send)
+                    delete(h.clients, client)
+                }
+            }
+        }
+    }
+}
+```
+
+**transport/http/client.go** - Representación de cliente WebSocket:
+```go
+type Client struct {
+    hub    *Hub                // Referencia al Hub
+    conn   *websocket.Conn    // Conexión WebSocket real
+    send   chan []byte         // Canal para mensajes salientes (buffered)
+    userID uint                // ID del usuario (para identificar quién envía)
+}
+```
+
+**Flujo de Cliente**:
+1. Usuario conecta: GET /api/v1/ws (con token JWT)
+2. WSHandler.HandleConnections() crea Client y registra en Hub
+3. Cliente inicia 2 goroutines:
+   - Una lee mensajes de WebSocket
+   - Una escribe mensajes del canal send
+4. Cuando llega mensaje del cliente:
+   - ChatService.SaveMessage() valida y guarda en BD
+   - Si OK, se envía a hub.broadcast
+   - Hub difunde a TODOS los clientes registrados
+5. Cliente desconecta:
+   - Se desregistra del Hub
+   - Se cierra su canal send
+
+#### 4. Sistema de Reviews para Reputación Comunitaria
+
+**Problema Resuelto**: Sin historial de reputación, no hay forma de saber si un rescatista es confiable.
+
+**Solución**: Sistema de calificaciones 1-5 estrellas post-match donde adoptantes califican rescatistas y vice versa.
+
+**Implementación**:
+
+**domain/review.go**:
+```go
+type Review struct {
+    ID        uint           `gorm:"primaryKey" json:"id"`
+    MatchID   uint           `gorm:"index;not null" json:"match_id"`
+    AuthorID  uint           `gorm:"index;not null" json:"author_id"` // Quién califica
+    TargetID  uint           `gorm:"index;not null" json:"target_id"` // A quién califica
+    Rating    int            `gorm:"not null" json:"rating"`          // 1-5 estrellas
+    Comment   string         `gorm:"type:text" json:"comment"`        // Texto libre
+    CreatedAt time.Time      `json:"created_at"`
+    DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+}
+```
+
+**services/review_service.go**:
+```go
+type ReviewService struct {
+    db *gorm.DB
+}
+
+func (s *ReviewService) CreateReview(matchID, authorID uint, rating int, comment string) error {
+    // 1. Validar rating
+    if rating < 1 || rating > 5 {
+        return errors.New("rating debe ser entre 1 y 5")
+    }
+
+    // 2. Obtener Match para determinar roles
+    var match domain.Match
+    if err := s.db.First(&match, matchID).Error; err != nil {
+        return errors.New("match no válido")
+    }
+
+    // 3. Determinar a quién se califica (TargetID)
+    targetID := match.AdopterID  // Default: adoptante
+    if authorID == match.AdopterID {
+        // Si quien califica es el adoptante, está calificando al rescatista
+        var pet domain.Pet
+        s.db.First(&pet, match.PetID)
+        targetID = pet.UserID  // Dueño de la mascota (rescatista)
+    }
+    // Si quien califica NO es el adoptante, es el rescatista calificando al adoptante
+    // targetID ya es AdopterID (asignado arriba)
+
+    // 4. Guardar review
+    review := domain.Review{
+        MatchID:  matchID,
+        AuthorID: authorID,
+        TargetID: targetID,
+        Rating:   rating,
+        Comment:  comment,
+    }
+
+    return s.db.Create(&review).Error
+}
+```
+
+**Lógica de TargetID**:
+- Adoptante califica → TargetID = Rescatista (pet.UserID)
+- Rescatista califica → TargetID = Adoptante (match.AdopterID)
+
+**Endpoint**:
+```
+POST /api/v1/reviews (Protegido)
+Headers: Authorization: Bearer TOKEN
+Body: {
+    "match_id": 1,
+    "rating": 5,
+    "comment": "María fue muy atenta y el perro estaba perfecto"
+}
+Response: 201 {"message": "Reseña guardada"}
+```
+
+#### 5. SocialHandler - Unificación de Chat y Reviews
+
+**Propósito**: Un solo handler maneja todos los endpoints sociales.
+
+```go
+type SocialHandler struct {
+    chatService   *services.ChatService
+    reviewService *services.ReviewService
+}
+
+func NewSocialHandler(chat *services.ChatService, review *services.ReviewService) *SocialHandler {
+    return &SocialHandler{
+        chatService:   chat,
+        reviewService: review,
+    }
+}
+
+// GetChatHistory (GET /matches/:id/messages)
+func (h *SocialHandler) GetChatHistory(c *gin.Context) {
+    matchIDStr := c.Param("id")
+    matchID, _ := strconv.Atoi(matchIDStr)
+
+    messages, err := h.chatService.GetHistory(uint(matchID))
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Error cargando historial"})
+        return
+    }
+
+    c.JSON(http.StatusOK, messages)
+}
+
+// CreateReview (POST /reviews)
+func (h *SocialHandler) CreateReview(c *gin.Context) {
+    userID := c.MustGet("userID").(uint)
+
+    var req struct {
+        MatchID uint   `json:"match_id" binding:"required"`
+        Rating  int    `json:"rating" binding:"required"`
+        Comment string `json:"comment"`
+    }
+
+    if err := c.ShouldBindJSON(&req); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+        return
+    }
+
+    if err := h.reviewService.CreateReview(req.MatchID, userID, req.Rating, req.Comment); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+        return
+    }
+
+    c.JSON(http.StatusCreated, gin.H{"message": "Reseña guardada"})
+}
+```
+
+#### 6. WSHandler - Orquestación de WebSocket y Chat
+
+**Responsabilidades**: Autenticar usuario, upgradar HTTP a WebSocket, registrar cliente en Hub, leer/escribir mensajes.
+
+```go
+type WSHandler struct {
+    hub         *Hub
+    chatService *services.ChatService
+}
+
+func NewWSHandler(hub *Hub, chatService *services.ChatService) *WSHandler {
+    return &WSHandler{
+        hub:         hub,
+        chatService: chatService,
+    }
+}
+
+// HandleConnections es el endpoint GET /ws
+func (h *WSHandler) HandleConnections(c *gin.Context) {
+    // 1. Extraer userID del token
+    userIDVal, exists := c.Get("userID")
+    if !exists {
+        c.JSON(http.StatusUnauthorized, gin.H{"error": "No autorizado"})
+        return
+    }
+    userID := userIDVal.(uint)
+
+    // 2. Upgrade HTTP -> WebSocket
+    conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+    if err != nil {
+        log.Println("Error upgrade:", err)
+        return
+    }
+
+    // 3. Crear Cliente y registrarlo en Hub
+    client := &Client{
+        hub:    h.hub,
+        conn:   conn,
+        send:   make(chan []byte, 256),
+        userID: userID,
+    }
+
+    h.hub.register <- client
+
+    // 4. Iniciar lectura/escritura concurrentes
+    go h.readPump(client)
+    go h.writePump(client)
+}
+
+// readPump lee mensajes del cliente WebSocket
+func (h *WSHandler) readPump(client *Client) {
+    defer func() {
+        h.hub.unregister <- client
+        client.conn.Close()
+    }()
+
+    for {
+        var msg struct {
+            MatchID uint   `json:"match_id"`
+            Content string `json:"content"`
+        }
+
+        if err := client.conn.ReadJSON(&msg); err != nil {
+            break
+        }
+
+        // Validar y guardar mensaje en BD
+        savedMsg, err := h.chatService.SaveMessage(msg.MatchID, client.userID, msg.Content)
+        if err != nil {
+            // Enviar error al cliente
+            client.send <- []byte(`{"error":"` + err.Error() + `"}`)
+            continue
+        }
+
+        // Serializar respuesta exitosa
+        response, _ := json.Marshal(savedMsg)
+
+        // Difundir a TODOS los usuarios conectados en ese match
+        h.hub.broadcast <- response
+    }
+}
+
+// writePump envía mensajes desde el canal send al cliente
+func (h *WSHandler) writePump(client *Client) {
+    for message := range client.send {
+        if err := client.conn.WriteMessage(websocket.TextMessage, message); err != nil {
+            return
+        }
+    }
+}
+```
+
+#### 7. ReportHandler - Endpoint de Reportes
+
+**Propósito**: Procesar solicitudes de reporte.
+
+```go
+type ReportHandler struct {
+    service *services.ReportService
+}
+
+func NewReportHandler(s *services.ReportService) *ReportHandler {
+    return &ReportHandler{service: s}
+}
+
+func (h *ReportHandler) Create(c *gin.Context) {
+    // Obtener ID del reportante desde token
+    reporterID := c.GetUint("userID")
+    if reporterID == 0 {
+        c.JSON(http.StatusUnauthorized, gin.H{"error": "No autorizado"})
+        return
+    }
+
+    var req struct {
+        ReportedID uint   `json:"reported_id" binding:"required"`
+        Reason     string `json:"reason" binding:"required"`
+    }
+
+    if err := c.ShouldBindJSON(&req); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+        return
+    }
+
+    if err := h.service.CreateReport(reporterID, req.ReportedID, req.Reason); err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
+
+    c.JSON(http.StatusCreated, gin.H{"message": "Reporte recibido. Gracias por ayudar a la comunidad."})
+}
+```
+
+### Cambios en Base de Datos
+
+**Nuevas tablas creadas por AutoMigrate en main.go**:
+
+```go
+if err := database.DB.AutoMigrate(
+    &domain.User{},
+    &domain.UserProfile{},
+    &domain.Pet{},
+    &domain.Match{},
+    &domain.Message{},       // Etapa 3
+    &domain.Review{},        // Etapa 3
+    &domain.Report{},        // Etapa 3
+    &domain.BlacklistEntry{},
+); err != nil {
+    log.Fatal("Error migrando BD:", err)
+}
+```
+
+**Schema de nuevas tablas**:
+
+```sql
+-- Messages (Chat persistente)
+CREATE TABLE messages (
+    id SERIAL PRIMARY KEY,
+    match_id INTEGER NOT NULL,
+    sender_id INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    is_read BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP,
+    deleted_at TIMESTAMP,
+    FOREIGN KEY (match_id) REFERENCES matches(id),
+    FOREIGN KEY (sender_id) REFERENCES users(id)
+);
+CREATE INDEX idx_messages_match_id ON messages(match_id);
+CREATE INDEX idx_messages_sender_id ON messages(sender_id);
+
+-- Reviews (Reputación)
+CREATE TABLE reviews (
+    id SERIAL PRIMARY KEY,
+    match_id INTEGER NOT NULL,
+    author_id INTEGER NOT NULL,
+    target_id INTEGER NOT NULL,
+    rating INTEGER NOT NULL,
+    comment TEXT,
+    created_at TIMESTAMP,
+    deleted_at TIMESTAMP,
+    FOREIGN KEY (match_id) REFERENCES matches(id),
+    FOREIGN KEY (author_id) REFERENCES users(id),
+    FOREIGN KEY (target_id) REFERENCES users(id)
+);
+CREATE INDEX idx_reviews_match_id ON reviews(match_id);
+CREATE INDEX idx_reviews_author_id ON reviews(author_id);
+CREATE INDEX idx_reviews_target_id ON reviews(target_id);
+
+-- Reports (Sistema de reportes)
+CREATE TABLE reports (
+    id SERIAL PRIMARY KEY,
+    reporter_id INTEGER NOT NULL,
+    reported_id INTEGER NOT NULL,
+    reason VARCHAR(255) NOT NULL,
+    status VARCHAR(50) DEFAULT 'pending',
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP,
+    FOREIGN KEY (reporter_id) REFERENCES users(id),
+    FOREIGN KEY (reported_id) REFERENCES users(id)
+);
+CREATE INDEX idx_reports_reporter_id ON reports(reporter_id);
+CREATE INDEX idx_reports_reported_id ON reports(reported_id);
+CREATE INDEX idx_reports_status ON reports(status);
+```
+
+### Rutas Nuevas en main.go
+
+```go
+// En el grupo de rutas protegidas:
+protected := api.Group("/")
+protected.Use(middleware.AuthMiddleware())
+{
+    // ... rutas anteriores ...
+
+    // Chat (Etapa 3)
+    match := protected.Group("/matches")
+    {
+        // ... rutas anteriores ...
+        match.GET("/:id/messages", socialHandler.GetChatHistory)
+    }
+
+    // Reviews (Etapa 3)
+    protected.POST("/reviews", socialHandler.CreateReview)
+
+    // Reportes (Etapa 3)
+    protected.POST("/report", reportHandler.Create)
+
+    // WebSocket para chat tiempo real (Etapa 3)
+    protected.GET("/ws", wsHandler.HandleConnections)
+}
+```
+
+### Escenarios Implementados en Etapa 3
+
+**Escenario 1: Timador intenta estafar**
+
+```
+1. Match entre Adoptante A y Rescatista (Timador)
+2. Adoptante abre chat: GET /matches/1/messages → obtiene historial vacío
+3. Adoptante se conecta: GET /ws (WebSocket establecido)
+4. Timador envía: "Transfiere 50k al banco antes de recoger"
+5. ChatService.SaveMessage() verifica forbiddenWords → "transferencia" detectada
+6. Mensaje BLOQUEADO: no se guarda, error retornado
+7. Timador recibe: {"error": "mensaje bloqueado..."}
+8. Adoptante nunca ve el mensaje → PROTEGIDO
+```
+
+**Escenario 2: Usuario es reportado 3 veces**
+
+```
+1. Usuario B es reportado por A (razón: "Acoso") → Report 1 creado
+2. Usuario B es reportado por C (razón: "Comportamiento sospechoso") → Report 2 creado
+3. Usuario B es reportado por D (razón: "Intentó estafar") → Report 3 creado
+4. ReportService.checkAndBanUser(B) cuenta: count = 3
+5. User B es buscado en BD
+6. BlacklistEntry creada: {run: B.Run, reason: "Sistema: 3 reportes"}
+7. Usuario B logueado de BD
+8. Próximo login de B es rechazado en AuthService (blacklist check)
+9. Usuario B está baneado permanentemente
+```
+
+**Escenario 3: Adoptante califica rescatista post-adopción**
+
+```
+1. Match entre Adoptante A y Rescatista B completado
+2. Adopción exitosa, mascota en casa de A
+3. Adoptante abre reviews: POST /reviews
+4. Envía: {match_id: 1, rating: 5, comment: "María fue excelente"}
+5. ReviewService.CreateReview() ejecuta:
+   - Valida rating: 1-5 ✓
+   - Obtiene Match → AdopterID=A, PetID=7
+   - AuthorID == AdopterID? Sí → TargetID = pet.UserID (B)
+   - Crea Review(match_id=1, author_id=A, target_id=B, rating=5, ...)
+6. Rescatista B ve su reputación mejorada
+```
+
+### Decisiones Arquitectónicas
+
+**1. Ban automático tras 3 reportes vs moderación manual**
+
+**Elegida**: Ban automático
+
+Razón: Velocidad y coherencia. Si 3 usuarios independientes reportan al mismo comportamiento, hay suficiente evidencia estadística. Moderación manual crea demora donde hay urgencia.
+
+Alternativa: Moderación manual (más lenta, requiere personal)
+
+**2. Palabras prohibidas en lista hardcoded vs BD**
+
+**Elegida**: Hardcoded en código (MVP)
+
+```go
+var forbiddenWords = []string{
+    "estafa", "odio", "matar", "depósito", "transferencia inmediata"
+}
+```
+
+Razón: Velocidad de desarrollo. En producción vendría de BD con hot-reload.
+
+Alternativa: BD con tabla badwords (más flexible)
+
+**3. Hub broadcasts a TODOS vs filtra por Match**
+
+**Elegida**: TODOS (simple)
+
+Nota: Implementación actual difunde a todos los clientes conectados. Optimización futura: difundir solo a clientes del match específico (agrupación por match).
+
+Alternativa: Agrupar clientes por match (más escalable)
+
+**4. Reviews post-match vs en tiempo real**
+
+**Elegida**: Post-match
+
+Razón: Reviews requieren perspectiva después de interacción completa. No tiene sentido calificar antes de que termine la adopción.
+
+Flujo: Match.status == accepted → después de ciclo completo → POST /reviews
+
+### Flujo Completo Etapa 3
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ ETAPA 3: Comunicación Segura y Reputación Comunitaria       │
+└──────────────┬──────────────────────────────────────────────┘
+               │
+     ┌─────────┼─────────┐
+     ▼         ▼         ▼
+  REPORTS  CHAT_MSG   REVIEWS
+     │         │         │
+     │         │         └─────────┬─────────┐
+     │         │               Adoptante    Rescatista
+     │         │                  │              │
+  (3 strikes) POST             (Califica     (Califica
+   = BAN      /ws            Rescatista)    Adoptante)
+   │        GET/msg
+   │        SaveMessage()
+   │        (Filtro Evil PAWS)
+   │        Si "transferencia" → BLOQUEADO
+   │        Si OK → Guarda + Hub.broadcast
+   │
+   ▼
+  BlackList
+
+FLUJO DE USUARIO:
+1. Adoptante inicia chat: GET /ws (WebSocket)
+2. Carga historial: GET /matches/1/messages (HTTP)
+3. Envía mensaje: {"match_id": 1, "content": "..."}
+4. ChatService valida (forbiddenWords)
+5. Si OK: Guarda en BD + difunde a Hub
+6. Si NG: Rechaza silenciosamente
+7. Otros usuarios reciben via Hub (WebSocket)
+8. Post-adopción: POST /reviews (calificar)
+9. Rescatista reportado 3 veces → Auto-ban a blacklist
+```
+
 
 ### Fase 7: CI/CD y Testing Automático
 

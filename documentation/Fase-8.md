@@ -481,6 +481,182 @@ func TestThreeStrikesBan(t *testing.T) {
 }
 ```
 
+### ReportHandler - Endpoint HTTP
+
+El handler expone la funcionalidad de reportes como un endpoint REST protegido. Es responsable de:
+
+- Extraer el `userID` del token JWT
+- Validar la estructura del reporte (reportedID, reason)
+- Delegar la creación al servicio
+- Retornar respuestas HTTP apropiadas
+
+#### Tipo ReportHandler
+
+```go
+type ReportHandler struct {
+    service *ReportService
+}
+
+func NewReportHandler(service *ReportService) *ReportHandler {
+    return &ReportHandler{
+        service: service,
+    }
+}
+
+func (h *ReportHandler) Create(c *gin.Context) {
+    // Extraer userID del contexto (middleware de autenticación)
+    userID, ok := c.Get("user_id")
+    if !ok {
+        c.JSON(http.StatusUnauthorized, gin.H{
+            "error": "No autenticado",
+        })
+        return
+    }
+
+    // Estructura de entrada
+    var req struct {
+        ReportedID uint   `json:"reported_id" binding:"required"`
+        Reason     string `json:"reason" binding:"required"`
+    }
+
+    if err := c.BindJSON(&req); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{
+            "error": "Campo requerido faltante",
+        })
+        return
+    }
+
+    // Llamar al servicio
+    if err := h.service.CreateReport(userID.(uint), req.ReportedID, req.Reason); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{
+            "error": err.Error(),
+        })
+        return
+    }
+
+    // Éxito
+    c.JSON(http.StatusCreated, gin.H{
+        "message": "Reporte recibido. Será revisado por el equipo de moderación.",
+    })
+}
+```
+
+#### Endpoint: POST /api/v1/report
+
+**Ruta:** `POST /api/v1/report`
+
+**Protección:** JWT (AuthMiddleware)
+
+**Request Body:**
+
+```json
+{
+  "reported_id": 5,
+  "reason": "Comportamiento acosador"
+}
+```
+
+**Response 201:**
+
+```json
+{
+  "message": "Reporte recibido. Será revisado por el equipo de moderación."
+}
+```
+
+**Response 400:**
+
+```json
+{
+  "error": "no puedes reportarte a ti mismo"
+}
+```
+
+o
+
+```json
+{
+  "error": "Campo requerido faltante"
+}
+```
+
+**Response 401:**
+
+```json
+{
+  "error": "No autenticado"
+}
+```
+
+#### Integración en main.go
+
+En la inicialización de rutas:
+
+```go
+// Crear servicio
+reportService := services.NewReportService(database.DB, authService)
+
+// Crear handler
+reportHandler := httpTransport.NewReportHandler(reportService)
+
+// Registrar ruta (protegida con AuthMiddleware)
+protected := router.Group("/api/v1")
+protected.Use(middleware.AuthMiddleware())
+{
+    protected.POST("/report", reportHandler.Create)
+}
+```
+
+#### Ejemplo cURL
+
+```bash
+# Reportar a un usuario (requiere JWT válido en header)
+curl -X POST http://localhost:8080/api/v1/report \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "reported_id": 5,
+    "reason": "Intento de estafa con depósito"
+  }'
+```
+
+#### Flujo Completo: Reporte → Ban
+
+1. Usuario A hace POST a `/api/v1/report` con `reported_id=B, reason="Acoso"`
+2. ReportHandler extrae `userID=A` del token y valida campos
+3. ReportHandler llama a `reportService.CreateReport(A, B, "Acoso")`
+4. ReportService crea report en BD con `status="verified"` (MVP automático)
+5. ReportService llama a `checkAndBanUser(B)`:
+   - Cuenta reportes verificados de B (SELECT COUNT...)
+   - Si count < 3: retorna success (sin ban)
+   - Si count >= 3: obtiene Run de B, crea BlacklistEntry, Ban ejecutado
+6. ReportHandler retorna 201 con mensaje de confirmación
+7. En siguiente login de B (si fue baneado): AuthService.Login verifica blacklist, rechaza acceso
+
+#### Casos de Uso
+
+**Caso 1: Reporte Normal (Sin Ban)**
+
+```
+Usuario 1 reporta a Usuario 5 por "Acoso"
+  → Report creado (report_id=1, reported_id=5, status='verified')
+  → Count(User 5) = 1 (< 3)
+  → Usuario 5 sigue activo
+```
+
+**Caso 2: Tercer Reporte (Ban Automático)**
+
+```
+Usuario 5 ya tiene 2 reportes verificados
+Usuario 2 reporta a Usuario 5 por "Acoso grave"
+  → Report creado (report_id=3, reported_id=5, status='verified')
+  → Count(User 5) = 3 (>= 3)
+  → System: Obtiene Run de Usuario 5 = "99.999.999-9"
+  → System: Crea BlacklistEntry(run='99.999.999-9', reason='Sistema: Acumulación de 3 reportes graves')
+  → Usuario 5 es baneado automáticamente
+  → Siguiente login de Usuario 5: Rechazado (en blacklist)
+```
+
 ## OTP Service (Email Verification - Futuro Real)
 
 ### Propósito
@@ -562,7 +738,6 @@ OTPService.VerifyOTP("user@email.com", "123456")
 Permiso para continuar con Register
 ```
 
-
 ### Actualización Etapa 1: OTP Async/Sync Condicional
 
 A partir de Etapa 1, el OTPService se integra con el patrón Kill Switch de ENABLE_ASYNC_FEATURES, permitiendo funcionar tanto en modo asincrónico como sincrónico sin cambios de interfaz.
@@ -584,11 +759,11 @@ func NewOTPService(redis *redis.Client, mq *messaging.RabbitMQClient) *OTPServic
 
 func (s *OTPService) GenerateOTP(email string) (string, error) {
     code := fmt.Sprintf("%06d", rand.Intn(1000000))
-    
+
     // Guardar en Redis (ambos modos)
     key := fmt.Sprintf("otp:%s", email)
     s.redisClient.Set(ctx, key, code, 5*time.Minute)
-    
+
     // Envío condicional
     if s.mqClient != nil {
         // Modo Async: Publicar a cola RabbitMQ
@@ -602,7 +777,7 @@ func (s *OTPService) GenerateOTP(email string) (string, error) {
         // Modo Sync: Log directo (Etapa 1 default)
         log.Printf("[DEV MODE] OTP para %s: %s", email, code)
     }
-    
+
     return code, nil
 }
 ```
