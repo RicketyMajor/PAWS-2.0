@@ -4,8 +4,6 @@ import 'package:flutter_card_swiper/flutter_card_swiper.dart';
 import '../bloc/pets_bloc.dart';
 import '../../data/pets_repository.dart';
 import '../../domain/pet_model.dart';
-// Eliminamos import del chat global
-// import '../../../chat/presentation/screens/chat_screen.dart';
 
 class MatchScreen extends StatelessWidget {
   const MatchScreen({super.key});
@@ -18,13 +16,11 @@ class MatchScreen extends StatelessWidget {
             ..add(LoadSwipeDeck()),
       child: Scaffold(
         appBar: AppBar(
-          title: const Text("PAWS"), // Título más limpio
+          title: const Text("PAWS"),
           backgroundColor: Colors.white,
           elevation: 0,
           foregroundColor: const Color(0xFFE91E63),
           centerTitle: true,
-          // Eliminamos 'actions' con el botón de chat.
-          // En el futuro aquí pondremos un botón para ver "Mis Matches"
         ),
         body: const MatchView(),
       ),
@@ -99,13 +95,19 @@ class MatchView extends StatelessWidget {
   Widget _buildSwiper(BuildContext context, List<Pet> pets) {
     final CardSwiperController controller = CardSwiperController();
 
+    // LÓGICA DE SEGURIDAD:
+    // Si tienes 1 mascota, muestra 1. Si tienes 10, muestra pila de 3.
+    // Esto evita el error rojo.
+    final int stackCount = pets.length < 3 ? pets.length : 3;
+
     return Column(
       children: [
         Expanded(
           child: CardSwiper(
             controller: controller,
             cardsCount: pets.length,
-            numberOfCardsDisplayed: 3,
+            // CORRECCIÓN 1: Usamos la variable calculada arriba
+            numberOfCardsDisplayed: stackCount,
             onSwipe: (previousIndex, currentIndex, direction) {
               final pet = pets[previousIndex];
 
@@ -135,7 +137,6 @@ class MatchView extends StatelessWidget {
                 },
           ),
         ),
-        // Botones de control manual
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 20.0),
           child: Row(
@@ -157,6 +158,9 @@ class MatchView extends StatelessWidget {
   }
 
   Widget _buildCard(Pet pet) {
+    // URL base para el emulador Android
+    const String baseUrl = 'http://10.0.2.2:8080';
+
     return Card(
       elevation: 4,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
@@ -164,16 +168,16 @@ class MatchView extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Expanded(
-            // Imagen
             child: ClipRRect(
               borderRadius: const BorderRadius.vertical(
                 top: Radius.circular(20),
               ),
+              // CORRECCIÓN 2: Lógica visual para arreglar la URL de la imagen
               child: pet.imageUrl != null && pet.imageUrl!.isNotEmpty
                   ? Image.network(
-                      // Si usas localhost/emulador, asegúrate que la URL sea accesible
-                      // Podrías necesitar reemplazar 'localhost' por tu IP aquí si el backend manda localhost
-                      pet.imageUrl!,
+                      pet.imageUrl!.startsWith('http')
+                          ? pet.imageUrl!
+                          : '$baseUrl${pet.imageUrl}',
                       fit: BoxFit.cover,
                       errorBuilder: (ctx, err, _) =>
                           const Icon(Icons.pets, size: 100, color: Colors.grey),
@@ -211,7 +215,6 @@ class MatchView extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 8),
-                // Chips de características
                 Wrap(
                   spacing: 8,
                   children: [

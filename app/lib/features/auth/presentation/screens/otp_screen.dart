@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:jwt_decoder/jwt_decoder.dart'; // <--- Necesario para leer el rol
+import 'package:jwt_decoder/jwt_decoder.dart';
 import '../../data/auth_repository.dart';
 import '../../../../features/pets/presentation/screens/match_screen.dart';
-// Importa la pantalla de rescatista (o el placeholder)
-import 'rescuer_home_placeholder.dart';
+
+// CORRECCIÓN: Importamos la pantalla real
+import '../../../../features/pets/presentation/screens/rescuer_home_screen.dart';
 
 class OTPScreen extends StatefulWidget {
   final String email;
@@ -22,7 +23,7 @@ class _OTPScreenState extends State<OTPScreen> {
   void _verify() async {
     setState(() => _isLoading = true);
 
-    // 1. Llamada al repositorio (ahora devuelve el token o null)
+    // Llamada al repositorio
     final token = await _authRepo.verifyOtp(widget.email, _codeController.text);
 
     setState(() => _isLoading = false);
@@ -36,17 +37,17 @@ class _OTPScreenState extends State<OTPScreen> {
           ),
         );
 
-        // 2. Decodificar el Token para saber el Rol
+        // Decodificar Token
         Map<String, dynamic> decodedToken = JwtDecoder.decode(token);
         String role = decodedToken['role'] ?? 'adopter';
 
-        // 3. Redirección Inteligente
+        // Redirección corregida
         if (role == 'rescuer') {
           Navigator.pushAndRemoveUntil(
             context,
             MaterialPageRoute(
-              builder: (context) => const RescuerHomePlaceholder(),
-            ),
+              builder: (context) => const RescuerHomeScreen(),
+            ), // <--- AQUI
             (route) => false,
           );
         } else {

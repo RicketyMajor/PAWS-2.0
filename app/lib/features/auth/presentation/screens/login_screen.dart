@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:jwt_decoder/jwt_decoder.dart'; // <--- IMPORTANTE
+import 'package:jwt_decoder/jwt_decoder.dart';
 import '../../data/auth_repository.dart';
 import '../bloc/login_bloc.dart';
 import 'register_screen.dart';
 import '../../../pets/presentation/screens/match_screen.dart';
 
-// Importamos una pantalla temporal para Rescatistas
-import 'rescuer_home_placeholder.dart';
+// CORRECCIÓN: Importamos la pantalla real del dashboard de Rescatistas
+import '../../../pets/presentation/screens/rescuer_home_screen.dart';
 
 class LoginScreen extends StatelessWidget {
   const LoginScreen({super.key});
@@ -50,29 +50,23 @@ class _LoginFormState extends State<_LoginForm> {
             ),
           );
 
-          // 1. GATEKEEPER LOGIC: Leer el token para saber quién es
-          // Asumimos que AuthRepository guarda el token en secure storage al loguear
           final authRepo = context.read<AuthRepository>();
-          final token = await authRepo
-              .getToken(); // Necesitaremos este método en el Repo
+          final token = await authRepo.getToken();
 
           if (token != null) {
-            // Decodificamos el token (sin verificar firma, solo lectura)
             Map<String, dynamic> decodedToken = JwtDecoder.decode(token);
             String role = decodedToken['role'] ?? 'adopter';
 
-            // 2. Redirección basada en Rol
             if (role == 'rescuer') {
-              // Si es rescatista -> Va a su Dashboard
+              // CORRECCIÓN: Navegar al Dashboard Real con el botón de subir mascota
               Navigator.pushAndRemoveUntil(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => const RescuerHomePlaceholder(),
+                  builder: (context) => const RescuerHomeScreen(),
                 ),
                 (route) => false,
               );
             } else {
-              // Si es adoptante -> Va a Tinder (MatchScreen)
               Navigator.pushAndRemoveUntil(
                 context,
                 MaterialPageRoute(builder: (context) => const MatchScreen()),
@@ -80,7 +74,6 @@ class _LoginFormState extends State<_LoginForm> {
               );
             }
           } else {
-            // Fallback si no hay token (no debería pasar si LoginSuccess)
             Navigator.pushAndRemoveUntil(
               context,
               MaterialPageRoute(builder: (context) => const MatchScreen()),
@@ -142,7 +135,6 @@ class _LoginFormState extends State<_LoginForm> {
                       ),
                     ),
                     const SizedBox(height: 24),
-
                     BlocBuilder<LoginBloc, LoginState>(
                       builder: (context, state) {
                         if (state is LoginLoading) {

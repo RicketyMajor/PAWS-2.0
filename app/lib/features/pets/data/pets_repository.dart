@@ -23,24 +23,26 @@ class PetsRepository {
   //  LECTURA (ADOPTANTE)
   // ===============================================================
 
-  // 1. Obtener el Mazo de Cartas (Algoritmo Inteligente Fase 9)
+  // En pets_repository.dart
   Future<List<Pet>> getSwipeDeck() async {
     try {
       final options = await _getAuthOptions();
-      // Endpoint: /matches/candidates
+      // Seguimos usando el endpoint temporal /pets
       final response = await _dio.get(
-        '${ApiConstants.baseUrl}${ApiConstants.swipeDeck}',
+        '${ApiConstants.baseUrl}/pets',
         options: options,
       );
 
       if (response.statusCode == 200) {
         List<dynamic> data = response.data;
-        return data.map((json) => Pet.fromJson(json)).toList();
+        return data
+            .map((json) => Pet.fromJson(json))
+            .toList(); // <--- SIN copyWith
       }
       return [];
     } on DioException catch (e) {
       _handleError(e);
-      return []; // Unreachable por el throw, pero satisface al linter
+      return [];
     }
   }
 
@@ -166,5 +168,17 @@ class PetsRepository {
 
     print("PETS REPO ERROR: $errorMessage");
     throw Exception(errorMessage);
+  }
+
+  // ... dentro de PetsRepository ...
+
+  // 6. Eliminar Mascota
+  Future<void> deletePet(int id) async {
+    try {
+      final options = await _getAuthOptions();
+      await _dio.delete('${ApiConstants.baseUrl}/pets/$id', options: options);
+    } on DioException catch (e) {
+      _handleError(e);
+    }
   }
 }

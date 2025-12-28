@@ -9,6 +9,7 @@ class Pet {
   final bool goodWithKids;
   final bool goodWithDogs;
   final bool requiresYard;
+  final String status;
 
   Pet({
     required this.id,
@@ -21,6 +22,7 @@ class Pet {
     this.goodWithKids = false,
     this.goodWithDogs = false,
     this.requiresYard = false,
+    this.status = 'available',
   });
 
   factory Pet.fromJson(Map<String, dynamic> json) {
@@ -49,6 +51,7 @@ class Pet {
       goodWithKids: parseBool(json['good_with_kids']),
       goodWithDogs: parseBool(json['good_with_dogs']),
       requiresYard: parseBool(json['requires_yard']),
+      status: json['status'] ?? 'available',
     );
   }
 }
