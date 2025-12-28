@@ -87,25 +87,35 @@ class AuthRepository {
     }
   }
 
-  // --- NUEVO MÉTODO: VERIFICAR OTP (Fase 11) ---
-  Future<bool> verifyOtp(String email, String code) async {
+  // --- AGREGAR ESTA FUNCIÓN (Soluciona el error rojo en LoginScreen) ---
+  Future<String?> getToken() async {
+    // Lee el token guardado en el almacenamiento seguro
+    return await _storage.read(key: 'jwt_token');
+  }
+
+  // --- ACTUALIZAR ESTA FUNCIÓN (Para el Auto-Login en OTP) ---
+  // Cambiamos Future<bool> por Future<String?>
+  Future<String?> verifyOtp(String email, String code) async {
     try {
-      // Según tu main.go backend: auth.POST("/otp/verify", authHandler.VerifyOTP)
       final response = await _dio.post(
         '${ApiConstants.baseUrl}/auth/otp/verify',
         data: {'email': email, 'code': code},
       );
 
-      // Si el backend responde 200, el código es válido
-      return response.statusCode == 200;
-    } on DioException catch (e) {
-      print("Error OTP: ${e.response?.data}");
-      return false; // Si falla, retornamos falso para mostrar error en UI
-    }
-  }
+      if (response.statusCode == 200) {
+        // 1. Extraer el token de la respuesta
+        final token = response.data['token'];
 
-  // --- GET TOKEN (Mantenemos igual) ---
-  Future<String?> getToken() async {
-    return await _storage.read(key: 'jwt_token');
+        // 2. Guardarlo (Login automático)
+        if (token != null) {
+          await _storage.write(key: 'jwt_token', value: token);
+          return token.toString();
+        }
+      }
+      return null;
+    } on DioException catch (e) {
+      // Manejo de errores silencioso para la UI
+      return null;
+    }
   }
 }

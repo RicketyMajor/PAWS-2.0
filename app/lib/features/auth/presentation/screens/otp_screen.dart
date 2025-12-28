@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:jwt_decoder/jwt_decoder.dart'; // <--- Necesario para leer el rol
 import '../../data/auth_repository.dart';
-// Importamos la pantalla principal (MatchScreen)
-// Ajusta la ruta si tu carpeta se llama distinto, pero según tu estructura es esta:
 import '../../../../features/pets/presentation/screens/match_screen.dart';
+// Importa la pantalla de rescatista (o el placeholder)
+import 'rescuer_home_placeholder.dart';
 
 class OTPScreen extends StatefulWidget {
   final String email;
@@ -21,36 +22,46 @@ class _OTPScreenState extends State<OTPScreen> {
   void _verify() async {
     setState(() => _isLoading = true);
 
-    // Llamada al repositorio
-    final success = await _authRepo.verifyOtp(
-      widget.email,
-      _codeController.text,
-    );
+    // 1. Llamada al repositorio (ahora devuelve el token o null)
+    final token = await _authRepo.verifyOtp(widget.email, _codeController.text);
 
     setState(() => _isLoading = false);
 
-    if (success) {
+    if (token != null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('¡Cuenta verificada!'),
+            content: Text('¡Cuenta verificada! Iniciando sesión...'),
             backgroundColor: Colors.green,
           ),
         );
 
-        // --- CAMBIO CLAVE AQUÍ ---
-        // En lugar de volver al Login, entramos directo a la App (MatchScreen)
-        Navigator.pushAndRemoveUntil(
-          context,
-          MaterialPageRoute(builder: (context) => const MatchScreen()),
-          (route) => false, // Esto borra todo el historial anterior
-        );
+        // 2. Decodificar el Token para saber el Rol
+        Map<String, dynamic> decodedToken = JwtDecoder.decode(token);
+        String role = decodedToken['role'] ?? 'adopter';
+
+        // 3. Redirección Inteligente
+        if (role == 'rescuer') {
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const RescuerHomePlaceholder(),
+            ),
+            (route) => false,
+          );
+        } else {
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(builder: (context) => const MatchScreen()),
+            (route) => false,
+          );
+        }
       }
     } else {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Código incorrecto'),
+            content: Text('Código incorrecto o expirado'),
             backgroundColor: Colors.red,
           ),
         );

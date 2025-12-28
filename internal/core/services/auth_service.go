@@ -136,3 +136,28 @@ func (s *AuthService) CheckBlacklist(run string) (bool, error) {
 
 	return true, nil
 }
+
+// GenerateTokenForEmail busca un usuario y genera su token (Usado tras OTP)
+func (s *AuthService) GenerateTokenForEmail(email string) (string, error) {
+	var user domain.User
+
+	// 1. Buscar usuario
+	if err := s.db.Where("email = ?", email).First(&user).Error; err != nil {
+		return "", errors.New("usuario no encontrado")
+	}
+
+	// 2. Generar JWT
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub":     user.ID,
+		"user_id": user.ID,
+		"role":    user.Role,
+		"exp":     time.Now().Add(time.Hour * 24).Unix(),
+	})
+
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		secret = "secreto_super_seguro_cambiar_en_produccion"
+	}
+
+	return token.SignedString([]byte(secret))
+}

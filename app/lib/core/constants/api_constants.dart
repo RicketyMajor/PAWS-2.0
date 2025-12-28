@@ -1,9 +1,11 @@
+import '../config/environment_config.dart';
+
 class ApiConstants {
   // CAMBIA ESTO por la IP de tu PC donde corre Docker/Kubernetes
   // Si usas emulador Android standard: 10.0.2.2
   // Si usas dispositivo real: Tu IP local (ej: 192.168.1.15)
-  static const String baseUrl = 'http://10.0.2.2:8080/api/v1';
-  static const String wsUrl = 'ws://10.0.2.2:8080/api/v1';
+  static String get baseUrl => EnvironmentConfig.baseUrl;
+  static String get wsUrl => EnvironmentConfig.wsUrl;
 
   // Endpoints Auth
   static const String login = '/auth/login';

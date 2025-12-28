@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:jwt_decoder/jwt_decoder.dart'; // <--- IMPORTANTE
 import '../../data/auth_repository.dart';
 import '../bloc/login_bloc.dart';
 import 'register_screen.dart';
-// Import único y correcto de MatchScreen
 import '../../../pets/presentation/screens/match_screen.dart';
+
+// Importamos una pantalla temporal para Rescatistas
+import 'rescuer_home_placeholder.dart';
 
 class LoginScreen extends StatelessWidget {
   const LoginScreen({super.key});
@@ -34,7 +37,7 @@ class _LoginFormState extends State<_LoginForm> {
   @override
   Widget build(BuildContext context) {
     return BlocListener<LoginBloc, LoginState>(
-      listener: (context, state) {
+      listener: (context, state) async {
         if (state is LoginFailure) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text(state.error), backgroundColor: Colors.red),
@@ -47,12 +50,43 @@ class _LoginFormState extends State<_LoginForm> {
             ),
           );
 
-          // Navegar a MatchScreen y borrar historial
-          Navigator.pushAndRemoveUntil(
-            context,
-            MaterialPageRoute(builder: (context) => const MatchScreen()),
-            (route) => false,
-          );
+          // 1. GATEKEEPER LOGIC: Leer el token para saber quién es
+          // Asumimos que AuthRepository guarda el token en secure storage al loguear
+          final authRepo = context.read<AuthRepository>();
+          final token = await authRepo
+              .getToken(); // Necesitaremos este método en el Repo
+
+          if (token != null) {
+            // Decodificamos el token (sin verificar firma, solo lectura)
+            Map<String, dynamic> decodedToken = JwtDecoder.decode(token);
+            String role = decodedToken['role'] ?? 'adopter';
+
+            // 2. Redirección basada en Rol
+            if (role == 'rescuer') {
+              // Si es rescatista -> Va a su Dashboard
+              Navigator.pushAndRemoveUntil(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const RescuerHomePlaceholder(),
+                ),
+                (route) => false,
+              );
+            } else {
+              // Si es adoptante -> Va a Tinder (MatchScreen)
+              Navigator.pushAndRemoveUntil(
+                context,
+                MaterialPageRoute(builder: (context) => const MatchScreen()),
+                (route) => false,
+              );
+            }
+          } else {
+            // Fallback si no hay token (no debería pasar si LoginSuccess)
+            Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(builder: (context) => const MatchScreen()),
+              (route) => false,
+            );
+          }
         }
       },
       child: Scaffold(

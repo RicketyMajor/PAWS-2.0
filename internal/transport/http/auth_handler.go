@@ -114,13 +114,24 @@ func (h *AuthHandler) VerifyOTP(c *gin.Context) {
 		return
 	}
 
+	// 1. Verificar el código en Redis
 	valid := h.otpService.VerifyOTP(req.Email, req.Code)
 	if !valid {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Código inválido o expirado"})
 		return
 	}
 
-	// Aquí podrías generar un token JWT si el OTP fuera para login sin password
-	// Por ahora solo confirmamos validez
-	c.JSON(http.StatusOK, gin.H{"message": "Código verificado correctamente"})
+	// 2. CAMBIO: Generar Token JWT automáticamente (Auto-Login)
+	token, err := h.service.GenerateTokenForEmail(req.Email)
+	if err != nil {
+		// Si el OTP es válido pero no encontramos al usuario en BD (raro, pero posible)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error generando sesión"})
+		return
+	}
+
+	// 3. Devolver Token
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Código verificado correctamente",
+		"token":   token, // <--- ¡AQUÍ ESTÁ LA SOLUCIÓN!
+	})
 }

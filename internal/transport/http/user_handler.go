@@ -41,7 +41,8 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 	// Nota: Asignamos el ID del token al perfil para asegurar que se actualice el propio
 	req.UserID = userID
 	
-	err := h.userService.CreateOrUpdateProfile(userID, &req)
+	// CORRECCIÓN: Pasamos 'req' (valor) en lugar de '&req' (puntero)
+	err := h.userService.CreateOrUpdateProfile(userID, req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error actualizando perfil: " + err.Error()})
 		return
