@@ -2,22 +2,63 @@
 
 ## Introducción
 
+**ACTUALIZACIÓN - IMPLEMENTACIÓN ACTUAL (Etapa 2)**: Esta Fase 9 describe la arquitectura de matchmaking cuyo core ha sido completamente implementado en Etapa 2. Mientras que esta documentación fue concebida como especulativa, la mayoría de sus objetivos fundamentales están ahora en producción. Ver sección "Estado de Implementación" abajo.
+
 La Fase 9 es el punto de inflexión donde PAWS deja de ser una plataforma de listados simples y se transforma en un **motor de compatibilidad inteligente**. Esta fase implementa el corazón del valor propuesto de PAWS: conectar a los adoptantes adecuados con las mascotas adecuadas basándose en compatibilidad real.
 
-Transformamos el modelo de "usuario ve todos los animales" al modelo de "servidor sugiere mascotas compatibles". El algoritmo aprende sobre las preferencias y capacidades del adoptante, y de los requisitos de cada mascota, para presentar únicamente candidatos viables.
+Transformamos el modelo de "usuario ve todos los animales" al modelo de "servidor sugiere mascotas compatibles". El algoritmo utiliza restricciones duras (hard constraints) sobre las preferencias y capacidades del adoptante, y de los requisitos de cada mascota, para presentar únicamente candidatos viables.
 
 Esta es la fase que diferencia una plataforma de transacciones de una plataforma de experiencias: en lugar de esperar que el usuario encuentre a la mascota perfecta, le entregamos un deck curado de candidatos con alta probabilidad de éxito.
 
+## Estado de Implementación
+
+### ✓ COMPLETADO EN ETAPA 2
+
+Los siguientes componentes están **completamente implementados y en producción**:
+
+- ✓ Sistema de perfiles enriquecidos (UserProfile con 7 campos demográficos)
+- ✓ Extensión de modelos de mascotas (5 campos de compatibilidad)
+- ✓ Algoritmo GetSwipeDeck con 3 filtros AND hard constraints
+- ✓ Flujo de swipe (Like/Dislike) con estado PENDING/REJECTED
+- ✓ Flujo de respuesta del rescatista (Accept/Reject)
+- ✓ Tabla Match con gestión de interacciones
+- ✓ UserService y MatchService completamente funcionales
+- ✓ UserHandler y MatchHandler con todos los endpoints
+- ✓ Protección JWT en todas las rutas protegidas
+- ✓ Fallback inteligente para usuarios sin perfil (mostrar todas mascotas)
+
+**Ubicación del código actual**:
+
+- `internal/core/domain/user_profile.go`
+- `internal/core/services/user_service.go`
+- `internal/core/services/match_service.go`
+- `internal/transport/http/user_handler.go`
+- `internal/transport/http/match_handler.go`
+- Extensiones en `internal/core/domain/pet.go` y `cmd/api/main.go`
+
+### ⏳ DISEÑADO PARA FUTURO
+
+Estos componentes están diseñados en la arquitectura pero **NO están implementados aún**:
+
+- ⏳ Scoring de compatibilidad (compatibilidad numérica 0-100)
+- ⏳ Machine Learning para recomendaciones
+- ⏳ Filtros dinámicos del lado del cliente
+- ⏳ Integración de chat post-match
+- ⏳ Análisis de comportamiento de matching
+- ⏳ Refine iterativo basado en datos
+
+La arquitectura actual soporta estas extensiones sin cambios disruptivos (endpoints pueden retornar scores adicionales sin breaking changes).
+
 ## Objetivos de la Fase 9
 
-1. Implementar sistema de perfiles enriquecidos para usuarios adoptantes
-2. Extender modelos de mascotas con requisitos de compatibilidad
-3. Crear algoritmo inteligente de filtrado (GetSwipeDeck)
-4. Implementar flujo de swipe (Like/Dislike) con estado Pending
-5. Implementar flujo de respuesta del rescatista (Accept/Reject)
-6. Crear tabla y servicios para gestionar Matches
-7. Establecer arquitectura de compatibilidad para futuras mejoras
-8. Documentar flujos de matchmaking y experiencia de usuario
+1. ✓ Implementar sistema de perfiles enriquecidos para usuarios adoptantes → **COMPLETADO en Etapa 2**
+2. ✓ Extender modelos de mascotas con requisitos de compatibilidad → **COMPLETADO en Etapa 2**
+3. ✓ Crear algoritmo inteligente de filtrado (GetSwipeDeck) → **COMPLETADO en Etapa 2**
+4. ✓ Implementar flujo de swipe (Like/Dislike) con estado Pending → **COMPLETADO en Etapa 2**
+5. ✓ Implementar flujo de respuesta del rescatista (Accept/Reject) → **COMPLETADO en Etapa 2**
+6. ✓ Crear tabla y servicios para gestionar Matches → **COMPLETADO en Etapa 2**
+7. ✓ Establecer arquitectura de compatibilidad para futuras mejoras → **COMPLETADO en Etapa 2**
+8. ✓ Documentar flujos de matchmaking y experiencia de usuario → **COMPLETADO en Etapa 2**
 
 ## Stack Tecnológico - Matchmaking
 
@@ -722,9 +763,14 @@ UserProfile (Si es adoptante) → housing, has_yard, etc.
 
 ### 2. Hard Constraints vs Soft Constraints
 
-Fase 9 implementa solo **hard constraints** (obligatorios). Los soft constraints (scoring, preferencias) irán en Fase 10+.
+**Estado actual (Etapa 2)**: Solo **hard constraints** están implementados (restricciones obligatorias). Los soft constraints (scoring, preferencias, ML) están diseñados para futuro.
 
-**Razón**: Evitar over-engineering. Primero validamos que el modelo básico funciona.
+**Implementación actual**:
+
+- ✓ Hard constraints: vivienda (apartamento + patio), niños (HasChildren → GoodWithKids), mascotas (HasOtherPets → GoodWithDogs)
+- ⏳ Soft constraints: scoring de compatibilidad, weighting de preferencias, machine learning
+
+**Razón del diseño**: Evitar over-engineering. Primero validamos que el modelo básico de hard constraints funciona y proporciona valor. La arquitectura está diseñada para agregar soft constraints sin breaking changes.
 
 ### 3. GetSwipeDeck vs GetMatches
 
@@ -803,3 +849,44 @@ func TestRespondenSecurity(t *testing.T) {
     // Rescatista A no puede responder matches de Rescatista B
 }
 ```
+
+---
+
+## NOTA FINAL: Relación entre Fase 9 (Especulativa) y Etapa 2 (Implementación Real)
+
+Esta documentación de Fase 9 fue concebida como un diseño prospectivo de lo que sería una arquitectura de matchmaking "ideal". Simultáneamente, se desarrolló Etapa 2 que implementa **precisamente los componentes fundamentales descritos en esta Fase 9**, pero con un enfoque pragmático y sin sobrecarga innecesaria.
+
+### Alineamiento:
+
+| Componente                          | Fase 9 (Diseño)          | Etapa 2 (Implementación)       | Estado |
+| ----------------------------------- | ------------------------ | ------------------------------ | ------ |
+| UserProfile                         | ✓ Descrito               | ✓ Implementado                 | PROD   |
+| Pet compatibility fields            | ✓ Descrito               | ✓ Implementado (5 campos)      | PROD   |
+| GetSwipeDeck con hard constraints   | ✓ Descrito               | ✓ Implementado (3 filtros AND) | PROD   |
+| Swipe (Like/Dislike)                | ✓ Descrito               | ✓ Implementado                 | PROD   |
+| Rescatista response (Accept/Reject) | ✓ Descrito               | ✓ Implementado                 | PROD   |
+| Tabla Match                         | ✓ Descrito               | ✓ Implementado                 | PROD   |
+| Scoring/ML                          | ✓ Mencionado como futuro | ⏳ No implementado             | FUTURE |
+| Soft constraints                    | ✓ Mencionado como futuro | ⏳ No implementado             | FUTURE |
+| Chat integration                    | ✓ Mencionado como futuro | ⏳ No implementado             | FUTURE |
+
+### Ventajas de Etapa 2 vs "Fase 9 Completa":
+
+1. **Pragmatismo**: No bloquea features avanzadas. Deliver valor inmediato.
+2. **Claridad**: Hard constraints son predecibles, fáciles de testear y debuggear.
+3. **Performance**: Filtrado en SQL, no N+1 queries, escalable.
+4. **Extensibilidad**: Arquitectura permite agregar soft constraints sin breaking changes.
+5. **Mantenibilidad**: Código limpio, servicios bien separados, bajo acoplamiento.
+
+### Para Agregar Soft Constraints (Futuro):
+
+1. MatchService.GetSwipeDeck() puede retornar `[]PetWithScore` en lugar de `[]Pet`
+2. Agregar método MatchService.ScorePet(userProfile, pet) → float64
+3. Sort results por score en cliente
+4. Metrics/analytics para feedback ML
+
+La arquitectura de Etapa 2 soporta todo esto sin cambios al database schema.
+
+### Conclusión:
+
+Fase 9 en esta documentación es el "state of the art" completo del matchmaking inteligente. Etapa 2 es el "MVP del matchmaking" que ya está en producción. Las secciones de Fase 9 sobre Scoring, ML, y Soft Constraints permanecen como **roadmap documentado para la próxima iteración**.

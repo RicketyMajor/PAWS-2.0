@@ -762,6 +762,669 @@ database.DB.Where("status = ?", domain.StatusAvailable)
 **Alternativa**: Enum nativo PostgreSQL (más restrictivo)
 
 ## Implementación de Reglas de Seguridad
+## Etapa 2: Sistema de Identidad y Perfiles de Adopción (Actualización)
+
+### Descripción General
+
+La Etapa 2 complementa la fundación establecida en Etapa 1, añadiendo un sistema sofisticado de perfiles de usuario y algoritmo de matching inteligente. Mientras que Etapa 1 proporciona autenticación y gestión básica de mascotas, Etapa 2 introduce la capacidad de que los adoptantes creen perfiles demográficos que se utilizan para filtrar candidatos compatibles automáticamente.
+
+**Cambio Fundamental**: De una búsqueda simple de mascotas disponibles a un sistema de recomendación basado en restricciones demográficas duras (vivienda, niños, mascotas existentes).
+
+### Objetivos de Etapa 2
+
+1. Crear modelo UserProfile para capturar información demográfica de adoptantes
+2. Implementar algoritmo GetSwipeDeck con 3 filtros de compatibilidad
+3. Crear sistema de swiping (like/dislike) para interacciones usuario-mascota
+4. Implementar endpoint de respuesta para rescatistas a solicitudes de adopción
+5. Extender modelo Pet con 5 campos de compatibilidad
+6. Asegurar relación 1-a-1 entre Usuario y UserProfile con restricción de base de datos
+
+### Nuevos Componentes de Dominio
+
+#### UserProfile: Modelo de Perfil Demográfico
+
+**Ubicación**: `internal/core/domain/user_profile.go`
+
+```go
+type HousingType string
+
+const (
+    HousingHouse    HousingType = "house"
+    HousingApartment HousingType = "apartment"
+    HousingParcel   HousingType = "parcel"
+)
+
+type UserProfile struct {
+    ID              uint           `gorm:"primaryKey"`
+    UserID          uint           `gorm:"uniqueIndex"` // Restricción 1-a-1
+    Housing         HousingType
+    HasYard         bool
+    HasChildren     bool
+    HasOtherPets    bool
+    Experience      string         // "beginner", "intermediate", "expert"
+    TimeAvailable   string         // "low", "medium", "high"
+    CreatedAt       time.Time
+    UpdatedAt       time.Time
+    DeletedAt       gorm.DeletedAt
+}
+```
+
+**Propósito**: Almacenar información demográfica requerida para el algoritmo de matching. Cada adoptante (role = "adopter") tiene exactamente un UserProfile.
+
+**Relación**: One-to-One con User table, enforced by `uniqueIndex` en `user_id`. Rescatistas no tienen UserProfile.
+
+**Campos Clave**:
+- **Housing**: Tipo de vivienda (casa con patio, apartamento, parcela)
+- **HasYard**: Indicador para filtrar mascotas que requieren espacio exterior
+- **HasChildren**: Filtro para mascotas "buenas con niños"
+- **HasOtherPets**: Filtro para mascotas compatibles con otros animales
+- **Experience**: Nivel de experiencia con animales
+- **TimeAvailable**: Disponibilidad de tiempo para cuidado
+
+#### Extensión del Modelo Pet
+
+**Cambios en**: `internal/core/domain/pet.go`
+
+Se añaden 5 nuevos campos para compatibilidad de matching:
+
+```go
+type Pet struct {
+    // ... campos existentes ...
+    RequiresYard    bool           // ¿Requiere patio/espacio exterior?
+    GoodWithKids    bool           // ¿Compatible con niños?
+    GoodWithDogs    bool           // ¿Compatible con otros perros?
+    GoodWithCats    bool           // ¿Compatible con gatos?
+    EnergyLevel     string         // "low", "medium", "high"
+}
+```
+
+**Impacto**: Permite rescatistas describir necesidades específicas de cada mascota. Estos campos se utilizan como predicados en el algoritmo de filtering.
+
+### Nuevos Servicios
+
+#### UserService: Gestión de Perfiles
+
+**Ubicación**: `internal/core/services/user_service.go`
+
+```go
+type UserService struct {
+    db *gorm.DB
+}
+
+func NewUserService(db *gorm.DB) *UserService {
+    return &UserService{db: db}
+}
+
+// CreateOrUpdateProfile implementa patrón UPSERT
+func (s *UserService) CreateOrUpdateProfile(userID uint, profile UserProfile) error {
+    var existing UserProfile
+    
+    // Buscar si existe perfil para este usuario
+    if err := s.db.Where("user_id = ?", userID).First(&existing).Error; err != nil {
+        if errors.Is(err, gorm.ErrRecordNotFound) {
+            // No existe: crear nuevo
+            profile.UserID = userID
+            return s.db.Create(&profile).Error
+        }
+        return err
+    }
+    
+    // Existe: actualizar campos
+    return s.db.Model(&existing).Updates(profile).Error
+}
+
+func (s *UserService) GetProfile(userID uint) (*UserProfile, error) {
+    var profile UserProfile
+    if err := s.db.Where("user_id = ?", userID).First(&profile).Error; err != nil {
+        if errors.Is(err, gorm.ErrRecordNotFound) {
+            return nil, nil // No es error, usuario sin perfil aún
+        }
+        return nil, err
+    }
+    return &profile, nil
+}
+```
+
+**Patrones Implementados**:
+- **UPSERT Pattern**: Verifica existencia antes de crear/actualizar, garantiza 1-a-1
+- **Nil Check**: GetProfile devuelve nil si no existe (fallback en MatchService)
+- **Error Handling**: Diferencia entre "no encontrado" y errores de BD
+
+#### MatchService: Algoritmo de Matching
+
+**Ubicación**: `internal/core/services/match_service.go`
+
+El corazón de Etapa 2 es el algoritmo GetSwipeDeck con 3 filtros de restricción dura:
+
+```go
+type MatchService struct {
+    db          *gorm.DB
+    petService  *PetService
+}
+
+func (s *MatchService) GetSwipeDeck(userID uint) ([]Pet, error) {
+    // Paso 1: Obtener perfil del usuario
+    profile, err := s.GetUserProfile(userID)
+    if err != nil {
+        return nil, err
+    }
+    
+    // Paso 2: Si no hay perfil, devolver todas las mascotas disponibles
+    // (fallback para usuarios nuevos, mejora UX)
+    if profile == nil {
+        var pets []Pet
+        s.db.Where("status = ?", "available").
+            Limit(20).
+            Find(&pets)
+        return pets, nil
+    }
+    
+    // Paso 3-6: Construir query con filtros AND
+    query := s.db.Where("status = ?", "available")
+    
+    // Excluir mascotas ya vistas (swiped)
+    query = query.Not("id IN (?)", s.db.Select("pet_id").
+        From("matches").
+        Where("adopter_id = ?", userID))
+    
+    // FILTRO 1: Vivienda + Patio
+    if profile.Housing == "apartment" {
+        query = query.Where("requires_yard = ?", false)
+    }
+    
+    // FILTRO 2: Niños
+    if profile.HasChildren {
+        query = query.Where("good_with_kids = ?", true)
+    }
+    
+    // FILTRO 3: Mascotas Existentes
+    if profile.HasOtherPets {
+        query = query.Where("good_with_dogs = ?", true)
+    }
+    
+    var pets []Pet
+    if err := query.Find(&pets).Error; err != nil {
+        return nil, err
+    }
+    
+    return pets, nil
+}
+
+// Registrar swipe (like o dislike)
+func (s *MatchService) Swipe(adopterID, petID uint, isLike bool) error {
+    var match Match
+    
+    // Verificar si ya existe interacción
+    exists := s.db.Where("adopter_id = ? AND pet_id = ?", adopterID, petID).
+        First(&match).Error == nil
+    
+    status := "REJECTED"
+    if isLike {
+        status = "PENDING"
+    }
+    
+    if exists {
+        // Actualizar (idempotente)
+        return s.db.Model(&match).Update("status", status).Error
+    }
+    
+    // Crear nuevo
+    newMatch := Match{
+        AdopterID: adopterID,
+        PetID:     petID,
+        Status:    status,
+    }
+    return s.db.Create(&newMatch).Error
+}
+
+// Obtener solicitudes pendientes para mascota de rescatista
+func (s *MatchService) GetPendingRequests(userID uint) ([]Match, error) {
+    var matches []Match
+    s.db.Joins("JOIN pets ON pets.id = matches.pet_id").
+        Where("pets.user_id = ? AND matches.status = ?", userID, "PENDING").
+        Preload("Adopter").
+        Preload("Pet").
+        Find(&matches)
+    return matches, nil
+}
+```
+
+**Algoritmo Explicado**:
+
+1. **Sin Perfil Fallback**: Usuarios nuevos ven todas las mascotas (hasta 20) mientras completan su perfil
+2. **Filtro de Vivienda**: Apartamentistas no ven mascotas que requieren patio
+3. **Filtro de Niños**: Si tiene hijos, solo mascotas aptas para niños
+4. **Filtro de Mascotas Existentes**: Si tiene mascotas, solo mascotas compatibles
+5. **Lógica AND**: Todos los filtros deben pasar (no OR)
+6. **Exclusión de Historial**: Mascota ya swiped no vuelve a aparecer
+
+**Optimización**: Utiliza WHERE IN subquery en lugar de N+1 queries:
+```go
+NOT IN (SELECT pet_id FROM matches WHERE adopter_id = ?)
+```
+
+### Nuevos Handlers HTTP
+
+#### UserHandler: Gestión de Perfiles
+
+**Ubicación**: `internal/transport/http/user_handler.go`
+
+```go
+type UserHandler struct {
+    userService  *services.UserService
+    matchService *services.MatchService
+}
+
+// PUT /api/v1/profile
+// Crear o actualizar perfil de usuario
+func (h *UserHandler) UpdateProfile(c *gin.Context) {
+    userID, exists := c.Get("user_id")
+    if !exists {
+        c.JSON(401, gin.H{"error": "No autorizado"})
+        return
+    }
+    
+    var profile domain.UserProfile
+    if err := c.ShouldBindJSON(&profile); err != nil {
+        c.JSON(400, gin.H{"error": err.Error()})
+        return
+    }
+    
+    if err := h.userService.CreateOrUpdateProfile(userID.(uint), profile); err != nil {
+        c.JSON(500, gin.H{"error": "Error al actualizar perfil"})
+        return
+    }
+    
+    c.JSON(200, gin.H{"message": "Perfil actualizado correctamente"})
+}
+
+// GET /api/v1/matches/candidates
+// Obtener mascotas compatibles para este adoptante
+func (h *UserHandler) GetSwipeDeck(c *gin.Context) {
+    userID, exists := c.Get("user_id")
+    if !exists {
+        c.JSON(401, gin.H{"error": "No autorizado"})
+        return
+    }
+    
+    pets, err := h.matchService.GetSwipeDeck(userID.(uint))
+    if err != nil {
+        c.JSON(500, gin.H{"error": "Error al obtener candidatos"})
+        return
+    }
+    
+    c.JSON(200, pets)
+}
+```
+
+#### MatchHandler: Interacciones de Swiping
+
+**Ubicación**: `internal/transport/http/match_handler.go`
+
+```go
+type MatchHandler struct {
+    service *services.MatchService
+}
+
+// POST /api/v1/matches/swipe
+// Registrar like o dislike en mascota
+func (h *MatchHandler) Swipe(c *gin.Context) {
+    userID, _ := c.Get("user_id")
+    
+    var req struct {
+        PetID  uint `json:"pet_id"`
+        IsLike bool `json:"is_like"`
+    }
+    
+    if err := c.ShouldBindJSON(&req); err != nil {
+        c.JSON(400, gin.H{"error": err.Error()})
+        return
+    }
+    
+    if err := h.service.Swipe(userID.(uint), req.PetID, req.IsLike); err != nil {
+        c.JSON(500, gin.H{"error": "Error al registrar acción"})
+        return
+    }
+    
+    c.JSON(200, gin.H{"message": "Acción registrada"})
+}
+
+// GET /api/v1/matches/requests
+// Obtener solicitudes pendientes para mascotas de rescatista
+func (h *MatchHandler) GetPending(c *gin.Context) {
+    userID, _ := c.Get("user_id")
+    
+    matches, err := h.service.GetPendingRequests(userID.(uint))
+    if err != nil {
+        c.JSON(500, gin.H{"error": "Error al obtener solicitudes"})
+        return
+    }
+    
+    c.JSON(200, matches)
+}
+
+// POST /api/v1/matches/respond
+// Rescatista acepta o rechaza solicitud de adopción
+func (h *MatchHandler) Respond(c *gin.Context) {
+    userID, _ := c.Get("user_id")
+    
+    var req struct {
+        MatchID uint   `json:"match_id"`
+        Accept  bool   `json:"accept"`
+    }
+    
+    if err := c.ShouldBindJSON(&req); err != nil {
+        c.JSON(400, gin.H{"error": err.Error()})
+        return
+    }
+    
+    status := "REJECTED"
+    if req.Accept {
+        status = "ACCEPTED"
+    }
+    
+    if err := h.service.UpdateMatch(req.MatchID, userID.(uint), status); err != nil {
+        c.JSON(500, gin.H{"error": "Error al responder solicitud"})
+        return
+    }
+    
+    c.JSON(200, gin.H{"message": "Solicitud respondida"})
+}
+```
+
+### Rutas Protegidas Agregadas en main.go
+
+```go
+// Servicio de usuario y matching
+userService := services.NewUserService(database.DB)
+matchService := services.NewMatchService(database.DB, petService)
+
+// Handlers
+userHandler := httpTransport.NewUserHandler(userService, matchService)
+matchHandler := httpTransport.NewMatchHandler(matchService)
+
+// Rutas protegidas con JWT
+protected := router.Group("/api/v1").Use(middleware.AuthMiddleware())
+{
+    // Perfil
+    protected.PUT("/profile", userHandler.UpdateProfile)
+    protected.GET("/matches/candidates", userHandler.GetSwipeDeck)
+    
+    // Swiping
+    protected.POST("/matches/swipe", matchHandler.Swipe)
+    protected.GET("/matches/requests", matchHandler.GetPending)
+    protected.POST("/matches/respond", matchHandler.Respond)
+}
+```
+
+### Cambios en Base de Datos
+
+#### Nueva Tabla: user_profiles
+
+AutoMigrate en main.go crea automáticamente:
+
+```sql
+CREATE TABLE user_profiles (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER UNIQUE NOT NULL,  -- Restricción 1-a-1
+    housing VARCHAR(50),
+    has_yard BOOLEAN,
+    has_children BOOLEAN,
+    has_other_pets BOOLEAN,
+    experience VARCHAR(50),
+    time_available VARCHAR(50),
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP,
+    deleted_at TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE UNIQUE INDEX idx_user_profiles_user_id ON user_profiles(user_id);
+```
+
+#### Modificaciones en Tabla: pets
+
+Se agregan 5 columnas:
+
+```sql
+ALTER TABLE pets ADD COLUMN requires_yard BOOLEAN DEFAULT false;
+ALTER TABLE pets ADD COLUMN good_with_kids BOOLEAN DEFAULT true;
+ALTER TABLE pets ADD COLUMN good_with_dogs BOOLEAN DEFAULT true;
+ALTER TABLE pets ADD COLUMN good_with_cats BOOLEAN DEFAULT true;
+ALTER TABLE pets ADD COLUMN energy_level VARCHAR(50) DEFAULT 'medium';
+```
+
+### Tabla de Match (Existente, Usado en Etapa 2)
+
+```sql
+CREATE TABLE matches (
+    id SERIAL PRIMARY KEY,
+    adopter_id INTEGER NOT NULL,  -- Usuario que swipea
+    pet_id INTEGER NOT NULL,      -- Mascota swiped
+    status VARCHAR(50),           -- PENDING, ACCEPTED, REJECTED
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP,
+    FOREIGN KEY (adopter_id) REFERENCES users(id),
+    FOREIGN KEY (pet_id) REFERENCES pets(id)
+);
+
+CREATE INDEX idx_matches_adopter ON matches(adopter_id);
+CREATE INDEX idx_matches_pet ON matches(pet_id);
+CREATE INDEX idx_matches_status ON matches(status);
+```
+
+### Ciclo de Vida Etapa 2
+
+#### Flujo Adoptante
+
+```
+1. Login (Etapa 1) → Token JWT
+   
+2. PUT /api/v1/profile
+   {
+     "housing": "apartment",
+     "has_yard": false,
+     "has_children": true,
+     "has_other_pets": false,
+     "experience": "beginner",
+     "time_available": "high"
+   }
+   → UserProfile creado con restricciones
+   
+3. GET /api/v1/matches/candidates
+   → GetSwipeDeck filtra:
+     * Status = 'available'
+     * NOT swiped (NOT IN matches history)
+     * NOT requires_yard (porque apartment)
+     * good_with_kids = true (porque has_children)
+   → Recibe lista de mascotas compatibles
+   
+4. POST /api/v1/matches/swipe
+   {"pet_id": 5, "is_like": true}
+   → Match(adopter=user, pet=5, status=PENDING) creado
+   
+5. Rescatista responde:
+   POST /api/v1/matches/respond
+   {"match_id": 1, "accept": true}
+   → Match.status = ACCEPTED
+```
+
+#### Flujo Rescatista
+
+```
+1. Login (Etapa 1) + Crear mascota (Etapa 1)
+   → Pet creado con campos de compatibilidad:
+   {
+     "requires_yard": false,
+     "good_with_kids": true,
+     "good_with_dogs": true,
+     "energy_level": "medium"
+   }
+   
+2. Adoptar espera...
+   → Adoptantes hacen swipes (PENDING matches creados)
+   
+3. GET /api/v1/matches/requests
+   → Obtiene todos los Match con status=PENDING para sus mascotas
+   → Ve quién está interesado en adoptar
+   
+4. POST /api/v1/matches/respond
+   → Acepta mejores candidatos (status=ACCEPTED)
+   → Rechaza otros (status=REJECTED)
+```
+
+### Escenarios de Filtrado
+
+**Escenario 1**: Adoptante con apartamento y niños
+
+```
+Usuario: {housing: "apartment", has_children: true, has_other_pets: false}
+
+Filtros Aplicados:
+- FILTRO 1: Vivienda → WHERE requires_yard = false
+- FILTRO 2: Niños → WHERE good_with_kids = true
+- FILTRO 3: Mascotas → (no aplica, no tiene mascotas)
+
+Resultado: Solo mascotas que NO requieren patio Y son buenas con niños
+```
+
+**Escenario 2**: Adoptante con casa, sin niños, con gatos
+
+```
+Usuario: {housing: "house", has_children: false, has_other_pets: true}
+
+Filtros Aplicados:
+- FILTRO 1: Vivienda → (no aplica, puede tener patio)
+- FILTRO 2: Niños → (no aplica, sin niños)
+- FILTRO 3: Mascotas → WHERE good_with_dogs = true
+
+Resultado: Mascotas que son compatibles con otros perros
+Nota: good_with_cats no se usa en este filtro
+```
+
+**Escenario 3**: Adoptante nuevo sin perfil
+
+```
+Usuario: UserProfile no existe aún
+
+Comportamiento: GetSwipeDeck fallback
+- Devuelve primeras 20 mascotas disponibles
+- Sin restricciones (UX improvement)
+- Incentiva crear perfil luego
+
+Flujo:
+1. Usuario swipea sin perfil → ve todo
+2. Crea perfil → Matches previos se conservan
+3. Próximos swipes → Solo compatibles
+```
+
+### Decisiones Arquitectónicas Etapa 2
+
+#### 1. Restricción 1-a-1 en Base de Datos vs Aplicación
+
+**Elegida**: Base de datos con `uniqueIndex`
+
+```go
+type UserProfile struct {
+    UserID uint `gorm:"uniqueIndex"` // Fuerza constraint en BD
+}
+```
+
+**Ventaja**: No depende de lógica de aplicación; imposible crear duplicados incluso con concurrencia
+
+**Alternativa**: Solo validación en aplicación (menos segura)
+
+#### 2. Filtrado en Queries vs En Aplicación
+
+**Elegida**: Filtrado en queries SQL
+
+```go
+query.Where("requires_yard = ?", false).
+      Where("good_with_kids = ?", true)
+```
+
+**Ventaja**: 
+- Solo datos relevantes viajan red
+- Base de datos optimiza índices
+- Escalable con millones de mascotas
+
+**Alternativa**: Fetch all, filter in Go (ineficiente)
+
+#### 3. Hard Constraints vs Scoring
+
+**Elegida**: Hard Constraints (AND lógica)
+
+```
+if apartment && good_with_kids → compatible
+else → no compatible
+```
+
+**Ventaja**:
+- Simple, predecible, rápido
+- Garantiza satisfacción requisitos básicos
+- Fácil de debugg y testear
+
+**Alternativa**: Scoring/ML (más complejo, requiere training)
+
+#### 4. Fallback para Usuarios Sin Perfil
+
+**Elegida**: Mostrar todas las mascotas disponibles
+
+```go
+if profile == nil {
+    return s.db.Where("status = ?", "available").Limit(20).Find(&pets)
+}
+```
+
+**Ventaja**:
+- UX fluida: usuarios pueden empezar a explorar inmediatamente
+- Incentiva crear perfil (matches futuros más relevantes)
+
+**Alternativa**: Bloquear hasta crear perfil (barrera entrada)
+
+### Protecciones y Validaciones
+
+#### Validación de entrada en handlers
+
+```go
+var profile domain.UserProfile
+if err := c.ShouldBindJSON(&profile); err != nil {
+    // JSON inválido rechazado
+    c.JSON(400, gin.H{"error": err.Error()})
+    return
+}
+```
+
+#### Autenticación JWT requerida
+
+```go
+protected := router.Group("/api/v1").Use(middleware.AuthMiddleware())
+// Todos los endpoints de Etapa 2 requieren token válido
+```
+
+#### Queries con prepared statements (GORM)
+
+```go
+// SEGURO: Parámetros bound con ?
+query.Where("user_id = ?", userID)
+
+// INSEGURO (evitado): String interpolation
+// query.Where(fmt.Sprintf("user_id = %d", userID))
+```
+
+### Comparación: Etapa 1 vs Etapa 2
+
+| Aspecto | Etapa 1 | Etapa 2 |
+|---------|---------|---------|
+| **Búsqueda** | Lista todas mascotas | Filtra por compatibilidad |
+| **Perfil Usuario** | Solo auth (email/pass) | Incluye datos demográficos |
+| **Interacción** | Solo ver mascotas | Like/Dislike + solicitudes |
+| **Algoritmo** | N/A | 3 filtros AND |
+| **Modelo Pet** | Básico (nombre, tipo) | Extendido + compatibilidad |
+| **Rescatista** | Sube mascotas | Ve solicitudes, acepta/rechaza |
+| **Base de Datos** | 4 tablas | 5 tablas (+user_profiles) |
+| **Endpoints** | 5 públicos/protegidos | +5 new endpoints |
+
 
 ### R-SEC-01: Verificación de Identidad
 

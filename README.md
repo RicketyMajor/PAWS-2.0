@@ -135,6 +135,360 @@ La Etapa 1 prepara el camino para:
 - **Chat Real-time**: RepositoryProvider inyectado, solo necesita WebSocket implementation
 - **Producción**: Kill Switch permite escalar fácilmente a asincronía completa
 
+
+## Etapa 2: Identidad y Perfiles Enriquecidos (Completada)
+
+La Etapa 2 implementa la columna vertebral del sistema de matching de PAWS: perfiles demográficos detallados de adoptantes y un algoritmo inteligente que filtra mascotas candidatas basándose en restricciones duras. Esta etapa convierte PAWS de una simple galería de mascotas a una plataforma de compatibilidad inteligente.
+
+### Componentes Implementados
+
+#### 1. Modelo UserProfile - Información Demográfica
+
+**Propósito**: Capturar características del estilo de vida del adoptante para matchmaking inteligente.
+
+**Campos Implementados**:
+
+```go
+type HousingType string
+
+const (
+    HousingHouse     HousingType = "house"      // Casa con terreno
+    HousingApartment HousingType = "apartment"  // Departamento/piso
+    HousingParcel    HousingType = "parcel"     // Parcela/quinta
+)
+
+type UserProfile struct {
+    ID            uint           `json:"id"`
+    UserID        uint           `json:"user_id"` // FK a User (1-a-1)
+    
+    Housing       HousingType    `json:"housing"`        // Tipo de vivienda
+    HasYard       bool           `json:"has_yard"`       // Tiene patio disponible
+    HasChildren   bool           `json:"has_children"`   // Tiene niños en casa
+    HasOtherPets  bool           `json:"has_other_pets"` // Posee otras mascotas
+    Experience    string         `json:"experience"`     // beginner, intermediate, expert
+    TimeAvailable string         `json:"time_available"` // low, medium, high
+    
+    CreatedAt     time.Time      `json:"created_at"`
+    UpdatedAt     time.Time      `json:"updated_at"`
+}
+```
+
+**Relación Base de Datos**: Cada Usuario (adopter) tiene exactamente UN UserProfile (relación 1-a-1). Los rescatistas NO tienen perfil (solo crean mascotas).
+
+#### 2. Extensión del Modelo Pet para Compatibilidad
+
+**Nuevos Campos Agregados**:
+
+```go
+type Pet struct {
+    // Campos existentes...
+    ID            uint
+    Name          string
+    Type          string  // dog, cat
+    Breed         string
+    Age           int
+    Status        PetStatus // available, adopted, pending
+    
+    // NUEVOS CAMPOS PARA MATCHING (Etapa 2)
+    RequiresYard  bool    `json:"requires_yard"`  // Necesita espacio exterior
+    GoodWithKids  bool    `json:"good_with_kids"` // Segura con niños
+    GoodWithDogs  bool    `json:"good_with_dogs"` // Sociable con otros perros
+    GoodWithCats  bool    `json:"good_with_cats"` // Compatible con gatos
+    EnergyLevel   string  `json:"energy_level"`   // low, medium, high
+    
+    // Ubicación (recuperada de Fase 3)
+    Latitude      float64 `json:"latitude"`
+    Longitude     float64 `json:"longitude"`
+    
+    UserID        uint    // FK a User (rescatista propietario)
+}
+```
+
+**Impacto**: Estos campos permiten que el algoritmo GetSwipeDeck() aplique filtros inteligentes sin necesidad de machine learning complejo.
+
+#### 3. Servicio UserService - Gestión de Perfiles
+
+**Responsabilidades**:
+
+```go
+type UserService struct {
+    db *gorm.DB
+}
+
+// CreateOrUpdateProfile: Inserta o actualiza el perfil demográfico
+func (s *UserService) CreateOrUpdateProfile(userID uint, profile UserProfile) error {
+    // Implementa patrón UPSERT (Update si existe, Insert si no)
+    // Validación automática de relación 1-a-1
+}
+
+// GetProfile: Recupera el perfil para consultas de matching
+func (s *UserService) GetProfile(userID uint) (*UserProfile, error) {
+    // Usado por MatchService para obtener restricciones del adoptante
+}
+```
+
+**Patrón UPSERT**: Si el usuario ya tiene perfil, actualiza campos. Si es nuevo, crea uno. Garantiza que nunca hay duplicados.
+
+#### 4. Algoritmo de Matching Inteligente - GetSwipeDeck()
+
+**Lógica de Filtrado por Restricciones Duras**:
+
+```go
+type MatchService struct {
+    db         *gorm.DB
+    petService *PetService
+}
+
+func (s *MatchService) GetSwipeDeck(userID uint) ([]Pet, error) {
+    // Step 1: Obtener perfil del adoptante
+    profile := s.db.Where("user_id = ?", userID).First(&profile)
+    
+    // Step 2: Query base - mascotas disponibles
+    query := s.db.Where("status = ?", PetAvailable)
+    
+    // Step 3: EXCLUIR mascotas ya vistas/swipeadas
+    query = query.Where("id NOT IN (?)", 
+        s.db.Select("pet_id").From("matches").
+        Where("adopter_id = ?", userID))
+    
+    // Step 4: APLICAR FILTROS INTELIGENTES
+    
+    // Filtro 1: Vivienda
+    if profile.Housing == HousingApartment {
+        // Si adoptante vive en depto -> mascota NO puede necesitar patio
+        query = query.Where("requires_yard = ?", false)
+    }
+    
+    // Filtro 2: Niños
+    if profile.HasChildren {
+        // Si hay niños -> mascota DEBE ser segura con niños
+        query = query.Where("good_with_kids = ?", true)
+    }
+    
+    // Filtro 3: Otras mascotas
+    if profile.HasOtherPets {
+        // Si tiene mascotas -> must be sociable
+        query = query.Where("good_with_dogs = ?", true)
+    }
+    
+    // Step 5: Ejecutar y retornar
+    var candidates []Pet
+    query.Find(&candidates)
+    return candidates, nil
+}
+```
+
+**Resultado**: Un usuario ve SOLO mascotas que son compatibles con su estilo de vida. Esto previene frustraciones como "¿Por qué me muestran un Husky si vivo en depto?"
+
+**Fallback para Usuarios Nuevos**: Si un usuario no ha completado perfil aún, se muestran TODAS las mascotas disponibles (primeras 20) limitadas, permitiendo exploración inicial.
+
+#### 5. Endpoints de Usuario - Gestión del Perfil
+
+**PUT /api/v1/profile** - Actualizar/Crear Perfil (Autenticado)
+
+```bash
+curl -X PUT http://localhost:8080/api/v1/profile \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "housing": "apartment",
+    "has_yard": false,
+    "has_children": true,
+    "has_other_pets": false,
+    "experience": "beginner",
+    "time_available": "high"
+  }'
+```
+
+**Respuesta**: `{"message": "Perfil actualizado correctamente"}` (200 OK)
+
+**GET /api/v1/matches/candidates** - Obtener Candidatos (Autenticado)
+
+```bash
+curl -X GET http://localhost:8080/api/v1/matches/candidates \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Respuesta**: Array de mascotas filtradas por compatibilidad
+
+```json
+[
+  {
+    "id": 5,
+    "name": "Bella",
+    "type": "dog",
+    "breed": "Poodle",
+    "age": 3,
+    "requires_yard": false,
+    "good_with_kids": true,
+    "good_with_dogs": true,
+    "energy_level": "medium"
+  }
+]
+```
+
+#### 6. Endpoints de Match - Interacciones de Adoptante
+
+**POST /api/v1/matches/swipe** - Registrar Like/Dislike
+
+```bash
+curl -X POST http://localhost:8080/api/v1/matches/swipe \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"pet_id": 5, "is_like": true}'
+```
+
+**Comportamiento**:
+- `is_like: true` → Crea Match con status PENDING (solicitud abierta)
+- `is_like: false` → Crea Match con status REJECTED (no interesado)
+
+**GET /api/v1/matches/requests** - Solicitudes Pendientes (Solo Rescatistas)
+
+Obtiene todas las mascotas propias que tienen solicitudes de adopción abiertas. Rescatistas ven aquí quién está interesado en sus mascotas.
+
+**POST /api/v1/matches/respond** - Aceptar/Rechazar Solicitud (Solo Rescatistas)
+
+```bash
+curl -X POST http://localhost:8080/api/v1/matches/respond \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"match_id": 123, "accept": true}'
+```
+
+Cambia estado de Match a ACCEPTED o REJECTED, habilitando chat si es aceptado.
+
+#### 7. Cambios en main.go - Nuevos Servicios
+
+**Servicios Agregados**:
+
+```go
+userService  := services.NewUserService(database.DB)
+matchService := services.NewMatchService(database.DB, petService)
+```
+
+**Handlers Agregados**:
+
+```go
+userHandler  := httpTransport.NewUserHandler(userService, matchService)
+matchHandler := httpTransport.NewMatchHandler(matchService)
+```
+
+**Rutas Protegidas Agregadas**:
+
+```go
+protected.PUT("/profile", userHandler.UpdateProfile)
+protected.GET("/matches/candidates", userHandler.GetSwipeDeck)
+protected.POST("/matches/swipe", matchHandler.Swipe)
+protected.GET("/matches/requests", matchHandler.GetPending)
+protected.POST("/matches/respond", matchHandler.Respond)
+```
+
+### Flujo Completo de Etapa 2
+
+```
+1. Adoptante se registra en Etapa 1
+   ↓
+2. Sistema lo redirige a MatchScreen
+   ↓
+3. (NUEVO) Usuario completa PUT /profile con datos demográficos
+   ↓
+4. GET /matches/candidates retorna mascotas compatibles
+   ↓
+5. Usuario ve tarjetas deslizables (Tinder-style)
+   ↓
+6. Usuario swipeaLeft (dislike) o Right (like)
+   ↓
+7. POST /matches/swipe registra la acción
+   ↓
+8. Si es LIKE, se crea Match con status PENDING
+   ↓
+9. Rescatista ve Match en GET /matches/requests
+   ↓
+10. Rescatista POST /matches/respond (accept/reject)
+   ↓
+11. Si ACCEPTED → Se habilita chat para comunicación
+```
+
+### Cambios de Base de Datos
+
+**Nueva Tabla: user_profiles**
+
+```sql
+CREATE TABLE user_profiles (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    user_id BIGINT UNIQUE NOT NULL,
+    housing VARCHAR(20),
+    has_yard BOOLEAN,
+    has_children BOOLEAN,
+    has_other_pets BOOLEAN,
+    experience VARCHAR(20),
+    time_available VARCHAR(20),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+```
+
+**Alteración: Tabla pets**
+
+Se agregan campos para compatibilidad:
+
+```sql
+ALTER TABLE pets ADD COLUMN requires_yard BOOLEAN DEFAULT false;
+ALTER TABLE pets ADD COLUMN good_with_kids BOOLEAN DEFAULT true;
+ALTER TABLE pets ADD COLUMN good_with_dogs BOOLEAN DEFAULT true;
+ALTER TABLE pets ADD COLUMN good_with_cats BOOLEAN DEFAULT true;
+ALTER TABLE pets ADD COLUMN energy_level VARCHAR(20) DEFAULT 'medium';
+```
+
+### Validación y Testing
+
+**Scenario 1: Usuario sin Perfil**
+
+```bash
+# 1. Usuario se registra
+POST /auth/register → {"email": "juan@mail.com", "role": "adopter"}
+
+# 2. GET /matches/candidates → Retorna todas las mascotas (primeras 20)
+GET /matches/candidates → 200 OK [mascota1, mascota2, ...]
+```
+
+**Scenario 2: Usuario con Perfil**
+
+```bash
+# 1. Usuario completa perfil
+PUT /profile → {"housing": "apartment", "has_children": true}
+
+# 2. GET /matches/candidates → Solo mascotas seguras con niños y sin requerimiento de patio
+GET /matches/candidates → [mascota_poodle, mascota_gato, ...]
+```
+
+**Scenario 3: Matching End-to-End**
+
+```bash
+# Adoptante 1: Swipeadera
+POST /matches/swipe → {"pet_id": 5, "is_like": true}
+# Crea Match(adopter_id=1, pet_id=5, status=PENDING)
+
+# Rescatista 2: Ve solicitud
+GET /matches/requests → [Match#1 de Juan para Bella]
+
+# Rescatista 2: Acepta
+POST /matches/respond → {"match_id": 1, "accept": true}
+# Match.status = ACCEPTED
+# Juan y Rescatista 2 pueden chatear sobre Bella
+```
+
+### Salidas hacia Etapa 3
+
+Etapa 2 prepara el terreno para:
+
+- **Búsqueda Geoespacial**: Filtrado adicional por distancia (ej: mascotas dentro de 10km)
+- **Scoring Avanzado**: Algoritmos más complejos que consideran compatibilidad de razas, tamaños, temperamentos
+- **Recomendaciones**: Sistema de scoring que ordena candidatos por probabilidad de adopción exitosa
+- **Notificaciones**: Alertar adoptantes cuando nuevas mascotas coinciden con su perfil
+- **Analytics**: Tracking de qué filtros son más usados para optimización futura
+
 ## Características Principales por Fase
 
 ### Fase 7: CI/CD y Testing Automático
