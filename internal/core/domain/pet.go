@@ -1,21 +1,15 @@
 package domain
 
 import (
-	"time"
-
 	"gorm.io/gorm"
 )
 
-// Definimos el tipo
+// Definimos el tipo para status
 type PetStatus string
 
-// CONSTANTES (Combinamos nombres para que nada falle)
 const (
-	// Nombres que espera tu pet_service.go actual
 	StatusAvailable PetStatus = "available" 
 	StatusAdopted   PetStatus = "adopted"
-	
-	// Alias para el nuevo código (opcional, apuntan a lo mismo)
 	PetAvailable    PetStatus = "available"
 	PetAdopted      PetStatus = "adopted"
 	PetPending      PetStatus = "pending"
@@ -23,32 +17,38 @@ const (
 
 type Pet struct {
 	ID          uint      `gorm:"primaryKey" json:"id"`
+	
+	// Datos básicos
 	Name        string    `json:"name"`
 	Type        string    `json:"type"`   // dog, cat
-	
-	// --- CAMPOS RECUPERADOS (Que faltaban) ---
-	Breed       string    `json:"breed"`     // <--- Faltaba esto
-	Latitude    float64   `json:"latitude"`  // <--- Faltaba esto
-	Longitude   float64   `json:"longitude"` // <--- Faltaba esto
-	// -----------------------------------------
-
+	Breed       string    `json:"breed"`
+	Age         int       `json:"age"`
 	Gender      string    `json:"gender"` // male, female
-	Age         int       `json:"age"`    
-	
-	Status      PetStatus `json:"status"` 
 	Description string    `json:"description"`
 	
-	// --- CAMPOS NUEVOS (Matchmaking) ---
+	// CORRECCIÓN 1: Campo para la URL de la foto (Faltaba)
+	PhotoURL    string    `json:"photo_url"` 
+
+	// Geolocalización
+	Latitude    float64   `json:"latitude"`
+	Longitude   float64   `json:"longitude"`
+	
+	// Estado
+	Status      PetStatus `json:"status" gorm:"default:'available'"`
+
+	// Matchmaking (Preferencias)
 	RequiresYard    bool   `json:"requires_yard"`
 	GoodWithKids    bool   `json:"good_with_kids"`
 	GoodWithDogs    bool   `json:"good_with_dogs"`
 	GoodWithCats    bool   `json:"good_with_cats"`
-	EnergyLevel     string `json:"energy_level"`
+	EnergyLevel     string `json:"energy_level"` // low, medium, high
 
-	// Relaciones
-	UserID    uint           `json:"user_id"`
+	// CORRECCIÓN 2: Relaciones (El error 'unsupported relations' era por esto)
+	UserID      uint      `json:"user_id"`
+	User        User      `json:"user,omitempty" gorm:"foreignKey:UserID"`
 	
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+	// Auditoría
+	CreatedAt   int64          `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt   int64          `json:"updated_at" gorm:"autoUpdateTime"`
+	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
 }

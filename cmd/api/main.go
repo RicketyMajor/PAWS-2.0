@@ -144,6 +144,7 @@ func main() {
 			protected.PUT("/profile", userHandler.UpdateProfile)
 			protected.POST("/pets", petHandler.Create)
 			protected.POST("/files/upload", uploadHandler.Upload)
+			protected.DELETE("/pets/:id", petHandler.Delete)
 
 			match := protected.Group("/matches")
 			{
