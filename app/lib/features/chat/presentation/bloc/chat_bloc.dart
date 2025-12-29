@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:jwt_decoder/jwt_decoder.dart'; // <--- Necesitamos esto
 import '../../data/chat_repository.dart';
 import '../../domain/message_model.dart';
 
@@ -37,11 +39,16 @@ class ChatLoading extends ChatState {}
 class ChatLoaded extends ChatState {
   final List<ChatMessage> messages;
   final int matchId;
+  final int myUserId; // Agregamos esto para facilitar la UI
 
-  ChatLoaded({required this.messages, required this.matchId});
+  ChatLoaded({
+    required this.messages,
+    required this.matchId,
+    required this.myUserId,
+  });
 
   @override
-  List<Object> get props => [messages, matchId];
+  List<Object> get props => [messages, matchId, myUserId];
 }
 
 class ChatError extends ChatState {
@@ -53,86 +60,91 @@ class ChatError extends ChatState {
 class ChatBloc extends Bloc<ChatEvent, ChatState> {
   final ChatRepository repository;
   StreamSubscription? _wsSubscription;
+  final _storage = const FlutterSecureStorage();
+
   int _currentMatchId = 0;
+  int _myUserId = 0;
 
   ChatBloc({required this.repository}) : super(ChatLoading()) {
-    // 1. Iniciar: Cargar Historial + Conectar WS
+    // 1. INICIAR CHAT
     on<InitChat>((event, emit) async {
       _currentMatchId = event.matchId;
       emit(ChatLoading());
 
       try {
-        // A. Cargar Historial DB
-        final history = await repository.getHistory(event.matchId);
-        emit(ChatLoaded(messages: history, matchId: event.matchId));
+        // A. Obtener mi ID del token (para saber cuál mensaje es mío)
+        final token = await _storage.read(key: 'jwt_token');
+        if (token != null) {
+          Map<String, dynamic> decodedToken = JwtDecoder.decode(token);
+          // Asegúrate que tu token tiene el campo 'user_id' o 'sub' como número
+          // Ajusta esto según cómo genere el token tu Go
+          _myUserId = (decodedToken['user_id'] ?? decodedToken['sub'] ?? 0)
+              .toInt();
+        }
 
-        // B. Conectar WebSocket
-        final stream = await repository.connectToChat();
-
-        // C. Escuchar WebSocket
-        _wsSubscription?.cancel();
-        _wsSubscription = stream.listen((data) {
-          // Cuando llega un mensaje del servidor
-          // NOTA: Tu backend devuelve solo el string del contenido o un JSON.
-          // Asumamos que devuelve el texto por ahora según tu ws_handler.go
-          // O mejor, si ajustaste el backend para devolver JSON completo, parsealo aquí.
-
-          // Simulación simple para MVP: Creamos objeto local
-          // En producción, el backend debería devolver el objeto Message completo creado en BD
-          final newMsg = ChatMessage(
-            id: DateTime.now().millisecondsSinceEpoch,
-            matchId: _currentMatchId,
-            senderId:
-                0, // No sabemos el senderID exacto solo con string, asumimos "el otro"
-            content: data.toString(), // El backend manda bytes/string
-            isRead: false,
-            createdAt: DateTime.now(),
-            isMe: false, // Asumimos que lo que llega por WS es del otro
-          );
-
-          add(_ReceiveMessageEvent(newMsg));
-        }, onError: (error) => print("WS Error: $error"));
-      } catch (e) {
-        emit(ChatError(e.toString()));
-      }
-    });
-
-    // 2. Enviar Mensaje
-    on<SendMessageEvent>((event, emit) async {
-      if (state is ChatLoaded) {
-        final currentState = state as ChatLoaded;
-
-        // Enviar por WS
-        repository.sendMessage(_currentMatchId, event.content);
-
-        // Optimistic Update: Lo agregamos a la lista localmente como "mío"
-        final myMsg = ChatMessage(
-          id: DateTime.now().millisecondsSinceEpoch,
-          matchId: _currentMatchId,
-          senderId: 999, // ID temporal
-          content: event.content,
-          isRead: false,
-          createdAt: DateTime.now(),
-          isMe: true,
-        );
+        // B. Cargar Historial (HTTP)
+        final rawHistory = await repository.getRawHistory(event.matchId);
+        final List<ChatMessage> history = rawHistory
+            .map((json) => ChatMessage.fromJson(json, _myUserId))
+            .toList();
 
         emit(
           ChatLoaded(
-            messages: [...currentState.messages, myMsg],
+            messages: history,
             matchId: _currentMatchId,
+            myUserId: _myUserId,
           ),
         );
+
+        // C. Conectar y Escuchar WebSocket
+        await repository.connect(); // Conecta el socket global
+
+        _wsSubscription?.cancel();
+        _wsSubscription = repository.messages.listen((data) {
+          try {
+            // El backend envía un string JSON
+            final decoded = jsonDecode(data);
+
+            // Verificamos estructura del Hub Go: { "type": "...", "payload": ... }
+            if (decoded['type'] == 'new_message') {
+              final payload = decoded['payload'];
+
+              // Verificamos que el mensaje sea para ESTE chat
+              if (payload['match_id'] == _currentMatchId) {
+                final newMsg = ChatMessage.fromJson(payload, _myUserId);
+                add(_ReceiveMessageEvent(newMsg));
+              }
+            }
+          } catch (e) {
+            print("Error parseando mensaje WS: $e");
+          }
+        }, onError: (error) => print("WS Error: $error"));
+      } catch (e) {
+        print("Error InitChat: $e");
+        emit(ChatError("No se pudo conectar al chat."));
       }
     });
 
-    // 3. Recibir Mensaje (Evento interno)
+    // 2. ENVIAR MENSAJE
+    on<SendMessageEvent>((event, emit) async {
+      if (state is ChatLoaded) {
+        // Enviar por WS (El backend lo guardará y nos lo devolverá por el stream 'new_message')
+        // NOTA: Podríamos hacer optimistic update aquí, pero como el WS es rápido,
+        // esperaremos a que vuelva el mensaje del servidor para confirmar que se guardó.
+        repository.sendMessage(_currentMatchId, event.content);
+      }
+    });
+
+    // 3. RECIBIR MENSAJE (Viene del listen del socket)
     on<_ReceiveMessageEvent>((event, emit) {
       if (state is ChatLoaded) {
         final currentState = state as ChatLoaded;
+        // Agregamos al final
         emit(
           ChatLoaded(
             messages: [...currentState.messages, event.message],
             matchId: _currentMatchId,
+            myUserId: _myUserId,
           ),
         );
       }

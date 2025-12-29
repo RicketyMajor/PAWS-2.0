@@ -5,6 +5,9 @@ import '../../data/pets_repository.dart';
 import '../../domain/pet_model.dart';
 import 'create_pet_screen.dart';
 import 'pet_detail_screen.dart'; // <--- IMPORTANTE: Importamos el detalle
+import '../../../pets/data/matches_repository.dart';
+import '../../../pets/presentation/screens/match_requests_screen.dart';
+import '../../../chat/presentation/screens/rescuer_chats_screen.dart';
 
 class RescuerHomeScreen extends StatefulWidget {
   const RescuerHomeScreen({super.key});
@@ -49,8 +52,41 @@ class _RescuerHomeScreenState extends State<RescuerHomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Mis Mascotas Publicadas"),
+        title: const Text("Mis Mascotas"),
         actions: [
+          // 1. Botón de CHATS (NUEVO)
+          IconButton(
+            icon: const Icon(Icons.chat_bubble_outline),
+            tooltip: "Ver mis chats",
+            onPressed: () {
+              // IMPORTANTE: Inyectamos el repo necesario
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => RepositoryProvider(
+                    create: (_) => MatchesRepository(),
+                    child:
+                        const RescuerChatsScreen(), // <--- Importa esta pantalla
+                  ),
+                ),
+              );
+            },
+          ),
+          // 2. Botón de Solicitudes (Campanita) - Ya lo tenías
+          IconButton(
+            icon: const Icon(Icons.notifications_active),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => RepositoryProvider(
+                    create: (_) => MatchesRepository(),
+                    child: const MatchRequestsScreen(),
+                  ),
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.exit_to_app),
             onPressed: () {

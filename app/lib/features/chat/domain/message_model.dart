@@ -6,8 +6,7 @@ class ChatMessage {
   final bool isRead;
   final DateTime createdAt;
 
-  // Auxiliar para la UI (saber si el mensaje es mío o del otro)
-  // Lo calcularemos comparando senderId con mi ID de usuario
+  // UI Helper: Para saber si el mensaje es mío o del otro
   final bool isMe;
 
   ChatMessage({
@@ -17,18 +16,18 @@ class ChatMessage {
     required this.content,
     required this.isRead,
     required this.createdAt,
-    this.isMe = false, // Se asigna luego
+    this.isMe = false,
   });
 
-  factory ChatMessage.fromJson(Map<String, dynamic> json, int currentUserId) {
+  factory ChatMessage.fromJson(Map<String, dynamic> json, int myUserId) {
     return ChatMessage(
-      id: json['id'],
-      matchId: json['match_id'],
-      senderId: json['sender_id'],
-      content: json['content'],
+      id: json['id'] ?? 0,
+      matchId: json['match_id'] ?? 0,
+      senderId: json['sender_id'] ?? 0,
+      content: json['content'] ?? '',
       isRead: json['is_read'] ?? false,
       createdAt: DateTime.parse(json['created_at']),
-      isMe: json['sender_id'] == currentUserId,
+      isMe: (json['sender_id'] ?? 0) == myUserId,
     );
   }
 }

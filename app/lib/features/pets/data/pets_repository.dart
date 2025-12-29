@@ -24,20 +24,21 @@ class PetsRepository {
   // ===============================================================
 
   // En pets_repository.dart
+
   Future<List<Pet>> getSwipeDeck() async {
     try {
       final options = await _getAuthOptions();
-      // Seguimos usando el endpoint temporal /pets
+
       final response = await _dio.get(
-        '${ApiConstants.baseUrl}/pets',
+        '${ApiConstants.baseUrl}${ApiConstants.swipeDeck}',
         options: options,
       );
 
       if (response.statusCode == 200) {
-        List<dynamic> data = response.data;
-        return data
-            .map((json) => Pet.fromJson(json))
-            .toList(); // <--- SIN copyWith
+        // CORRECCIÓN: Si response.data es null, usamos una lista vacía []
+        List<dynamic> data = response.data ?? [];
+
+        return data.map((json) => Pet.fromJson(json)).toList();
       }
       return [];
     } on DioException catch (e) {

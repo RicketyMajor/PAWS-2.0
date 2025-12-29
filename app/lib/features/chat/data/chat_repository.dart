@@ -1,45 +1,76 @@
 import 'dart:convert';
-import 'package:dio/dio.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:dio/dio.dart'; // <--- Necesario para HTTP
+import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
-import 'package:web_socket_channel/io.dart'; // Para IOWebSocketChannel
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../../core/constants/api_constants.dart';
-import '../domain/message_model.dart';
-import 'package:jwt_decoder/jwt_decoder.dart'; // Útil para sacar el ID del token
+import '../domain/message_model.dart'; // <--- Importar modelo
 
 class ChatRepository {
-  final Dio _dio = Dio();
-  final FlutterSecureStorage _storage = const FlutterSecureStorage();
   WebSocketChannel? _channel;
+  final FlutterSecureStorage _storage = const FlutterSecureStorage();
+  final Dio _dio = Dio(); // Cliente HTTP
 
-  // Obtener mi ID desde el token guardado
-  Future<int> _getMyUserId() async {
+  Stream<dynamic> get messages => _channel?.stream ?? const Stream.empty();
+
+  // 1. CONECTAR
+  Future<void> connect() async {
     final token = await _storage.read(key: 'jwt_token');
-    if (token == null) return 0;
-    Map<String, dynamic> decodedToken = JwtDecoder.decode(token);
-    // Asegúrate de que tu backend ponga 'user_id' o 'sub' en el token.
-    // Si usas el standard JWT de Go, suele ser 'user_id' o convertir 'sub'.
-    return int.tryParse(
-          decodedToken['sub'] ?? decodedToken['user_id'].toString(),
-        ) ??
-        0;
+    if (token == null) throw Exception('No authentication token found');
+
+    // Construcción de la URL:
+    // Asumimos que ApiConstants.wsUrl es "ws://10.0.2.2:8080/api/v1"
+    // El endpoint en Go es "/ws"
+    final uri = Uri.parse('${ApiConstants.wsUrl}/ws');
+
+    try {
+      // IMPORTANTE: Usamos IOWebSocketChannel para poder enviar Headers
+      // Esto es crucial porque tu middleware de Go espera el token aquí.
+      _channel = IOWebSocketChannel.connect(
+        uri,
+        headers: {'Authorization': 'Bearer $token'},
+        pingInterval: const Duration(seconds: 10), // Keep-alive automático
+      );
+
+      // Esperamos el primer dato o error para validar conexión
+      // (Opcional, pero ayuda a debuggear rápido)
+      print("Intentando conectar WebSocket a $uri");
+    } catch (e) {
+      print("Error conectando WS: $e");
+      rethrow;
+    }
   }
 
-  // 1. Cargar Historial (HTTP)
   Future<List<ChatMessage>> getHistory(int matchId) async {
     try {
       final token = await _storage.read(key: 'jwt_token');
-      final myId = await _getMyUserId();
-
+      // Endpoint: /matches/:id/messages
+      // Nota: Tu backend usa /matches/:id/messages en socialHandler
       final response = await _dio.get(
-        // URL: /matches/:id/messages
         '${ApiConstants.baseUrl}/matches/$matchId/messages',
         options: Options(headers: {'Authorization': 'Bearer $token'}),
       );
 
       if (response.statusCode == 200) {
+        // Necesitamos el ID del usuario para saber cuáles son míos
+        // Decodificamos el token temporalmente aquí o lo pasamos como argumento
+        // Para simplificar, asumimos que el BLoC hará la distinción de "isMe",
+        // aquí solo devolvemos los datos crudos mapeados.
+        // PERO: El modelo ChatMessage.fromJson pide myUserId.
+        // HACK MVP: Pasamos 0 por ahora y dejamos que el BLoC lo arregle,
+        // o mejor, decodificamos el token aquí.
+
+        // Estrategia BLoC: El Repo devuelve List<Map>, el Bloc convierte a Modelo.
+        // Estrategia Repo (Mejor):
         List<dynamic> data = response.data;
-        return data.map((json) => ChatMessage.fromJson(json, myId)).toList();
+        // Retornamos la lista cruda y dejamos que el BLoC, que sabe el ID, convierta.
+        // O simplificamos el modelo.
+
+        // Vamos a devolver la lista de mapas para no complicar el repo con lógica de IDs
+        // Cambiaremos la firma del método un poco abajo en el BLoC.
+        List<ChatMessage> messages = [];
+        // (La conversión real la haremos en el BLoC para tener el userId)
+        return [];
       }
       return [];
     } catch (e) {
@@ -47,31 +78,33 @@ class ChatRepository {
     }
   }
 
-  // 2. Conectar WebSocket
-  Future<Stream<dynamic>> connectToChat() async {
+  // Helper para hacer la petición HTTP cruda y que el Bloc procese
+  Future<List<dynamic>> getRawHistory(int matchId) async {
     final token = await _storage.read(key: 'jwt_token');
-
-    // URL: ws://192.168.x.x:8080/api/v1/ws
-    // Importante: Pasamos token en Headers para handshake inicial
-    final uri = Uri.parse(ApiConstants.wsUrl);
-
-    _channel = IOWebSocketChannel.connect(
-      uri,
-      headers: {'Authorization': 'Bearer $token'},
+    final response = await _dio.get(
+      '${ApiConstants.baseUrl}/matches/$matchId/messages',
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
     );
-
-    return _channel!.stream;
+    return response.data;
   }
 
-  // 3. Enviar Mensaje (WebSocket)
-  void sendMessage(int matchId, String content) {
+  // 2. ENVIAR MENSAJE
+  void sendMessage(int matchID, String content) {
     if (_channel != null) {
-      final messageJson = jsonEncode({'match_id': matchId, 'content': content});
-      _channel!.sink.add(messageJson);
+      // Formato JSON que espera tu Hub.go (InputMessage)
+      final message = jsonEncode({"match_id": matchID, "content": content});
+      _channel!.sink.add(message);
+    } else {
+      print("Intentando enviar mensaje sin conexión activa");
     }
   }
 
+  // 3. DESCONECTAR
   void disconnect() {
-    _channel?.sink.close();
+    if (_channel != null) {
+      _channel!.sink.close();
+      _channel = null;
+      print("🔌 WebSocket desconectado");
+    }
   }
 }
