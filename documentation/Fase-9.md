@@ -36,6 +36,28 @@ Los siguientes componentes están **completamente implementados y en producción
 - `internal/transport/http/match_handler.go`
 - Extensiones en `internal/core/domain/pet.go` y `cmd/api/main.go`
 
+### ✓ COMPLETADO EN ETAPA 4 - Bandejas Inteligentes y Robustez
+
+Los siguientes componentes fueron mejorados y completados en Etapa 4 para proporcionar una experiencia de usuario superior:
+
+- ✓ GetSwipeDeck refactorizado con SQL puro LEFT JOIN para eliminar duplicados
+- ✓ GetAdopterPendingMatches: Endpoint para "Mis Likes Pendientes" del adoptante
+- ✓ GetAcceptedMatches mejorado: Chats activos del adoptante con datos del rescatista
+- ✓ GetPendingRequests: Centro de control rescatista para solicitudes entrantes
+- ✓ GetRescuerMatches: Chats activos del rescatista
+- ✓ Nuevos endpoints HTTP: /matches/mine, /matches/mine/pending, /matches/rescuer
+- ✓ Helper function getUserIDFromContext: Type-safe JWT handling (maneja float64, uint, int, uint64)
+- ✓ ChatBloc mejorado: JWT decoding local para identificar mensajes propios
+- ✓ ChatScreen robusta: Manejo de listas vacías, reverse scroll, burbujas diferenciadas
+- ✓ Correcciones críticas: Estabilidad frontend, type casting seguro, SQL LEFT JOIN
+
+**Ubicación del código mejorado**:
+
+- `internal/core/services/match_service.go` (refactorizado con LEFT JOIN y nuevos métodos)
+- `internal/transport/http/match_handler.go` (nuevos endpoints y helper function)
+- `app/lib/features/chat/presentation/bloc/chat_bloc.dart` (JWT decoding)
+- `app/lib/features/chat/presentation/screens/chat_screen.dart` (manejo robusto de listas)
+
 ### ⏳ DISEÑADO PARA FUTURO
 
 Estos componentes están diseñados en la arquitectura pero **NO están implementados aún**:
@@ -43,7 +65,6 @@ Estos componentes están diseñados en la arquitectura pero **NO están implemen
 - ⏳ Scoring de compatibilidad (compatibilidad numérica 0-100)
 - ⏳ Machine Learning para recomendaciones
 - ⏳ Filtros dinámicos del lado del cliente
-- ⏳ Integración de chat post-match
 - ⏳ Análisis de comportamiento de matching
 - ⏳ Refine iterativo basado en datos
 
@@ -53,12 +74,12 @@ La arquitectura actual soporta estas extensiones sin cambios disruptivos (endpoi
 
 1. ✓ Implementar sistema de perfiles enriquecidos para usuarios adoptantes → **COMPLETADO en Etapa 2**
 2. ✓ Extender modelos de mascotas con requisitos de compatibilidad → **COMPLETADO en Etapa 2**
-3. ✓ Crear algoritmo inteligente de filtrado (GetSwipeDeck) → **COMPLETADO en Etapa 2**
+3. ✓ Crear algoritmo inteligente de filtrado (GetSwipeDeck) → **COMPLETADO en Etapa 2, mejorado en Etapa 4**
 4. ✓ Implementar flujo de swipe (Like/Dislike) con estado Pending → **COMPLETADO en Etapa 2**
 5. ✓ Implementar flujo de respuesta del rescatista (Accept/Reject) → **COMPLETADO en Etapa 2**
-6. ✓ Crear tabla y servicios para gestionar Matches → **COMPLETADO en Etapa 2**
+6. ✓ Crear tabla y servicios para gestionar Matches → **COMPLETADO en Etapa 2, con bandejas inteligentes en Etapa 4**
 7. ✓ Establecer arquitectura de compatibilidad para futuras mejoras → **COMPLETADO en Etapa 2**
-8. ✓ Documentar flujos de matchmaking y experiencia de usuario → **COMPLETADO en Etapa 2**
+8. ✓ Documentar flujos de matchmaking y experiencia de usuario → **COMPLETADO en Etapa 2, con bandejas en Etapa 4**
 
 ## Stack Tecnológico - Matchmaking
 
@@ -81,21 +102,24 @@ La arquitectura actual soporta estas extensiones sin cambios disruptivos (endpoi
   - Bueno con gatos
   - Nivel de energía
 
-- **Tabla Match**: Registro de interacciones
+- **Tabla Match**: Registro de interacciones con estados (Etapa 4)
   - Adopter ID, Pet ID
   - Estado (Pending, Accepted, Rejected)
   - Timestamp de creación/actualización
+  - Utilizado para Bandejas Inteligentes en Etapa 4
 
 ### Servicios
 
 - **UserService**: Gestión de perfiles demográficos
-- **MatchService**: Algoritmo de filtrado e interacciones
+- **MatchService**: Algoritmo de filtrado e interacciones (mejorado Etapa 4 con LEFT JOIN y bandejas)
 - **PetService**: Datos de mascotas (ampliado)
+- **ChatService** (Etapa 3): Persistencia y validación de mensajes (usado por bandejas de Etapa 4)
 
 ### Handlers
 
 - **UserHandler**: Endpoints para actualizar perfil y obtener candidatos
-- **MatchHandler**: Endpoints para swipe, solicitudes pendientes, respuestas
+- **MatchHandler**: Endpoints para swipe, solicitudes pendientes, respuestas, y bandejas (Etapa 4)
+- **ChatBloc** (Flutter): Gestión de estado de chat con JWT decoding (Etapa 4)
 
 ## Cambios en la Estructura del Proyecto
 

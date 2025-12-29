@@ -10,7 +10,6 @@ PAWS conecta a personas que desean adoptar mascotas con organizaciones y rescati
 
 **Arquitectura**: Monorepo con separación Backend (cmd/, internal/) y Frontend (app/)
 
-
 ## Etapa 1: Estabilización y Networking (Completada)
 
 La Etapa 1 de Operación PAWS Real representa la estabilización de infraestructura crítica y preparación para desarrollo sin dependencias pesadas. Se ha implementado un sistema "Kill Switch" para características asincrónicas y soporte completo para acceso desde navegadores web.
@@ -27,6 +26,7 @@ La Etapa 1 de Operación PAWS Real representa la estabilización de infraestruct
 - **ENABLE_ASYNC_FEATURES=false (default)**: Sistema degrada gracefully, generando OTP y logeando a consola en desarrollo
 
 **Implementación**:
+
 ```go
 // cmd/api/main.go
 var mqClient *messaging.RabbitMQClient
@@ -39,6 +39,7 @@ if os.Getenv("ENABLE_ASYNC_FEATURES") == "true" {
 ```
 
 **OTPService Fallback**: Cuando mqClient es nil, el servicio genera OTP y loguea a consola en lugar de publicar a queue:
+
 ```go
 if s.mqClient != nil {
     s.mqClient.Publish("email_notifications", ...)
@@ -56,12 +57,14 @@ if s.mqClient != nil {
 **Solución**: Middleware `CORSMiddleware()` en `internal/transport/http/middleware/cors.go` autoriza explícitamente requests desde cualquier origen:
 
 **Headers Configurados**:
+
 - `Access-Control-Allow-Origin: *` (desarrollo), con lista de dominios en producción
 - `Access-Control-Allow-Methods: POST, OPTIONS, GET, PUT, DELETE`
 - `Access-Control-Allow-Headers: ..., Authorization, ...` (permite JWT)
 - Manejo de preflight requests (OPTIONS) con respuesta 204 No Content
 
 **Aplicación Global** en main.go:
+
 ```go
 r := gin.Default()
 r.Use(middleware.CORSMiddleware())  // Aplicado ANTES de rutas
@@ -73,15 +76,18 @@ r.Use(middleware.CORSMiddleware())  // Aplicado ANTES de rutas
 #### 3. Flujo de Autenticación Mejorado con OTP
 
 **Cambios en Register**:
+
 - Parámetro `role` agregado (adopter | rescatista)
 - Genera automáticamente código OTP después de crear usuario
 - Responde "Código de verificación enviado a tu email"
 
 **Nuevos Endpoints**:
+
 - `POST /auth/otp/request`: Solicita código (si no se envió en register)
 - `POST /auth/otp/verify`: Verifica código y marca usuario como verificado
 
 **Frontend Integration** (app/lib/features/auth/):
+
 - `RegisterScreen`: Obtiene rol del usuario, muestra feedback de OTP enviado
 - Navega a `OTPScreen(email)` para entrada de código de 6 dígitos
 - `AuthRepository`: Método `verifyOtp(email, code)` para completar verificación
@@ -89,6 +95,7 @@ r.Use(middleware.CORSMiddleware())  // Aplicado ANTES de rutas
 #### 4. RepositoryProvider Inyectado (ChatRepository)
 
 **Change en main.dart**:
+
 ```dart
 MultiRepositoryProvider(
   providers: [
@@ -104,6 +111,7 @@ MultiRepositoryProvider(
 #### 5. Configuración de Infraestructura
 
 **docker-compose.yml** ajustado:
+
 - No incluye RabbitMQ por defecto (consistent con Kill Switch)
 - Servicios incluidos: PostgreSQL, Redis, MinIO, Backend
 - Backend sin `ENABLE_ASYNC_FEATURES` → modo sincrónico por defecto
@@ -112,6 +120,7 @@ MultiRepositoryProvider(
 ### Validación y Testing
 
 **Kill Switch Validatable**:
+
 ```bash
 # Modo sincrónico (default)
 docker-compose up
@@ -123,6 +132,7 @@ ENABLE_ASYNC_FEATURES=true docker-compose up
 **CORS Verificable**: Aplicación Flutter Web accede a http://localhost:8080/api/v1 sin errores de navegador
 
 **OTP Generado**: En modo sincrónico, códigos aparecen en logs del backend:
+
 ```
 [DEV MODE] OTP Code for user@example.com: 123456
 ```
@@ -130,11 +140,11 @@ ENABLE_ASYNC_FEATURES=true docker-compose up
 ### Salidas a Etapa 2
 
 La Etapa 1 prepara el camino para:
+
 - **Identidad y Perfiles**: Completar perfil del adoptante con datos demográficos
 - **Rescatista Dashboard**: Backend listo para endpoints sin CORS issues
 - **Chat Real-time**: RepositoryProvider inyectado, solo necesita WebSocket implementation
 - **Producción**: Kill Switch permite escalar fácilmente a asincronía completa
-
 
 ## Etapa 2: Identidad y Perfiles Enriquecidos (Completada)
 
@@ -160,14 +170,14 @@ const (
 type UserProfile struct {
     ID            uint           `json:"id"`
     UserID        uint           `json:"user_id"` // FK a User (1-a-1)
-    
+
     Housing       HousingType    `json:"housing"`        // Tipo de vivienda
     HasYard       bool           `json:"has_yard"`       // Tiene patio disponible
     HasChildren   bool           `json:"has_children"`   // Tiene niños en casa
     HasOtherPets  bool           `json:"has_other_pets"` // Posee otras mascotas
     Experience    string         `json:"experience"`     // beginner, intermediate, expert
     TimeAvailable string         `json:"time_available"` // low, medium, high
-    
+
     CreatedAt     time.Time      `json:"created_at"`
     UpdatedAt     time.Time      `json:"updated_at"`
 }
@@ -188,18 +198,18 @@ type Pet struct {
     Breed         string
     Age           int
     Status        PetStatus // available, adopted, pending
-    
+
     // NUEVOS CAMPOS PARA MATCHING (Etapa 2)
     RequiresYard  bool    `json:"requires_yard"`  // Necesita espacio exterior
     GoodWithKids  bool    `json:"good_with_kids"` // Segura con niños
     GoodWithDogs  bool    `json:"good_with_dogs"` // Sociable con otros perros
     GoodWithCats  bool    `json:"good_with_cats"` // Compatible con gatos
     EnergyLevel   string  `json:"energy_level"`   // low, medium, high
-    
+
     // Ubicación (recuperada de Fase 3)
     Latitude      float64 `json:"latitude"`
     Longitude     float64 `json:"longitude"`
-    
+
     UserID        uint    // FK a User (rescatista propietario)
 }
 ```
@@ -242,35 +252,35 @@ type MatchService struct {
 func (s *MatchService) GetSwipeDeck(userID uint) ([]Pet, error) {
     // Step 1: Obtener perfil del adoptante
     profile := s.db.Where("user_id = ?", userID).First(&profile)
-    
+
     // Step 2: Query base - mascotas disponibles
     query := s.db.Where("status = ?", PetAvailable)
-    
+
     // Step 3: EXCLUIR mascotas ya vistas/swipeadas
-    query = query.Where("id NOT IN (?)", 
+    query = query.Where("id NOT IN (?)",
         s.db.Select("pet_id").From("matches").
         Where("adopter_id = ?", userID))
-    
+
     // Step 4: APLICAR FILTROS INTELIGENTES
-    
+
     // Filtro 1: Vivienda
     if profile.Housing == HousingApartment {
         // Si adoptante vive en depto -> mascota NO puede necesitar patio
         query = query.Where("requires_yard = ?", false)
     }
-    
+
     // Filtro 2: Niños
     if profile.HasChildren {
         // Si hay niños -> mascota DEBE ser segura con niños
         query = query.Where("good_with_kids = ?", true)
     }
-    
+
     // Filtro 3: Otras mascotas
     if profile.HasOtherPets {
         // Si tiene mascotas -> must be sociable
         query = query.Where("good_with_dogs = ?", true)
     }
-    
+
     // Step 5: Ejecutar y retornar
     var candidates []Pet
     query.Find(&candidates)
@@ -339,6 +349,7 @@ curl -X POST http://localhost:8080/api/v1/matches/swipe \
 ```
 
 **Comportamiento**:
+
 - `is_like: true` → Crea Match con status PENDING (solicitud abierta)
 - `is_like: false` → Crea Match con status REJECTED (no interesado)
 
@@ -490,6 +501,7 @@ Etapa 2 prepara el terreno para:
 - **Analytics**: Tracking de qué filtros son más usados para optimización futura
 
 ## Características Principales por Fase
+
 ## Etapa 3: Confianza Comunitaria y Comunicación Segura (Completada)
 
 La Etapa 3 completa el triángulo de confianza en PAWS: después de conectar adoptantes con mascotas (Etapa 2) y asegurar que solo usuarios legítimos pueden acceder (Etapa 1), ahora habilitamos comunicación segura, reputación comunitaria y defensa automática contra abusos. Esta etapa transforma PAWS de una plataforma transaccional a una comunidad de confianza.
@@ -576,6 +588,7 @@ func (s *ReportService) checkAndBanUser(userID uint) error {
 ```
 
 **Flujo**:
+
 1. Usuario A reporta a Usuario B por "Acoso"
 2. Sistema verifica: ¿es auto-reporte? No → Continuar
 3. Se crea Report(reporter_id=A, reported_id=B, status="verified")
@@ -584,6 +597,7 @@ func (s *ReportService) checkAndBanUser(userID uint) error {
 6. Próximo intento de login de B es rechazado
 
 **Endpoint**:
+
 ```
 POST /api/v1/report (Protegido)
 Headers: Authorization: Bearer TOKEN
@@ -603,6 +617,7 @@ Response: 201 {"message": "Reporte recibido. Gracias por ayudar a la comunidad."
 **Componentes**:
 
 **domain/message.go** - Modelo de mensaje persistente:
+
 ```go
 type Message struct {
     ID        uint           `gorm:"primaryKey" json:"id"`
@@ -617,6 +632,7 @@ type Message struct {
 ```
 
 **services/chat_service.go** - Lógica de validación:
+
 ```go
 type ChatService struct {
     db *gorm.DB
@@ -682,6 +698,7 @@ func (s *ChatService) containsForbiddenContent(text string) bool {
 El chat usa dos canales:
 
 1. **HTTP (Historial)**: GET /api/v1/matches/:id/messages
+
    - Recupera conversación previa de PostgreSQL
    - Permite cargar chat al abrir la app
    - Implementado en SocialHandler.GetChatHistory()
@@ -692,6 +709,7 @@ El chat usa dos canales:
    - Se difunden a usuarios conectados via Hub
 
 **Endpoints**:
+
 ```
 GET /api/v1/matches/:id/messages (Protegido)
 Headers: Authorization: Bearer TOKEN
@@ -717,6 +735,7 @@ Message Broadcast: Si (enviado a otros usuarios en ese match)
 **Implementación**:
 
 **transport/http/hub.go** - Orquestador central:
+
 ```go
 // Hub mantiene conjunto de clientes activos y transmite mensajes
 type Hub struct {
@@ -741,13 +760,13 @@ func (h *Hub) Run() {
         select {
         case client := <-h.register:
             h.clients[client] = true  // Nuevo cliente conectado
-        
+
         case client := <-h.unregister:
             if _, ok := h.clients[client]; ok {
                 delete(h.clients, client)
                 close(client.send)  // Cierra canal para evitar panic
             }
-        
+
         case message := <-h.broadcast:
             // Envía mensaje a TODOS los clientes conectados
             for client := range h.clients {
@@ -765,6 +784,7 @@ func (h *Hub) Run() {
 ```
 
 **transport/http/client.go** - Representación de cliente WebSocket:
+
 ```go
 type Client struct {
     hub    *Hub                // Referencia al Hub
@@ -775,6 +795,7 @@ type Client struct {
 ```
 
 **Flujo de Cliente**:
+
 1. Usuario conecta: GET /api/v1/ws (con token JWT)
 2. WSHandler.HandleConnections() crea Client y registra en Hub
 3. Cliente inicia 2 goroutines:
@@ -797,6 +818,7 @@ type Client struct {
 **Implementación**:
 
 **domain/review.go**:
+
 ```go
 type Review struct {
     ID        uint           `gorm:"primaryKey" json:"id"`
@@ -811,6 +833,7 @@ type Review struct {
 ```
 
 **services/review_service.go**:
+
 ```go
 type ReviewService struct {
     db *gorm.DB
@@ -853,10 +876,12 @@ func (s *ReviewService) CreateReview(matchID, authorID uint, rating int, comment
 ```
 
 **Lógica de TargetID**:
+
 - Adoptante califica → TargetID = Rescatista (pet.UserID)
 - Rescatista califica → TargetID = Adoptante (match.AdopterID)
 
 **Endpoint**:
+
 ```
 POST /api/v1/reviews (Protegido)
 Headers: Authorization: Bearer TOKEN
@@ -1275,6 +1300,355 @@ FLUJO DE USUARIO:
 9. Rescatista reportado 3 veces → Auto-ban a blacklist
 ```
 
+## Etapa 4: Bandejas de Entrada Inteligentes y Robustez del Matchmaking (Completada)
+
+La Etapa 4 construye sobre el motor de matchmaking de Etapa 2 (GetSwipeDeck) y el sistema de chat en tiempo real de Etapa 3, pero se enfoca en la experiencia de usuario completa: proporcionar a adoptantes y rescatistas bandejas de entrada inteligentes que muestren exactamente lo que necesitan ver en cada momento, además de corregir problemas críticos de estabilidad que surgen cuando múltiples usuarios interactúan simultáneamente.
+
+Esta etapa transforma el flujo de matching de una vista plana ("muéstrame todas las mascotas") a una experiencia de varios niveles que distingue entre Likes Pendientes (esperando respuesta del rescatista), Matches Aceptados (chats habilitados), y Solicitudes Entrantes (para rescatistas que reciben múltiples likes).
+
+### Componentes Implementados
+
+#### 1. Problema de Duplicación en Swipe Deck y Solución Robusta con LEFT JOIN
+
+**Problema Identificado en Etapa 2**: GetSwipeDeck usaba GORM con Joins que a veces causaba comportamientos inesperados, permitiendo que mascotas ya deslizadas (con estado REJECTED o PENDING) volvieran a aparecer en futuras iteraciones.
+
+**Solución Implementada en Etapa 4**: SQL puro con LEFT JOIN para garantizar que una mascota solo aparece si NO existe ningún match anterior para ese usuario.
+
+```go
+func (s *MatchService) GetSwipeDeck(userID uint) ([]domain.Pet, error) {
+	var pets []domain.Pet
+
+	query := `
+		SELECT p.* FROM pets p
+		LEFT JOIN matches m ON m.pet_id = p.id AND m.adopter_id = ?
+		WHERE m.id IS NULL
+		AND p.status = ?
+		AND p.deleted_at IS NULL
+	`
+
+	err := s.db.Raw(query, userID, domain.StatusAvailable).Scan(&pets).Error
+	return pets, err
+}
+```
+
+**Lógica del LEFT JOIN**:
+
+- Selecciona todas las mascotas disponibles (p)
+- LEFT JOIN con matches: trae filas donde m.id IS NOT NULL solo si existe match
+- WHERE m.id IS NULL: filtra para traer SOLO mascotas que NO tienen match con este usuario
+- Resultado: Mascotas deslizadas (like o dislike) nunca reaparecen
+
+**Impacto**: Experiencia de usuario consistente. Una mascota que rechazaste nunca volverá a tu deck de swipe.
+
+#### 2. Bandejas de Entrada del Adoptante
+
+**Requisito**: El adoptante necesita ver dos vistas distintas:
+
+1. **Chats Activos**: Matches aceptados donde puede chatear
+2. **Likes Pendientes**: Likes que dio pero todavía espera respuesta del rescatista
+
+**Implementación en MatchService**:
+
+```go
+// GetAcceptedMatches: Chats habilitados (chats activos)
+func (s *MatchService) GetAcceptedMatches(adopterID uint) ([]domain.Match, error) {
+	var matches []domain.Match
+	err := s.db.Preload("Pet.User").
+		Preload("Pet").
+		Where("adopter_id = ? AND status = ?", adopterID, domain.MatchAccepted).
+		Find(&matches).Error
+	return matches, err
+}
+
+// GetAdopterPendingMatches: Likes pendientes esperando respuesta del rescatista
+func (s *MatchService) GetAdopterPendingMatches(adopterID uint) ([]domain.Match, error) {
+	var matches []domain.Match
+	err := s.db.Preload("Pet").
+		Where("adopter_id = ? AND status = ?", adopterID, domain.MatchPending).
+		Find(&matches).Error
+	return matches, err
+}
+```
+
+**Diferencia Clave**: GetAcceptedMatches incluye Preload("Pet.User") para obtener datos del rescatista en chats. GetAdopterPendingMatches solo carga Pet porque no hay interacción aún.
+
+#### 3. Centro de Control del Rescatista
+
+**Requisito**: El rescatista es receptor pasivo que reacciona a múltiples likes entrantes. Necesita ver:
+
+1. **Solicitudes Pendientes**: Likes que recibió (en tabla matches con status=pending)
+2. **Chats Activos**: Adopciones en progreso (status=accepted)
+
+**Implementación en MatchService**:
+
+```go
+// GetPendingRequests: Adoptantes interesados en mis mascotas (esperando mi respuesta)
+func (s *MatchService) GetPendingRequests(rescuerID uint) ([]domain.Match, error) {
+	var matches []domain.Match
+	err := s.db.Table("matches").
+		Joins("JOIN pets ON matches.pet_id = pets.id").
+		Preload("Adopter").
+		Preload("Pet").
+		Where("pets.user_id = ? AND matches.status = ?", rescuerID, domain.MatchPending).
+		Find(&matches).Error
+	return matches, err
+}
+
+// GetRescuerMatches: Mis adopciones activas (chats en progreso)
+func (s *MatchService) GetRescuerMatches(rescuerID uint) ([]domain.Match, error) {
+	var matches []domain.Match
+	err := s.db.Table("matches").
+		Joins("JOIN pets ON matches.pet_id = pets.id").
+		Preload("Adopter").
+		Preload("Pet").
+		Where("pets.user_id = ? AND matches.status = ?", rescuerID, domain.MatchAccepted).
+		Find(&matches).Error
+	return matches, err
+}
+```
+
+**Diferencia de SQL**: Rescatista ve matches donde pets.user_id (dueño de mascota) es él. Usamos JOIN para filtrar por propietario de mascota, no por adoptante directo.
+
+#### 4. Nuevos Endpoints HTTP para Bandejas de Entrada
+
+```go
+// GET /matches/mine
+// Retorna: []Match con status=accepted (chats activos del adoptante)
+func (h *MatchHandler) GetMyMatches(c *gin.Context)
+
+// GET /matches/mine/pending
+// Retorna: []Match con status=pending (likes que diste esperando respuesta)
+func (h *MatchHandler) GetMyPending(c *gin.Context)
+
+// GET /matches/rescuer
+// Retorna: []Match donde pets.user_id = rescuerId y status=accepted
+// (Chats activos del rescatista)
+func (h *MatchHandler) GetRescuerMatches(c *gin.Context)
+
+// GET /matches/requests
+// Retorna: []Match donde pets.user_id = rescuerId y status=pending
+// (Solicitudes entrantes al rescatista)
+func (h *MatchHandler) GetPending(c *gin.Context)
+```
+
+**Integración en main.go**:
+
+```go
+match := protected.Group("/matches")
+{
+	match.GET("/candidates", matchHandler.GetMatches)          // Deck de swipe
+	match.POST("/swipe", matchHandler.Swipe)                  // Dar like/dislike
+	match.GET("/requests", matchHandler.GetPending)           // Rescatista: solicitudes entrantes
+	match.POST("/respond", matchHandler.Respond)              // Rescatista: aceptar/rechazar
+	match.GET("/mine", matchHandler.GetMyMatches)             // NUEVO: Adoptante: chats activos
+	match.GET("/mine/pending", matchHandler.GetMyPending)     // NUEVO: Adoptante: likes pendientes
+	match.GET("/rescuer", matchHandler.GetRescuerMatches)     // NUEVO: Rescatista: chats activos
+	match.GET("/:id/messages", socialHandler.GetChatHistory)  // Historial de chat (Etapa 3)
+}
+```
+
+#### 5. Mejoras en el Cliente HTTP (Type Safety)
+
+**Problema Identificado**: JWT devuelve userID como float64 (JSON unmarshaling), pero a veces podría ser uint. Extraer el valor sin panic.
+
+**Solución - Helper Function**:
+
+```go
+func getUserIDFromContext(c *gin.Context) (uint, bool) {
+	idVal, exists := c.Get("userID")
+	if !exists {
+		return 0, false
+	}
+
+	// Manejo robusto de tipos
+	switch v := idVal.(type) {
+	case float64:
+		return uint(v), true
+	case uint:
+		return v, true
+	case int:
+		return uint(v), true
+	case uint64:
+		return uint(v), true
+	default:
+		return 0, false
+	}
+}
+```
+
+**Beneficio**: Evita panics por type assertion fallida. Backend más robusto ante cambios en JWT generation.
+
+#### 6. Frontend: ChatBloc con JWT Decoding para Identificar Mensajes Propios
+
+**Problema Identificado**: ChatBloc necesita saber cuál es el userID actual para distinguir mis mensajes de los del otro usuario en la UI.
+
+**Solución - JWT Decode Local**:
+
+```dart
+on<InitChat>((event, emit) async {
+	_currentMatchId = event.matchId;
+	emit(ChatLoading());
+
+	try {
+		// A. Extraer mi userID del token almacenado
+		final token = await _storage.read(key: 'jwt_token');
+		if (token != null) {
+			Map<String, dynamic> decodedToken = JwtDecoder.decode(token);
+			_myUserId = (decodedToken['user_id'] ?? decodedToken['sub'] ?? 0).toInt();
+		}
+
+		// B. Cargar historial de mensajes anteriores
+		final rawHistory = await repository.getRawHistory(event.matchId);
+		final List<ChatMessage> history = rawHistory
+			.map((json) => ChatMessage.fromJson(json, _myUserId))
+			.toList();
+
+		emit(ChatLoaded(
+			messages: history,
+			matchId: _currentMatchId,
+			myUserId: _myUserId,  // Pasar mi ID al estado
+		));
+
+		// C. Conectar WebSocket para mensajes en tiempo real
+		await repository.connect();
+	} catch (e) {
+		emit(ChatError("Error: $e"));
+	}
+});
+```
+
+**Datos de Salida**: ChatLoaded ahora incluye myUserId para que la UI sepa cuál mensaje es mío.
+
+#### 7. Frontend: ChatScreen con Manejo Robusto de Listas Vacías
+
+**Problema Identificado**: Si el historial está vacío, mostrar un estado vacío elegante. Si los datos son null vs [], manejar ambos casos sin crashes.
+
+**Solución - BlocBuilder Robusto**:
+
+```dart
+if (state is ChatLoaded) {
+	// Manejar lista vacía
+	if (state.messages.isEmpty) {
+		return _buildEmptyState();
+	}
+
+	// Invertir lista para scroll desde abajo
+	final reversedMessages = state.messages.reversed.toList();
+
+	return ListView.builder(
+		reverse: true,  // Inicio en bottom, mejor con teclado
+		padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 20),
+		itemCount: reversedMessages.length,
+		itemBuilder: (context, index) {
+			final msg = reversedMessages[index];
+			final isMine = msg.senderID == state.myUserId;
+			return _buildMessageBubble(msg, isMine);
+		},
+	);
+}
+
+Widget _buildEmptyState() {
+	return Center(
+		child: Container(
+			padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+			decoration: BoxDecoration(
+				color: Colors.white.withOpacity(0.8),
+				borderRadius: BorderRadius.circular(20),
+			),
+			child: const Text(
+				"Di hola para comenzar la adopción",
+				style: TextStyle(color: Colors.grey),
+			),
+		),
+	);
+}
+```
+
+**Mejoras Clave**:
+
+- `if (state.messages.isEmpty)`: Detecta listas vacías sin comparar con null
+- `reverse: true` en ListView: Scroll empieza en bottom, mejor UX con teclado virtual
+- `state.myUserId`: Acceso seguro a mi ID para renderizar burbujas correctamente
+- Fallback `Container()`: Evita null reference errors
+
+#### 8. Flujo Completo: Adoptante desde Like hasta Chat
+
+```
+ADOPTANTE FLOW:
+
+1. Home Screen - GET /matches/candidates
+   - Servidor ejecuta LEFT JOIN
+   - Retorna mascotas sin match previo con él
+
+2. Swipe Decisión - POST /matches/swipe (isLike=true)
+   - Status cambio: (no existe) → pending
+
+3. Bandeja de Entrada:
+   - GET /matches/mine → Chats activos (vacío)
+   - GET /matches/mine/pending → Likes pendientes (1 elemento)
+
+4. Espera Respuesta del Rescatista:
+   - Rescatista recibe solicitud de match
+   - Rescatista acepta via POST /matches/respond
+   - Match status: pending → accepted
+
+5. Chat Habilitado:
+   - GET /matches/mine → Ahora muestra 1 chat activo
+   - GET /matches/:id/messages → Historial
+   - GET /ws → WebSocket para mensajes en tiempo real
+   - POST /reviews → Post-adopción, calificar rescatista
+```
+
+#### 9. Flujo Completo: Rescatista como Centro de Control
+
+```
+RESCATISTA FLOW:
+
+1. Dashboard:
+   - GET /matches/requests → Solicitudes pendientes (adoptantes interesados)
+   - GET /matches/rescuer → Chats activos (adopciones en progreso)
+
+2. Solicitud Entrante:
+   - Notificación: "Hay 1 solicitud pendiente"
+   - Ver detalles de adoptante
+
+3. Responder Solicitud:
+   - POST /matches/respond (accept=true|false)
+   - Status: pending → accepted
+
+4. Aceptar Solicitud:
+   - GET /matches/requests → Solicitud desaparece
+   - GET /matches/rescuer → Chat aparece
+
+5. Chat Activo:
+   - GET /matches/:id/messages → Historial
+   - GET /ws → Escuchar mensajes en tiempo real
+   - POST /reviews → Post-adopción, calificar adoptante
+```
+
+#### 10. Correcciones de Estabilidad Críticas Implementadas
+
+**Corrección 1: Manejo de Tipos en JWT**
+Problema: JWT middleware podría devolver userID como float64, causando type assertion panic.
+Solución: Helper function con switch statement que maneja múltiples tipos.
+
+**Corrección 2: Listas Nulas en Frontend**
+Problema: Backend retorna `[]Match` (lista vacía). Frontend confundía null vs [].
+Solución: Verificación explícita `if (state.messages.isEmpty)` que funciona correctamente con ambas.
+
+**Corrección 3: LEFT JOIN en GetSwipeDeck**
+Problema: GORM Joins a veces causaban que mascotas rechazadas volvieran a aparecer.
+Solución: SQL puro con `LEFT JOIN ... WHERE m.id IS NULL` garantiza que solo mascotas sin match aparecen.
+
+### Beneficios de Etapa 4
+
+1. **Claridad de Estados**: Adoptante ve exactamente qué likes están pendientes vs. cuáles están aceptados
+2. **Reducción de Duplicados**: LEFT JOIN garantiza que mascotas deslizadas no reaparecen
+3. **Robustez Frontend**: Manejo de listas vacías, JWT type casting, ListView reverse scroll
+4. **Centro de Control para Rescatista**: Vista consolidada de solicitudes entrantes y chats activos
+5. **UX Consistente**: Mensajes vacíos elegantes, burbujas de chat distinguidas por usuario
+6. **Escalabilidad**: Nueva arquitectura de bandejas no requiere cambios en backend existente
+7. **Confianza**: Reputación visual (reviews) asociada a cada rescatista/adoptante visible en bandejas
 
 ### Fase 7: CI/CD y Testing Automático
 
@@ -2131,6 +2505,110 @@ Respuesta exitosa (200):
 { "message": "Respuesta registrada" }
 ```
 
+### Ver Mis Chats Activos (Etapa 4 - Requiere Autenticación - Adoptante)
+
+Adoptante obtiene sus matches aceptados (chats activos).
+
+```bash
+TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+curl -X GET http://localhost:8080/api/v1/matches/mine \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Respuesta exitosa (200):
+
+```json
+[
+  {
+    "id": 42,
+    "adopter_id": 1,
+    "pet": {
+      "id": 1,
+      "name": "Max",
+      "type": "Dog",
+      "breed": "Golden Retriever",
+      "user": {
+        "id": 5,
+        "name": "María García",
+        "email": "maria@mail.com"
+      }
+    },
+    "status": "accepted",
+    "created_at": "2025-12-22T10:30:00Z"
+  }
+]
+```
+
+### Ver Mis Likes Pendientes (Etapa 4 - Requiere Autenticación - Adoptante)
+
+Adoptante obtiene sus matches pendientes (likes esperando respuesta del rescatista).
+
+```bash
+TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+curl -X GET http://localhost:8080/api/v1/matches/mine/pending \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Respuesta exitosa (200):
+
+```json
+[
+  {
+    "id": 41,
+    "adopter_id": 1,
+    "pet": {
+      "id": 2,
+      "name": "Luna",
+      "type": "Cat",
+      "breed": "Siamese",
+      "user": {
+        "id": 6,
+        "name": "Carlos López",
+        "email": "carlos@mail.com"
+      }
+    },
+    "status": "pending",
+    "created_at": "2025-12-22T11:00:00Z"
+  }
+]
+```
+
+### Ver Mis Chats Activos (Etapa 4 - Requiere Autenticación - Rescatista)
+
+Rescatista obtiene sus adopciones en progreso (matches aceptados).
+
+```bash
+TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+curl -X GET http://localhost:8080/api/v1/matches/rescuer \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Respuesta exitosa (200):
+
+```json
+[
+  {
+    "id": 42,
+    "adopter": {
+      "id": 1,
+      "name": "Juan Pérez",
+      "email": "juan@mail.com"
+    },
+    "pet": {
+      "id": 1,
+      "name": "Max",
+      "type": "Dog",
+      "breed": "Golden Retriever"
+    },
+    "status": "accepted",
+    "created_at": "2025-12-22T10:30:00Z"
+  }
+]
+```
+
 ### Conectar a Chat Persistente (Fase 10 - Requiere Autenticación - WebSocket)
 
 ```bash
@@ -2304,7 +2782,7 @@ PAWS-2.0/                               # Raíz del monorepo
 │   │       ├── report_service.go                      # (Fase 8 - R-SEC-04)
 │   │       ├── report_service_test.go                 # (Fase 8)
 │   │       ├── user_service.go                        # (Fase 9)
-│   │       ├── match_service.go                       # (Fase 9 - actualizado)
+│   │       ├── match_service.go                       # (Fase 9 - actualizado, Etapa 4 - LEFT JOIN, bandejas)
 │   │       ├── chat_service.go                        # (Fase 10 - Validación + persistencia)
 │   │       ├── review_service.go                      # (Fase 10 - Reputación)
 │   │       ├── math_test.go                           # (Fase 7)
@@ -2312,7 +2790,7 @@ PAWS-2.0/                               # Raíz del monorepo
 │   ├── transport/
 │   │   ├── http/
 │   │   │   ├── user_handler.go                        # (Fase 9)
-│   │   │   ├── match_handler.go                       # (Fase 9 - actualizado)
+│   │   │   ├── match_handler.go                       # (Fase 9 - actualizado, Etapa 4 - getUserIDFromContext, bandejas)
 │   │   │   ├── social_handler.go                      # (Fase 10 - Chat + Reviews)
 │   │   │   ├── ws_handler.go                          # (Fase 10 - Actualizado con ChatService)
 │   │   │   └── ...
@@ -2392,6 +2870,7 @@ Este proyecto se desarrolla en fases:
 - **Fase 7** (Completada): CI/CD pipeline, testing unitario, linting, vulnerability scanning, Docker push
 - **Fase 8** (Completada): Verificación de identidad (R-SEC-01), anti-multicuentas (R-SEC-02), blacklist (R-SEC-03), auto-ban system (R-SEC-04)
 - **Fase 9** (Completada): Matchmaking inteligente, perfiles enriquecidos, algoritmo de compatibilidad, flujo de swipe/pending/respond
+- **Etapa 4** (Completada): Bandejas inteligentes separadas (pending/active chats), robustez en swipe deck (LEFT JOIN), mejoras frontend (JWT decoding, list handling)
 - **Fase 10** (Completada): Chat persistente, filtro "Evil PAWS" contra estafas, sistema de reputación 1-5 estrellas
 - **Fase 11** (Planificada): Integración de closures, conclusión de adopciones, feedback final
 - **Fase 12** (Planificada): Machine Learning para recomendaciones, scoring dinámico, predicción de éxito
@@ -2408,6 +2887,7 @@ Este proyecto se desarrolla en fases:
 - [Fase 7](documentation/Fase-7.md): CI/CD pipeline, testing unitario, linting automático, escaneo de vulnerabilidades, Docker push
 - [Fase 8](documentation/Fase-8.md): Seguridad robusta, verificación de identidad, anti-multicuentas, sistema de reportes con auto-ban
 - [Fase 9](documentation/Fase-9.md): Matchmaking inteligente, perfiles enriquecidos, algoritmo de compatibilidad, flujo de interacción
+- **Etapa 4**: Bandejas inteligentes, robustez en swipe deck, mejoras frontend (integrada en [Fase 9](documentation/Fase-9.md) - sección "COMPLETADO EN ETAPA 4")
 - [Fase 10](documentation/Fase-10.md): Chat persistente, filtro "Evil PAWS", sistema de reputación comunitaria
 
 ## Notas Arquitectónicas
@@ -2415,6 +2895,8 @@ Este proyecto se desarrolla en fases:
 - **Chat Híbrido (Fase 10)**: WebSocket + HTTP. Los mensajes persisten en Postgres antes de broadcast. ChatService valida contra forbiddenWords.
 - **Evil PAWS Filter (Fase 10)**: Detección pasiva de estafas. Palabras bloqueadas: estafa, depósito, transferencia inmediata, odio, matar.
 - **Reviews (Fase 10)**: Sistema 1-5 estrellas con deducción automática de roles (Adoptant → califica Rescatista, Rescatista → califica Adoptant).
+- **Bandejas Inteligentes (Etapa 4)**: Separación de matches por estado (pending/accepted). Adoptante visualiza "Chats Activos" vs "Likes Pendientes". Rescatista visualiza "Solicitudes Pendientes" vs "Chats Activos". GetSwipeDeck utiliza LEFT JOIN WHERE m.id IS NULL para eliminar duplicados.
+- **Type-Safe JWT (Etapa 4)**: Helper getUserIDFromContext maneja múltiples tipos de JWT (float64, uint, int, uint64) evitando panics de type assertion.
 - **Monorepo (Fase 5)**: Backend (Go) y Frontend (Flutter) en un repositorio, directorios separados (cmd/ y app/).
 - **Seguridad (Fases 1, 8)**: JWT + Bcrypt + Identity Verification + Anti-multicuenta + Auto-ban después de 3 reportes.
 - **Geolocalización (Fase 3)**: Búsqueda SQL con radio_km, latitud/longitud, filtros demográficos (edad, género, tamaño mascota).
