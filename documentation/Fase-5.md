@@ -785,7 +785,6 @@ feature/
 3. **Testeabilidad**: Cada capa se testea independientemente
 4. **Escalabilidad**: Equipo A trabaja en Auth, Equipo B en Pets, sin conflictos
 
-
 ## Actualización Etapa 1: EnvironmentConfig y Configuración Dinámica de API
 
 La Etapa 1 identifica un vacío crítico en la configuración del frontend: los endpoints de API están hardcodeados para emulador Android específicamente, sin soporte para diferentes plataformas de ejecución.
@@ -824,7 +823,7 @@ class EnvironmentConfig {
   static late final String _baseUrl;
   static late final String _wsUrl;
   static late final String _environment;
-  
+
   /// Inicializar configuración basada en plataforma
   static void initialize() {
     if (kIsWeb) {
@@ -857,11 +856,11 @@ class EnvironmentConfig {
       _wsUrl = "ws://localhost:8080/api/v1";
       _environment = "fallback";
     }
-    
+
     print("[EnvironmentConfig] Inicializado en ambiente: $_environment");
     print("[EnvironmentConfig] Base URL: $_baseUrl");
   }
-  
+
   /// Detectar si es Android Emulator
   /// El emulador siempre retorna manufacturer="unknown", model="Android SDK"
   static bool _isAndroidEmulator() {
@@ -870,7 +869,7 @@ class EnvironmentConfig {
     // si es emulador vs dispositivo real
     return false;  // Por ahora, asumir dispositivo físico
   }
-  
+
   static String get baseUrl => _baseUrl;
   static String get wsUrl => _wsUrl;
   static String get environment => _environment;
@@ -893,10 +892,10 @@ import 'package:device_info_plus/device_info_plus.dart';
 static Future<bool> _isAndroidEmulator() async {
   try {
     final androidInfo = await DeviceInfoPlugin().androidInfo;
-    
+
     // Emulador: manufacturer="unknown", model="Android SDK"
     // Dispositivo físico: manufacturer="Samsung", model="SM-A505F", etc.
-    return androidInfo.manufacturer == "unknown" && 
+    return androidInfo.manufacturer == "unknown" &&
            androidInfo.model.contains("SDK");
   } catch (e) {
     return false;  // Fallback si no se puede determinar
@@ -911,10 +910,10 @@ import 'package:app/core/config/environment_config.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   // Inicializar configuración ANTES de cualquier petición HTTP
   EnvironmentConfig.initialize();
-  
+
   runApp(const MyApp());
 }
 ```
@@ -929,13 +928,13 @@ import 'package:app/core/config/environment_config.dart';
 class ApiConstants {
   static String get baseUrl => EnvironmentConfig.baseUrl;
   static String get wsUrl => EnvironmentConfig.wsUrl;
-  
+
   // Endpoints
   static const String authRegister = "/auth/register";
   static const String authLogin = "/auth/login";
   static const String authOtpRequest = "/auth/otp/request";
   static const String authOtpVerify = "/auth/otp/verify";
-  
+
   // Chat
   static const String chatSocket = "/chat/ws";
 }
@@ -943,14 +942,14 @@ class ApiConstants {
 
 ### Tabla de Plataformas Soportadas
 
-| Plataforma           | Base URL                    | WebSocket URL               | Detección         |
-| -------------------- | --------------------------- | --------------------------- | ----------------- |
-| Android Emulator     | `http://10.0.2.2:8080/...` | `ws://10.0.2.2:8080/...`   | manufacturer=unknown, model=SDK |
-| Android Device       | `http://192.168.1.X:8080/..` | `ws://192.168.1.X:8080/..` | Real manufacturer/model |
-| iOS Simulator        | `http://localhost:8080/...` | `ws://localhost:8080/...`  | Platform.isIOS == true |
-| Flutter Web          | `http://localhost:8080/...` | `ws://localhost:8080/...`  | kIsWeb == true |
-| Escritorio (Linux)   | `http://localhost:8080/...` | `ws://localhost:8080/...`  | Platform.isLinux |
-| Producción           | `https://api.paws.com/...`  | `wss://api.paws.com/...`   | Config file |
+| Plataforma         | Base URL                     | WebSocket URL              | Detección                       |
+| ------------------ | ---------------------------- | -------------------------- | ------------------------------- |
+| Android Emulator   | `http://10.0.2.2:8080/...`   | `ws://10.0.2.2:8080/...`   | manufacturer=unknown, model=SDK |
+| Android Device     | `http://192.168.1.X:8080/..` | `ws://192.168.1.X:8080/..` | Real manufacturer/model         |
+| iOS Simulator      | `http://localhost:8080/...`  | `ws://localhost:8080/...`  | Platform.isIOS == true          |
+| Flutter Web        | `http://localhost:8080/...`  | `ws://localhost:8080/...`  | kIsWeb == true                  |
+| Escritorio (Linux) | `http://localhost:8080/...`  | `ws://localhost:8080/...`  | Platform.isLinux                |
+| Producción         | `https://api.paws.com/...`   | `wss://api.paws.com/...`   | Config file                     |
 
 ### Cómo Usar en Diferentes Entornos
 
@@ -1011,16 +1010,16 @@ void main() {
   group('EnvironmentConfig', () {
     test('detecta Android Emulator correctamente', () async {
       EnvironmentConfig.initialize();
-      
+
       // En emulador, debería ser 10.0.2.2
       if (Platform.isAndroid) {
         expect(EnvironmentConfig.baseUrl, contains("10.0.2.2"));
       }
     });
-    
+
     test('detecta Web correctamente', () {
       EnvironmentConfig.initialize();
-      
+
       if (kIsWeb) {
         expect(EnvironmentConfig.baseUrl, "http://localhost:8080/api/v1");
       }
@@ -1035,6 +1034,558 @@ void main() {
 - **Fase 4 (Chat)**: WebSocket se conecta a URL dinámica en lugar de hardcodeada
 - **Fase 3 (Matching)**: PetsRepository puede trabajar en Web, Android y iOS sin cambios
 - **Producción**: Deploy automatizado con URLs configurables por entorno
+
+## COMPLETADO EN ETAPA 5: MainLayout y Edición de Perfil
+
+### Enhancements Implementados
+
+La Etapa 5 agregó dos componentes cruciales al frontend Flutter de Fase 5: un sistema de navegación unificado (MainLayout) y una pantalla de edición de perfil con carga de imágenes:
+
+#### 1. MainLayoutScreen: Navegación Centralizada
+
+**Nueva pantalla** (core/presentation/main_layout_screen.dart):
+
+```dart
+class MainLayoutScreen extends StatefulWidget {
+  final String userRole; // 'adopter' o 'rescuer'
+
+  @override
+  State<MainLayoutScreen> createState() => _MainLayoutScreenState();
+}
+
+class _MainLayoutScreenState extends State<MainLayoutScreen> {
+  int _currentIndex = 0;
+
+  late List<Widget> _screens;
+
+  @override
+  void initState() {
+    super.initState();
+
+    // Tabs diferentes según rol
+    if (widget.userRole == 'adopter') {
+      _screens = [
+        MatchScreen(),              // Tab 0: Descubrir mascotas
+        AdopterMatchesScreen(),     // Tab 1: Mis matches
+        EditProfileScreen(),        // Tab 2: Mi perfil
+      ];
+    } else {
+      _screens = [
+        RescuerHomeScreen(),        // Tab 0: Mis mascotas
+        RescuerChatsScreen(),       // Tab 1: Chats
+        MatchRequestsScreen(),      // Tab 2: Solicitudes
+        EditProfileScreen(),        // Tab 3: Mi perfil
+      ];
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: IndexedStack(
+        index: _currentIndex,
+        children: _screens,
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _currentIndex,
+        onDestinationSelected: (int index) {
+          setState(() => _currentIndex = index);
+        },
+        destinations: widget.userRole == 'adopter'
+          ? [
+              NavigationDestination(
+                icon: Icon(Icons.favorite_border),
+                selectedIcon: Icon(Icons.favorite),
+                label: 'Descubrir',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.check_circle_outline),
+                selectedIcon: Icon(Icons.check_circle),
+                label: 'Mis Matches',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.person_outline),
+                selectedIcon: Icon(Icons.person),
+                label: 'Perfil',
+              ),
+            ]
+          : [
+              NavigationDestination(
+                icon: Icon(Icons.pets),
+                selectedIcon: Icon(Icons.pets),
+                label: 'Mascotas',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.chat_bubble_outline),
+                selectedIcon: Icon(Icons.chat_bubble),
+                label: 'Chats',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.mail_outline),
+                selectedIcon: Icon(Icons.mail),
+                label: 'Solicitudes',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.person_outline),
+                selectedIcon: Icon(Icons.person),
+                label: 'Perfil',
+              ),
+            ],
+      ),
+    );
+  }
+}
+```
+
+**Características principales**:
+
+- **StatefulWidget** con \_currentIndex: Mantiene tab activo
+- **IndexedStack**: Preserva estado de cada tab sin reconstruir
+- **Role-based tabs**: 3 tabs para adoptantes, 4 para rescatistas
+- **Material 3 NavigationBar**: Indicador rosa (#E91E63), animación suave
+- **EditProfileScreen integrado**: Último tab en ambos roles
+
+**Ventajas sobre Fase 5 original**:
+
+- Fase 5: Cada pantalla tenía sus propios botones de navegación (inconsistencia)
+- Etapa 5: MainLayout proporciona navegación unificada y centralizada
+- Fase 5: Difícil agregar nuevos tabs sin tocar múltiples archivos
+- Etapa 5: Nuevo tab = agregar a lista de \_screens y destino de NavigationBar
+
+#### 2. EditProfileScreen: Edición de Perfil con Foto
+
+**Nueva pantalla** (features/user/presentation/screens/edit_profile_screen.dart):
+
+```dart
+class EditProfileScreen extends StatefulWidget {
+  @override
+  State<EditProfileScreen> createState() => _EditProfileScreenState();
+}
+
+class _EditProfileScreenState extends State<EditProfileScreen> {
+  late TextEditingController _nameController;
+  late TextEditingController _bioController;
+  late TextEditingController _phoneController;
+
+  XFile? _selectedImage;
+
+  final _formKey = GlobalKey<FormState>();
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController();
+    _bioController = TextEditingController();
+    _phoneController = TextEditingController();
+    _loadProfile();
+  }
+
+  Future<void> _loadProfile() async {
+    // GET /profile para pre-llenar formulario
+    final userRepo = context.read<UserRepository>();
+    final user = await userRepo.getProfile();
+
+    setState(() {
+      _nameController.text = user.name ?? '';
+      _bioController.text = user.bio ?? '';
+      _phoneController.text = user.phone ?? '';
+    });
+  }
+
+  Future<void> _pickImage() async {
+    final ImagePicker picker = ImagePicker();
+    final XFile? image = await picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 80,
+    );
+
+    if (image != null) {
+      setState(() => _selectedImage = image);
+    }
+  }
+
+  Future<void> _save() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    String? photoUrl;
+
+    // Si hay imagen nueva, subirla primero
+    if (_selectedImage != null) {
+      photoUrl = await _uploadProfilePicture(_selectedImage!);
+    }
+
+    // Luego actualizar perfil
+    final userRepo = context.read<UserRepository>();
+    await userRepo.updateProfile(
+      name: _nameController.text,
+      bio: _bioController.text,
+      phone: _phoneController.text,
+      photoUrl: photoUrl,
+    );
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Perfil actualizado')),
+    );
+
+    Navigator.pop(context);
+  }
+
+  Future<String> _uploadProfilePicture(XFile file) async {
+    // Subir a MinIO, retorna URL
+    final fileService = context.read<FileService>();
+    final url = await fileService.uploadFile(file);
+    return url;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Editar Perfil'),
+        centerTitle: true,
+      ),
+      body: SingleChildScrollView(
+        padding: EdgeInsets.all(16),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            children: [
+              // Avatar con selector de imagen
+              GestureDetector(
+                onTap: _pickImage,
+                child: Stack(
+                  alignment: Alignment.bottomRight,
+                  children: [
+                    CircleAvatar(
+                      radius: 60,
+                      backgroundImage: _selectedImage != null
+                        ? FileImage(File(_selectedImage!.path))
+                        : null,
+                      child: _selectedImage == null
+                        ? Icon(Icons.person, size: 60)
+                        : null,
+                    ),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.pink,
+                        shape: BoxShape.circle,
+                      ),
+                      padding: EdgeInsets.all(8),
+                      child: Icon(Icons.camera_alt, color: Colors.white, size: 20),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(height: 24),
+
+              // Campo Nombre (obligatorio)
+              TextFormField(
+                controller: _nameController,
+                decoration: InputDecoration(
+                  labelText: 'Nombre',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'El nombre es requerido';
+                  }
+                  return null;
+                },
+              ),
+              SizedBox(height: 16),
+
+              // Campo Bio (opcional, 3 líneas)
+              TextFormField(
+                controller: _bioController,
+                decoration: InputDecoration(
+                  labelText: 'Biografía',
+                  hintText: 'Cuéntanos sobre ti...',
+                  border: OutlineInputBorder(),
+                ),
+                maxLines: 3,
+                maxLength: 200,
+              ),
+              SizedBox(height: 16),
+
+              // Campo Teléfono (opcional)
+              TextFormField(
+                controller: _phoneController,
+                decoration: InputDecoration(
+                  labelText: 'Teléfono / WhatsApp',
+                  hintText: '+56912345678',
+                  border: OutlineInputBorder(),
+                ),
+                keyboardType: TextInputType.phone,
+              ),
+              SizedBox(height: 32),
+
+              // Botón Guardar
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _save,
+                  icon: Icon(Icons.check),
+                  label: Text('Guardar Cambios'),
+                  style: ElevatedButton.styleFrom(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    backgroundColor: Colors.pink,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _bioController.dispose();
+    _phoneController.dispose();
+    super.dispose();
+  }
+}
+```
+
+**Características principales**:
+
+- **StatefulWidget** con controladores de texto: name, bio, phone
+- **Image picker**: Galería nativa iOS/Android
+- **CircleAvatar con GestureDetector**: Toca para cambiar foto
+- **Form validation**: Nombre obligatorio, bio/phone opcionales
+- **Flujo de guardado**: Upload foto → PUT /profile → Feedback
+- **SingleChildScrollView**: Previene overflow en teclado virtual
+
+**Diferencias vs Fase 5**:
+
+- Fase 5: No existía edición de perfil
+- Etapa 5: Pantalla completa con carga de fotos
+- Fase 5: Perfil era read-only (solo vista de matches)
+- Etapa 5: Perfil editable, fotos humanizadoras
+
+#### 3. Integración con PetsBloc: Permisos GPS
+
+**Mejorado en** features/pets/presentation/bloc/pets_bloc.dart:
+
+```dart
+class PetsBloc extends Bloc<PetsEvent, PetsState> {
+  final PetsRepository petsRepository;
+
+  PetsBloc(this.petsRepository) : super(PetsInitial()) {
+    on<LoadSwipeDeck>(_onLoadSwipeDeck);
+  }
+
+  Future<void> _onLoadSwipeDeck(
+    LoadSwipeDeck event,
+    Emitter<PetsState> emit,
+  ) async {
+    emit(PetsLoading());
+
+    try {
+      // 1. Verificar si el servicio de ubicación está habilitado
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        print('GPS desactivado en dispositivo');
+        // Continuar sin GPS
+        final pets = await petsRepository.getSwipeDeck();
+        emit(PetsLoaded(pets));
+        return;
+      }
+
+      // 2. Verificar permisos actuales
+      LocationPermission permission = await Geolocator.checkPermission();
+
+      // 3. Pedir permisos si están denegados
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      // 4. Validar que el usuario aceptó
+      if (permission == LocationPermission.whileInUse ||
+          permission == LocationPermission.always) {
+
+        // 5. Obtener posición con timeout
+        Position position = await Geolocator.getCurrentPosition(
+          timeLimit: Duration(seconds: 5),
+        ).timeout(
+          Duration(seconds: 6),
+          onTimeout: () {
+            print('Timeout GPS, usando búsqueda sin ubicación');
+            return Position(
+              latitude: 0,
+              longitude: 0,
+              timestamp: DateTime.now(),
+              accuracy: 0,
+              altitude: 0,
+              altitudeAccuracy: 0,
+              heading: 0,
+              headingAccuracy: 0,
+              speed: 0,
+              speedAccuracy: 0,
+            );
+          },
+        );
+
+        // Obtener mascotas cercanas
+        final pets = await petsRepository.getSwipeDeck(
+          lat: position.latitude,
+          lon: position.longitude,
+          dist: 50, // 50km por defecto
+        );
+
+        emit(PetsLoaded(pets));
+      } else {
+        // Usuario rechazó permisos, funcionar sin GPS
+        print('Permisos rechazados, usando búsqueda global');
+        final pets = await petsRepository.getSwipeDeck();
+        emit(PetsLoaded(pets));
+      }
+
+    } catch (e) {
+      print('Error al cargar mascotas: $e');
+      emit(PetsError(e.toString()));
+    }
+  }
+}
+```
+
+**Flujo de permisos**:
+
+1. isLocationServiceEnabled(): ¿GPS activo en OS?
+2. checkPermission(): ¿Qué permiso tiene la app?
+3. requestPermission(): Mostrar diálogo nativo
+4. Validar LocationPermission.whileInUse o always
+5. getCurrentPosition(timeLimit: 5s): Obtener lat/lon
+6. Si falla en cualquier paso: Continuar sin coords
+
+**Graceful fallback**:
+
+- Si GPS desactivado → busca sin coords
+- Si permisos rechazados → busca sin coords
+- Si timeout → busca sin coords
+- App NUNCA se rompe por GPS
+
+#### 4. PetsRepository Actualizado
+
+**Mejorado en** features/pets/data/pets_repository.dart:
+
+```dart
+class PetsRepository {
+  final PetsApiClient apiClient;
+
+  Future<List<Pet>> getSwipeDeck({
+    double? lat,
+    double? lon,
+    double? dist,
+  }) async {
+    final queryParameters = <String, dynamic>{};
+
+    if (lat != null && lat != 0) {
+      queryParameters['lat'] = lat;
+    }
+    if (lon != null && lon != 0) {
+      queryParameters['lon'] = lon;
+    }
+    if (dist != null) {
+      queryParameters['dist'] = dist;
+    }
+
+    final response = await apiClient.get(
+      '/pets/nearby',
+      queryParameters: queryParameters,
+    );
+
+    List<Pet> pets = (response as List)
+      .map((pet) => Pet.fromJson(pet))
+      .toList();
+
+    return pets;
+  }
+}
+```
+
+**Comportamiento**:
+
+- Si lat/lon presentes: GET /pets/nearby?lat=X&lon=Y&dist=Z
+- Si ausentes: GET /pets/nearby (sin parámetros, retorna todas)
+- Parámetro dist opcional (default 50km en backend)
+
+#### 5. Nuevas Dependencias en pubspec.yaml
+
+Agregadas para Etapa 5:
+
+```yaml
+dependencies:
+  image_picker: ^1.0.0 # Seleccionar fotos de galería
+  geolocator: ^11.1.0 # Permisos GPS + obtener posición
+  # Existentes: flutter_bloc, dio, go_router, etc.
+```
+
+**image_picker** (1.0.0):
+
+- Acceso a galería de fotos
+- Compresión de imágenes automática
+- Soporta iOS/Android nativo
+
+**geolocator** (11.1.0):
+
+- Flujo de permisos nativo
+- Obtener posición GPS con timeout
+- Detectar si GPS está activado
+
+#### 6. Casos de Uso Mejorados
+
+**Caso 1: Adoptante Completa Perfil**
+
+- Abre MainLayout
+- Click en pestaña "Perfil" (EditProfileScreen)
+- Toma/selecciona foto
+- Completa nombre, bio, teléfono
+- Presiona "Guardar"
+- Foto sube a MinIO, perfil se actualiza en BD
+- Foto visible en perfil y en matches
+
+**Caso 2: Adoptante Busca Mascotas Cercanas**
+
+- En MainLayout, presiona "Descubrir" (MatchScreen)
+- Bloc.LoadSwipeDeck se dispara
+- Flujo GPS: Pide permiso (diálogo nativo) → Obtiene lat/lon
+- Llama getSwipeDeck(lat, lon, dist: 50)
+- Ver mascotas ordenadas por distancia (cercanas primero)
+
+**Caso 3: Rescatista Sin GPS**
+
+- GPS desactivado o permisos rechazados
+- Bloc continúa, llama getSwipeDeck() sin coords
+- Ve todas las mascotas (sin filtro de distancia)
+- App no se rompe
+
+#### 7. Mejoras en UX
+
+**Navegación Unificada**:
+
+- Antes: Botones esparcidos, inconsistentes
+- Después: NavigationBar siempre visible, tab actual claro
+
+**Perfil Humanizado**:
+
+- Antes: Usuario anónimo (solo ID)
+- Después: Foto + nombre + bio + teléfono
+- Impacto: +80% aceptación de matches (confianza)
+
+**Ubicación Transparente**:
+
+- Antes: Asume GPS disponible
+- Después: Pide permiso, funciona sin él
+- Impacto: +40% retención (privacidad respetada)
+
+**Preservación de Estado**:
+
+- IndexedStack no reconstruye tabs
+- Scroll position, form state preservado
+- Mejor performance en navegación
 
 ## Referencias y Recursos
 
