@@ -70,9 +70,7 @@ func main() {
 		workers.StartEmailConsumer(mqClient, emailClient)
 	}
 
-	// WebSocket Hub
-	hub := httpTransport.NewHub()
-	go hub.Run()
+	
 
 	// =========================================================================
 	// 2. INYECCIÓN DE DEPENDENCIAS
@@ -91,6 +89,10 @@ func main() {
 	reportService   := services.NewReportService(database.DB, authService)
 	matchService    := services.NewMatchService(database.DB, petService)
 
+	// WebSocket Hub
+	hub := httpTransport.NewHub(chatService) 
+	go hub.Run()
+
 	// =========================================================================
 	// 3. HANDLERS
 	// =========================================================================
@@ -103,8 +105,7 @@ func main() {
 	reportHandler   := httpTransport.NewReportHandler(reportService)
 	uploadHandler   := httpTransport.NewUploadHandler(fileService)
 	identityHandler := httpTransport.NewIdentityHandler(identityService)
-	
-	wsHandler       := httpTransport.NewWSHandler(hub, chatService)
+	wsHandler       := httpTransport.NewWSHandler(hub)
 
 	// =========================================================================
 	// 4. RUTAS & MIDDLEWARE
@@ -148,11 +149,14 @@ func main() {
 
 			match := protected.Group("/matches")
 			{
-				match.GET("/candidates", userHandler.GetSwipeDeck)
+				match.GET("/candidates", matchHandler.GetMatches)
 				match.POST("/swipe", matchHandler.Swipe)
 				match.GET("/requests", matchHandler.GetPending)
 				match.POST("/respond", matchHandler.Respond)
 				match.GET("/:id/messages", socialHandler.GetChatHistory)
+				match.GET("/mine", matchHandler.GetMyMatches)
+				match.GET("/mine/pending", matchHandler.GetMyPending)
+				match.GET("/rescuer", matchHandler.GetRescuerMatches)
 			}
 
 			protected.POST("/reviews", socialHandler.CreateReview)

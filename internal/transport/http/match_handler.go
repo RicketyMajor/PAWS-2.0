@@ -131,3 +131,64 @@ func (h *MatchHandler) Respond(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Respuesta registrada"})
 }
+
+// GetMyMatches (GET /matches/mine) - Para el Adoptante
+func (h *MatchHandler) GetMyMatches(c *gin.Context) {
+	// Usamos el helper seguro que creamos antes, o el cast directo si no lo tienes a mano
+	userIDVal, _ := c.Get("userID")
+	var userID uint
+	// Manejo seguro de tipos por si JWT devuelve float64
+	if val, ok := userIDVal.(float64); ok {
+		userID = uint(val)
+	} else {
+		userID = userIDVal.(uint)
+	}
+
+	matches, err := h.service.GetAcceptedMatches(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error obteniendo mis matches"})
+		return
+	}
+
+	c.JSON(http.StatusOK, matches)
+}
+
+// GetRescuerMatches (GET /matches/rescuer)
+func (h *MatchHandler) GetRescuerMatches(c *gin.Context) {
+	userIDVal, _ := c.Get("userID")
+	// Conversión segura (float64 a uint)
+	var userID uint
+	if val, ok := userIDVal.(float64); ok {
+		userID = uint(val)
+	} else {
+		userID = userIDVal.(uint)
+	}
+
+	matches, err := h.service.GetRescuerMatches(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error obteniendo chats"})
+		return
+	}
+
+	c.JSON(http.StatusOK, matches)
+}
+
+// GetMyPending (GET /matches/mine/pending)
+func (h *MatchHandler) GetMyPending(c *gin.Context) {
+	userIDVal, _ := c.Get("userID")
+	// Conversión segura
+	var userID uint
+	if val, ok := userIDVal.(float64); ok {
+		userID = uint(val)
+	} else {
+		userID = userIDVal.(uint)
+	}
+
+	matches, err := h.service.GetAdopterPendingMatches(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error obteniendo pendientes"})
+		return
+	}
+
+	c.JSON(http.StatusOK, matches)
+}
