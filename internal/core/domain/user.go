@@ -31,4 +31,10 @@ type User struct {
 
 	// Banned permite bloquear usuarios manualmente o automáticamente (R-SEC-03)
 	IsBanned bool `gorm:"default:false" json:"is_banned"`
+
+	// --- NUEVOS CAMPOS DE IDENTIDAD (Etapa 5) ---
+	// Agregamos esto aquí para que al hacer Preload("User") ya tengamos la foto.
+	PhotoURL string `json:"photo_url"` 
+	Bio      string `gorm:"type:text" json:"bio"`     // "Vivo en casa con patio..."
+	Phone    string `json:"phone"`   // "+56912345678"
 }

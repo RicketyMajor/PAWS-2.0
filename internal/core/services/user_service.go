@@ -1,7 +1,6 @@
 package services
 
 import (
-	"errors"
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/domain"
 	"gorm.io/gorm"
 )
@@ -14,33 +13,22 @@ func NewUserService(db *gorm.DB) *UserService {
 	return &UserService{db: db}
 }
 
-// CreateOrUpdateProfile guarda la información demográfica
-func (s *UserService) CreateOrUpdateProfile(userID uint, profile domain.UserProfile) error {
-	// Buscamos si ya existe
-	var existing domain.UserProfile
-	result := s.db.Where("user_id = ?", userID).First(&existing)
-
-	if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return result.Error // Error de BD real
+// UpdateIdentity actualiza los datos visibles del perfil del usuario
+func (s *UserService) UpdateIdentity(userID uint, name, bio, phone, photoURL string) error {
+	// Usamos un mapa para actualizar solo los campos que queremos
+	updates := map[string]interface{}{
+		"name":      name,
+		"bio":       bio,
+		"phone":     phone,
+		"photo_url": photoURL,
 	}
 
-	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		// Crear nuevo
-		profile.UserID = userID
-		return s.db.Create(&profile).Error
-	}
-
-	// Actualizar existente
-	// (GORM actualiza los campos no-cero)
-	return s.db.Model(&existing).Updates(profile).Error
+	return s.db.Model(&domain.User{}).Where("id = ?", userID).Updates(updates).Error
 }
 
-// GetProfile obtiene el perfil para el algoritmo
-func (s *UserService) GetProfile(userID uint) (*domain.UserProfile, error) {
-	var profile domain.UserProfile
-	err := s.db.Where("user_id = ?", userID).First(&profile).Error
-	if err != nil {
-		return nil, err
-	}
-	return &profile, nil
+// GetUser obtiene la info completa del usuario (para mostrar en su perfil)
+func (s *UserService) GetUser(userID uint) (*domain.User, error) {
+	var user domain.User
+	err := s.db.First(&user, userID).Error
+	return &user, err
 }

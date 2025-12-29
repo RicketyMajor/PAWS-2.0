@@ -17,21 +17,31 @@ func NewMatchService(db *gorm.DB, petService *PetService) *MatchService {
 	}
 }
 
-// GetSwipeDeck: VERSIÓN ROBUSTA
-func (s *MatchService) GetSwipeDeck(userID uint) ([]domain.Pet, error) {
+// GetSwipeDeck: Devuelve mascotas cercanas ordenadas por distancia
+func (s *MatchService) GetSwipeDeck(userID uint, lat, lon float64) ([]domain.Pet, error) {
 	var pets []domain.Pet
 
-	// SQL Puro para evitar confusiones de GORM con los Joins.
-	// "Selecciona mascotas disponibles que NO estén en la tabla matches para este usuario"
-	query := `
-		SELECT p.* FROM pets p
-		LEFT JOIN matches m ON m.pet_id = p.id AND m.adopter_id = ?
-		WHERE m.id IS NULL 
-		AND p.status = ?
-		AND p.deleted_at IS NULL
-	`
+	// Base Query: Mascotas disponibles que NO he visto
+	query := s.db.Table("pets p").
+		Select("p.*").
+		Joins("LEFT JOIN matches m ON m.pet_id = p.id AND m.adopter_id = ?", userID).
+		Where("m.id IS NULL").
+		Where("p.status = ?", domain.StatusAvailable).
+		Where("p.deleted_at IS NULL")
 
-	err := s.db.Raw(query, userID, domain.StatusAvailable).Scan(&pets).Error
+	// Si tenemos coordenadas del usuario, ordenamos por distancia
+	if lat != 0 && lon != 0 {
+		// Fórmula SQL para distancia euclidiana (aproximación rápida para ordenar)
+		// Para mayor precisión se usa la fórmula de Haversine, pero esto basta para MVP.
+		// ORDER BY ((lat - p.lat)^2 + (lon - p.lon)^2) ASC
+		orderClause := "((? - p.latitude) * (? - p.latitude) + (? - p.longitude) * (? - p.longitude)) ASC"
+		query = query.Order(gorm.Expr(orderClause, lat, lat, lon, lon))
+	} else {
+		// Fallback: Ordenar por más recientes si no hay GPS
+		query = query.Order("p.created_at DESC")
+	}
+
+	err := query.Find(&pets).Error
 	return pets, err
 }
 

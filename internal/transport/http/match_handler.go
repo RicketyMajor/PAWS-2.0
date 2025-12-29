@@ -2,6 +2,7 @@ package http
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/services"
@@ -40,23 +41,33 @@ func getUserIDFromContext(c *gin.Context) (uint, bool) {
 	}
 }
 
-// GetMatches maneja la petición GET /pets/match
+// GetMatches maneja la petición GET /matches/candidates?lat=...&lon=...
 func (h *MatchHandler) GetMatches(c *gin.Context) {
 	// 1. Obtener UserID seguro
 	userID, ok := getUserIDFromContext(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Usuario no identificado o token inválido"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Usuario no identificado"})
 		return
 	}
 
-	// 2. Llamar al servicio
-	pets, err := h.service.GetSwipeDeck(userID)
+	// 2. Obtener Coordenadas (Opcionales)
+	latStr := c.Query("lat")
+	lonStr := c.Query("lon")
+	
+	var lat, lon float64
+	if latStr != "" && lonStr != "" {
+		// Ignoramos errores de parseo y asumimos 0 si falla (sin filtro de distancia)
+		lat, _ = strconv.ParseFloat(latStr, 64)
+		lon, _ = strconv.ParseFloat(lonStr, 64)
+	}
+
+	// 3. Llamar al servicio (Ahora pasamos lat/lon)
+	pets, err := h.service.GetSwipeDeck(userID, lat, lon)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error obteniendo candidatos para match: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error obteniendo candidatos: " + err.Error()})
 		return
 	}
 
-	// 3. Responder con JSON
 	c.JSON(http.StatusOK, pets)
 }
 
