@@ -810,6 +810,284 @@ ENABLE_ASYNC_FEATURES=true docker-compose -f docker-compose.yml -f docker-compos
 - La interfaz de OTPService.GenerateOTP() no cambia
 - Los tests de VerifyOTP siguen siendo los mismos
 
+## COMPLETADO EN ETAPA 6: Robustez en Handlers y Type-Safe JWT Extraction
+
+### Enhancements Implementados
+
+La Etapa 6 mejoró significativamente la robustez del backend en Fase 8, blindando los handlers contra panics por type casting incorrecto del userID extraído del JWT. El middleware de autenticación almacena el userID del JWT como `float64` (estándar JSON), pero varios handlers intentaban usarlo directamente como `uint`, causando potenciales panics.
+
+#### 1. Problema de Type Casting Original
+
+**Situación anterior**: El middleware AuthMiddleware() almacena el userID desde JWT como:
+
+```go
+// En middleware/auth.go
+if claims, ok := token.Claims.(jwt.MapClaims); ok {
+	c.Set("userID", claims["sub"])  // claims["sub"] es float64, no uint
+	c.Set("role", claims["role"])
+}
+```
+
+El JWT almacena números como `float64` según especificación JSON. Sin embargo, varios handlers asumían que era `uint`:
+
+```go
+// ANTES (Etapa 5 - INSEGURO)
+func (h *SocialHandler) CreateReview(c *gin.Context) {
+	userID := c.GetUint("userID")  // Panic si es float64!
+	// ... resto del código
+}
+```
+
+**Riesgo**: Si el JWT tiene `"sub": 123` (float64), `GetUint()` retorna 0 silenciosamente, pero en algunos contextos podría causar panic o comportamiento indefinido.
+
+#### 2. Helper Function: getUserIDSafe()
+
+**Solución implementada en** internal/transport/http/social_handler.go:
+
+```go
+// Helper interno para obtener ID seguro (puedes moverlo a un utils.go si prefieres)
+func getUserIDSafe(c *gin.Context) (uint, bool) {
+	idVal, exists := c.Get("userID")
+	if !exists {
+		return 0, false
+	}
+	// Type assertion: manejar float64 o uint
+	switch v := idVal.(type) {
+	case float64:
+		return uint(v), true
+	case uint:
+		return v, true
+	default:
+		return 0, false
+	}
+}
+```
+
+**Características**:
+
+1. **Type Assertion Explícita**: Comprueba si es `float64` (JWT standard) o `uint`
+2. **Fallback Seguro**: Retorna (0, false) si no puede convertir
+3. **Dual Return**: Devuelve tanto el ID como un flag de éxito (no panic)
+4. **Reutilizable**: Puede moverse a `utils.go` para compartir entre handlers
+
+#### 3. SocialHandler: CreateReview Blindado
+
+**Implementación segura**:
+
+```go
+// CreateReview (POST /reviews)
+func (h *SocialHandler) CreateReview(c *gin.Context) {
+	// CORRECCIÓN DE SEGURIDAD - Etapa 6
+	userID, ok := getUserIDSafe(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Usuario no identificado"})
+		return
+	}
+
+	var req struct {
+		MatchID uint   `json:"match_id" binding:"required"`
+		Rating  int    `json:"rating" binding:"required"`
+		Comment string `json:"comment"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := h.reviewService.CreateReview(req.MatchID, userID, req.Rating, req.Comment); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"message": "Reseña guardada"})
+}
+```
+
+**Flujo de seguridad**:
+
+1. Obtener userID con `getUserIDSafe()` (maneja float64 o uint)
+2. Si falla (no existe o type invalid) → 401 Unauthorized
+3. Validar estructura JSON con binding
+4. Llamar ReviewService con userID verificado
+5. Respuesta 201 Created con confirmación
+
+**Ventaja**: Nunca ocurre panic, siempre hay respuesta HTTP válida
+
+#### 4. ReportHandler: Create Blindado
+
+**Implementación segura**:
+
+```go
+func (h *ReportHandler) Create(c *gin.Context) {
+	// CORRECCIÓN DE SEGURIDAD - Etapa 6
+	// Replicamos la lógica segura de type casting
+	idVal, exists := c.Get("userID")
+	var reporterID uint
+
+	if exists {
+		switch v := idVal.(type) {
+		case float64:
+			reporterID = uint(v)
+		case uint:
+			reporterID = v
+		}
+	}
+
+	// Si reporterID es 0, usuario no identificado
+	if reporterID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "No se pudo identificar al usuario"})
+		return
+	}
+
+	var req ReportRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	err := h.service.CreateReport(reporterID, req.ReportedID, req.Reason)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"message": "Reporte recibido. Gracias por ayudar a la comunidad."})
+}
+```
+
+**Diferencia vs SocialHandler**: ReportHandler hace la conversión inline (sin refactoriz a helper). Ambos enfoques son válidos:
+
+- **Inline (ReportHandler)**: Más verboso, pero self-contained
+- **Helper (SocialHandler)**: Más DRY, requiere import de la función
+
+**Recomendación futura**: Consolidar ambos en `internal/transport/http/utils.go`:
+
+```go
+// utils.go
+package http
+
+func GetUserIDSafe(c *gin.Context) (uint, bool) {
+	idVal, exists := c.Get("userID")
+	if !exists {
+		return 0, false
+	}
+	switch v := idVal.(type) {
+	case float64:
+		return uint(v), true
+	case uint:
+		return v, true
+	case int:
+		return uint(v), true
+	case int64:
+		return uint(v), true
+	case uint64:
+		return uint(v), true
+	default:
+		return 0, false
+	}
+}
+```
+
+Con esto, todos los handlers usan: `userID, ok := GetUserIDSafe(c)`
+
+#### 5. Impacto en Seguridad (R-SEC-04)
+
+La robustez del type casting mejora R-SEC-04 (Sistema de Reportes) de dos maneras:
+
+1. **Confiabilidad**: ReportHandler nunca puedegenerar panic por type assertion
+
+   - Antes: `reporterID := c.GetUint()` → potencial panic si JWT mal formado
+   - Después: `reporterID, ok := GetUserIDSafe()` → respuesta 401 determinística
+
+2. **Trazabilidad**: Cada reporte vinculado correctamente a un usuario verificado
+   - Si reporterID es 0 (conversión fallida), se rechaza inmediatamente
+   - Previene reportes "huérfanos" o con usuario incorrecto
+
+#### 6. Casos de Uso Mejorados
+
+**Caso 1: Usuario válido reporta**
+
+1. Cliente envía JWT válido con sub: 123
+2. Middleware extrae claims["sub"] como float64(123)
+3. ReportHandler llama GetUserIDSafe() → retorna (123, true)
+4. CreateReport(123, reported_id, reason) ejecuta
+5. Respuesta 201 Created
+
+**Caso 2: JWT corrupto o malformado**
+
+1. Cliente envía JWT con claims["sub"] = "abc" (string, no número)
+2. Middleware extrae como string, c.Set("userID", "abc")
+3. ReportHandler llama GetUserIDSafe() → type assertion falla en switch
+4. Retorna (0, false) → sin convertir
+5. `if reporterID == 0` → respuesta 401 Unauthorized
+
+**Caso 3: Token ausente o middleware lo bloqueó**
+
+1. Cliente no envía Authorization header
+2. Middleware rechaza con 401 antes de llegar a handler
+3. ReportHandler nunca se ejecuta
+4. Respuesta 401 Unauthorized
+
+#### 7. Integración con Etapa 5 (getUserIDFromContext)
+
+En Etapa 5 se implementó `getUserIDFromContext()` en match_handler.go para extraer userID del contexto de manera segura. Etapa 6 generaliza este patrón:
+
+- Etapa 5: Función local en match_handler.go
+- Etapa 6: Helper reutilizable `getUserIDSafe()` en social_handler.go
+- Futuro: Consolidar en `http/utils.go` para todos los handlers
+
+**Evolución de seguridad**:
+
+```
+Etapa 4: c.GetUint("userID") — Inseguro (no maneja float64)
+         ↓
+Etapa 5: getUserIDFromContext() local — Seguro pero no reutilizable
+         ↓
+Etapa 6: getUserIDSafe() helper — Seguro y reutilizable
+         ↓
+Futuro: utils.GetUserIDSafe() — Estándar para todo el proyecto
+```
+
+#### 8. Testing de Robustez
+
+**Test Case: JWT con float64 userID**
+
+```go
+// handlers_test.go (propuesto para Etapa 7)
+func TestReportHandlerWithFloatUserID(t *testing.T) {
+	// Simular JWT que devuelve float64
+	router := gin.New()
+	reportHandler := NewReportHandler(mockReportService)
+
+	// Mock context con userID como float64
+	ctx := &gin.Context{}
+	ctx.Set("userID", float64(123))  // JWT standard: float64
+
+	// Llamar CreateReport
+	reportHandler.Create(ctx)
+
+	// Verificar: No panic, respuesta determinística
+	// (test real requeriría mock de Gin más completo)
+}
+```
+
+#### 9. Lecciones Aprendidas
+
+1. **JSON Number Ambiguity**: JSON no distingue int/uint, todo es float64
+
+   - Solution: Type assertion explícita en handlers
+   - Previene: Panics, comportamiento indefinido
+
+2. **Middleware Data Flow**: Lo que almacena middleware debe ser consumido con cuidado
+
+   - Antes: Asumimos type
+   - Después: Verificamos type
+
+3. **Defensive Programming**: En APIs, asumir cliente está roto
+   - Antes: `GetUint()` asume formato correcto
+   - Después: `GetUserIDSafe()` valida y convierte
+
 ## Estándares de Testing Fase 8
 
 ### Regla 1: Test R-SEC-04 Crítico
