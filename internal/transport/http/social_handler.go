@@ -19,6 +19,22 @@ func NewSocialHandler(chat *services.ChatService, review *services.ReviewService
 	}
 }
 
+// Helper interno para obtener ID seguro (puedes moverlo a un utils.go si prefieres)
+func getUserIDSafe(c *gin.Context) (uint, bool) {
+	idVal, exists := c.Get("userID")
+	if !exists {
+		return 0, false
+	}
+	switch v := idVal.(type) {
+	case float64:
+		return uint(v), true
+	case uint:
+		return v, true
+	default:
+		return 0, false
+	}
+}
+
 // GetChatHistory (GET /matches/:id/messages)
 func (h *SocialHandler) GetChatHistory(c *gin.Context) {
 	matchIDStr := c.Param("id")
@@ -35,7 +51,12 @@ func (h *SocialHandler) GetChatHistory(c *gin.Context) {
 
 // CreateReview (POST /reviews)
 func (h *SocialHandler) CreateReview(c *gin.Context) {
-	userID := c.MustGet("userID").(uint)
+	// CORRECCIÓN DE SEGURIDAD
+	userID, ok := getUserIDSafe(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Usuario no identificado"})
+		return
+	}
 
 	var req struct {
 		MatchID uint   `json:"match_id" binding:"required"`

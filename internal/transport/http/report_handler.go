@@ -20,13 +20,23 @@ func NewReportHandler(s *services.ReportService) *ReportHandler {
 }
 
 func (h *ReportHandler) Create(c *gin.Context) {
-	// Obtener ID del usuario que está reportando (viene del Token)
-	// Nota: Necesitas que tu middleware ponga el "userID" en el contexto.
-	// Por ahora asumiremos que lo obtenemos o simulamos.
-	reporterID := c.GetUint("userID") 
+	// CORRECCIÓN DE SEGURIDAD
+	// Replicamos la lógica segura. Si tienes el helper en otro lado, úsalo.
+	idVal, exists := c.Get("userID")
+	var reporterID uint
+	
+	if exists {
+		switch v := idVal.(type) {
+		case float64:
+			reporterID = uint(v)
+		case uint:
+			reporterID = v
+		}
+	}
+
 	if reporterID == 0 {
-		// Fallback si el middleware no está configurado completo aún
-		reporterID = 1 
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "No se pudo identificar al usuario"})
+		return 
 	}
 
 	var req ReportRequest
