@@ -8,7 +8,6 @@ import 'features/chat/data/chat_repository.dart'; // <--- IMPORTANTE
 
 // Import de pantalla inicial
 import 'features/auth/presentation/screens/login_screen.dart';
-import 'features/pets/presentation/screens/match_screen.dart';
 
 void main() {
   runApp(const PawsApp());

@@ -25,19 +25,23 @@ class PetsRepository {
 
   // En pets_repository.dart
 
-  Future<List<Pet>> getSwipeDeck() async {
+  // En getSwipeDeck, agrega los parámetros opcionales
+  Future<List<Pet>> getSwipeDeck({double? lat, double? lon}) async {
     try {
       final options = await _getAuthOptions();
 
+      // Enviamos lat y lon como query parameters
       final response = await _dio.get(
         '${ApiConstants.baseUrl}${ApiConstants.swipeDeck}',
+        queryParameters: {
+          if (lat != null) 'lat': lat,
+          if (lon != null) 'lon': lon,
+        },
         options: options,
       );
 
       if (response.statusCode == 200) {
-        // CORRECCIÓN: Si response.data es null, usamos una lista vacía []
-        List<dynamic> data = response.data ?? [];
-
+        List<dynamic> data = response.data ?? []; // Protección contra null
         return data.map((json) => Pet.fromJson(json)).toList();
       }
       return [];

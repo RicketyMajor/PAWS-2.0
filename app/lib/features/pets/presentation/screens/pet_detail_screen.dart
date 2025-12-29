@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../data/pets_repository.dart';
 import '../../domain/pet_model.dart';
-import '../bloc/pets_bloc.dart'; // Para recargar la lista al volver
 
 class PetDetailScreen extends StatelessWidget {
   final Pet pet;

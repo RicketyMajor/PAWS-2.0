@@ -4,7 +4,6 @@ import 'package:flutter_card_swiper/flutter_card_swiper.dart';
 import '../bloc/pets_bloc.dart';
 import '../../data/pets_repository.dart';
 import '../../domain/pet_model.dart';
-import 'adopter_matches_screen.dart'; // <--- IMPORTAR LA PANTALLA DE MIS MATCHES
 
 class MatchScreen extends StatelessWidget {
   const MatchScreen({super.key});
@@ -22,21 +21,7 @@ class MatchScreen extends StatelessWidget {
           elevation: 0,
           foregroundColor: const Color(0xFFE91E63),
           centerTitle: true,
-          actions: [
-            // BOTÓN NUEVO: "Mis Matches"
-            IconButton(
-              icon: const Icon(Icons.favorite, color: Color(0xFFE91E63)),
-              tooltip: 'Mis Matches',
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const AdopterMatchesScreen(),
-                  ),
-                );
-              },
-            ),
-          ],
+          actions: [],
         ),
         body: const MatchView(),
       ),

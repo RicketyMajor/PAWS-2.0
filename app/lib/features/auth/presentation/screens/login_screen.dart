@@ -4,10 +4,8 @@ import 'package:jwt_decoder/jwt_decoder.dart';
 import '../../data/auth_repository.dart';
 import '../bloc/login_bloc.dart';
 import 'register_screen.dart';
-import '../../../pets/presentation/screens/match_screen.dart';
-
-// CORRECCIÓN: Importamos la pantalla real del dashboard de Rescatistas
-import '../../../pets/presentation/screens/rescuer_home_screen.dart';
+// IMPORTANTE: Importamos el nuevo Layout Principal
+import '../../../../core/presentation/main_layout_screen.dart';
 
 class LoginScreen extends StatelessWidget {
   const LoginScreen({super.key});
@@ -57,28 +55,18 @@ class _LoginFormState extends State<_LoginForm> {
             Map<String, dynamic> decodedToken = JwtDecoder.decode(token);
             String role = decodedToken['role'] ?? 'adopter';
 
-            if (role == 'rescuer') {
-              // CORRECCIÓN: Navegar al Dashboard Real con el botón de subir mascota
+            // --- CAMBIO CLAVE ---
+            // Ya no navegamos a pantallas individuales, sino al Layout Principal
+            if (mounted) {
               Navigator.pushAndRemoveUntil(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => const RescuerHomeScreen(),
+                  builder: (context) => MainLayoutScreen(role: role),
                 ),
                 (route) => false,
               );
-            } else {
-              Navigator.pushAndRemoveUntil(
-                context,
-                MaterialPageRoute(builder: (context) => const MatchScreen()),
-                (route) => false,
-              );
             }
-          } else {
-            Navigator.pushAndRemoveUntil(
-              context,
-              MaterialPageRoute(builder: (context) => const MatchScreen()),
-              (route) => false,
-            );
+            // --------------------
           }
         }
       },
