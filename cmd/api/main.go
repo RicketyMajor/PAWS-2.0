@@ -28,7 +28,7 @@ func main() {
 	}
 
 	database.Connect()
-
+	database.DB.Migrator().DropTable(&domain.Report{}) // SOLO para desarrollo, elimina en producción
 	// Migraciones
 	if err := database.DB.AutoMigrate(
 		&domain.User{}, 
@@ -42,6 +42,26 @@ func main() {
 	); err != nil {
 		log.Fatal("Error crítico migrando BD:", err)
 	}
+
+	// =========================================================================
+	// SEEDER DE ADMIN (Auto-Promoción)
+	// =========================================================================
+	var adminUser domain.User
+	targetEmail := "alonso.vera@mail.udp.cl"
+
+	// Buscamos si el usuario ya se registró
+	if err := database.DB.Where("email = ?", targetEmail).First(&adminUser).Error; err == nil {
+		// Si existe y no es admin, lo promovemos
+		if adminUser.Role != "admin" {
+			database.DB.Model(&adminUser).Update("role", "admin")
+			log.Printf("Usuario %s promovido a ADMIN.", targetEmail)
+		} else {
+			log.Println("El usuario Admin ya está configurado correctamente.")
+		}
+	} else {
+		log.Printf("AVISO: El usuario %s aún no existe en la BD. Regístrate en la App y reinicia el backend.", targetEmail)
+	}
+	// =========================================================================
 
 	// -------------------------------------------------------------------------
 	// KILL SWITCH: RabbitMQ & Async (Etapa 1)
@@ -106,6 +126,7 @@ func main() {
 	uploadHandler   := httpTransport.NewUploadHandler(fileService)
 	identityHandler := httpTransport.NewIdentityHandler(identityService)
 	wsHandler       := httpTransport.NewWSHandler(hub)
+	adminHandler    := httpTransport.NewAdminHandler(reportService)
 
 	// =========================================================================
 	// 4. RUTAS & MIDDLEWARE
@@ -165,6 +186,14 @@ func main() {
 
 			// WebSocket unificado
 			protected.GET("/ws", wsHandler.HandleConnections)
+		}
+
+		// GRUPO ADMIN: Doble protección (Auth + Role Admin)
+		admin := protected.Group("/admin")
+		admin.Use(middleware.RequireRole("admin")) 
+		{
+			admin.GET("/reports", adminHandler.GetReports)
+			admin.POST("/ban/:id", adminHandler.BanUser)
 		}
 	}
 

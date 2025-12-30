@@ -74,3 +74,44 @@ func (s *ReportService) checkAndBanUser(userID uint) error {
 
 	return nil
 }
+
+// GetAllReports: Lista todas las denuncias para el Admin (Cargando nombres de usuarios)
+func (s *ReportService) GetAllReports() ([]domain.Report, error) {
+	var reports []domain.Report
+	// Asumimos que en tu modelo domain.Report tienes las relaciones:
+	// Reporter User `gorm:"foreignKey:ReporterID"`
+	// Reported User `gorm:"foreignKey:ReportedID"`
+	// Si no las tienes, GORM traerá solo los IDs, que sirve igual para el MVP.
+	err := s.db.Preload("Reporter").Preload("Reported").
+		Order("created_at desc").
+		Find(&reports).Error
+	return reports, err
+}
+
+// BanUserManual: El botón de pánico del Admin
+func (s *ReportService) BanUserManual(adminID, targetUserID uint, reason string) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		// 1. Buscar al usuario objetivo
+		var user domain.User
+		if err := tx.First(&user, targetUserID).Error; err != nil {
+			return err
+		}
+
+		// 2. Marcarlo como baneado en la tabla users
+		if err := tx.Model(&user).Update("is_banned", true).Error; err != nil {
+			return err
+		}
+
+		// 3. Crear entrada en Blacklist (para que no se registre de nuevo con el mismo RUT)
+		blacklistEntry := domain.BlacklistEntry{
+			Run:    user.Run,
+			Reason: fmt.Sprintf("Baneado por Admin #%d: %s", adminID, reason),
+		}
+		// Usamos FirstOrCreate para no fallar si ya estaba en blacklist
+		if err := tx.Where("run = ?", user.Run).FirstOrCreate(&blacklistEntry).Error; err != nil {
+			return err
+		}
+
+		return nil
+	})
+}
