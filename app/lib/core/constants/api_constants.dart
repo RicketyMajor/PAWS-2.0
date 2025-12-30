@@ -1,10 +1,10 @@
 import '../config/environment_config.dart';
+import 'package:flutter/foundation.dart';
 
 class ApiConstants {
-  // CAMBIA ESTO por la IP de tu PC donde corre Docker/Kubernetes
-  // Si usas emulador Android standard: 10.0.2.2
-  // Si usas dispositivo real: Tu IP local (ej: 192.168.1.15)
-  static String get baseUrl => EnvironmentConfig.baseUrl;
+  static const String baseUrl = kReleaseMode
+      ? 'https://paws-20-production.up.railway.app/api/v1' // <--- TU URL DE RAILWAY AQUÍ
+      : 'http://localhost:8080/api/v1'; // O tu IP local
   static String get wsUrl => EnvironmentConfig.wsUrl;
 
   // Endpoints Auth
