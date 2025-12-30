@@ -658,16 +658,16 @@ func CORSMiddleware() gin.HandlerFunc {
     return func(c *gin.Context) {
         // Permitir cualquier origen (ajustable en producción)
         c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-        
+
         // Permitir credenciales (cookies, auth headers)
         c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-        
+
         // Headers permitidos (necesitamos Authorization para JWT)
         c.Writer.Header().Set(
-            "Access-Control-Allow-Headers", 
+            "Access-Control-Allow-Headers",
             "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With",
         )
-        
+
         // Métodos HTTP permitidos
         c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
 
@@ -690,16 +690,16 @@ En `cmd/api/main.go`, el middleware se aplica ANTES de definir rutas:
 ```go
 func main() {
     database.Connect()
-    
+
     // ... inicializar servicios ...
-    
+
     r := gin.Default()
-    
+
     // APLICAR CORS: Fundamental para Flutter Web (Etapa 1)
     r.Use(middleware.CORSMiddleware())
-    
+
     r.Static("/uploads", "./uploads")
-    
+
     api := r.Group("/api/v1")
     {
         // Rutas públicas...
@@ -709,7 +709,7 @@ func main() {
             auth.POST("/login", authHandler.Login)
         }
     }
-    
+
     port := os.Getenv("PORT")
     if port == "" {
         port = "8080"
@@ -759,7 +759,6 @@ for _, allowed := range allowedOrigins {
 - **Todas las Fases (2-10)**: Todos los endpoints habilitados automáticamente para CORS
 - **Etapa 5 (Despliegue)**: Se puede ajustar política según entorno (desarrollo vs producción)
 - **Testing**: Frontend y Backend pueden ejecutarse en puertos diferentes sin conflictos
-
 
 ## Actualización Etapa 1: CORS para Frontend Web (Flutter Web)
 
@@ -791,16 +790,16 @@ func CORSMiddleware() gin.HandlerFunc {
     return func(c *gin.Context) {
         // Permitir cualquier origen (ajustable en producción)
         c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-        
+
         // Permitir credenciales (cookies, auth headers)
         c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-        
+
         // Headers permitidos (necesitamos Authorization para JWT)
         c.Writer.Header().Set(
-            "Access-Control-Allow-Headers", 
+            "Access-Control-Allow-Headers",
             "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With",
         )
-        
+
         // Métodos HTTP permitidos
         c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
 
@@ -823,16 +822,16 @@ En `cmd/api/main.go`, el middleware se aplica ANTES de definir rutas:
 ```go
 func main() {
     database.Connect()
-    
+
     // ... inicializar servicios ...
-    
+
     r := gin.Default()
-    
+
     // APLICAR CORS: Fundamental para Flutter Web (Etapa 1)
     r.Use(middleware.CORSMiddleware())
-    
+
     r.Static("/uploads", "./uploads")
-    
+
     api := r.Group("/api/v1")
     {
         // Rutas públicas...
@@ -842,7 +841,7 @@ func main() {
             auth.POST("/login", authHandler.Login)
         }
     }
-    
+
     port := os.Getenv("PORT")
     if port == "" {
         port = "8080"
@@ -893,6 +892,240 @@ for _, allowed := range allowedOrigins {
 - **Etapa 5 (Despliegue)**: Se puede ajustar política según entorno (desarrollo vs producción)
 - **Testing**: Frontend y Backend pueden ejecutarse en puertos diferentes sin conflictos
 
+## COMPLETADO EN ETAPA 7: RBAC (Role-Based Access Control) y Autopromoción Administrativa
+
+La Etapa 7 amplió el modelo de usuario y el flujo de autenticación para soportar un tercer rol administrativo ("admin") con mecanismos de autopromoción automática y protección de rutas sensibles. Aunque el User model ya contemplaba "admin" como rol posible en su definición (comentario en linea 100), la Etapa 7 implementa la infraestructura completa para hacer que este rol sea funcional y seguro.
+
+### Cambios en Fase-1 Impactados por Etapa 7
+
+#### 1. Ampliación del Modelo de Roles
+
+El User model de Fase 1 soportaba teóricamente tres roles: "adopter", "rescuer", y "admin". La Etapa 7 activa el rol "admin":
+
+**Contexto Histórico**:
+
+- Fase 1: Model define Role como string sin restricción (comentario menciona "adopter", "rescuer", "admin")
+- Etapa 7: Implementa infraestructura para que el rol "admin" sea funcional y seguro
+
+**Roles Operacionales en PAWS (Etapa 7)**:
+
+1. **adopter** (Adoptante): Usuario que busca adoptar mascota. Default para registros normales.
+
+   - Acceso: GET mascotas, POST swipes, GET matches, POST reviews/reports, WebSocket chat
+   - Negado: GET /admin/_, POST /admin/_
+
+2. **rescuer** (Rescatista): Usuario que rescata y ofrece mascotas en adopción. Default para registros normales.
+
+   - Acceso: GET mascotas, GET solicitudes, POST respuestas, GET matches, POST reviews/reports, WebSocket chat
+   - Negado: GET /admin/_, POST /admin/_
+
+3. **admin** (Administrador): Usuario con poderes de moderación. Asignado vía autopromoción en Etapa 7.
+   - Acceso: Todos los endpoints de mortales + GET /admin/reports + POST /admin/ban/:id
+   - Negado: Ninguno (omnipotente en la plataforma)
+
+**Valores Válidos**:
+
+- RegisterRequest en Fase 1 valida: `binding:"oneof=adopter rescuer"` (solo mortales, correcto)
+- Database en Fase 1 acepta cualquier string: `Role string` (correcto, permite future-proofing)
+- AuthService en Fase 1 asigna: `role: "adopter"` por default (correcto)
+- Etapa 7 asigna "admin" via seeder en main.go (nuevo)
+
+#### 2. JWT Extendido con Campo Role (Etapa 7)
+
+Fase 1 generaba JWT con claims mínimos (sub, iat, exp). Etapa 7 extiende el JWT con el campo "role":
+
+**JWT Antiguo (Fase 1-6)**:
+
+```json
+{
+  "sub": 123,
+  "iat": 1640000000,
+  "exp": 1640003600,
+  ...
+}
+```
+
+**JWT Extendido (Etapa 7)**:
+
+```json
+{
+  "sub": 123,
+  "role": "adopter",
+  "iat": 1640000000,
+  "exp": 1640003600,
+  ...
+}
+```
+
+**Impacto en AuthService** (internal/core/services/auth_service.go):
+
+- AuthService.Login() y Register() ahora incluyen role en JWT al generar el token
+- Frontend decodifica JWT (JwtDecoder.decode) y extrae rol
+- LoginScreen usa role para decidir navegación: admin → AdminDashboardScreen, mortal → MainLayoutScreen
+
+**Generación del JWT con Role** (AuthService):
+
+```go
+claims := jwt.MapClaims{
+    "sub":  user.ID,
+    "role": user.Role,  // NUEVO EN ETAPA 7
+    "iat":  time.Now().Unix(),
+    "exp":  time.Now().Add(24 * time.Hour).Unix(),
+}
+```
+
+#### 3. Seeder de Autopromoción (main.go - Etapa 7)
+
+Implementado en cmd/api/main.go después de AutoMigrate():
+
+```go
+// SEEDER DE ADMIN (Auto-Promoción)
+var adminUser domain.User
+targetEmail := "alonso.vera@mail.udp.cl"
+
+if err := database.DB.Where("email = ?", targetEmail).First(&adminUser).Error; err == nil {
+    if adminUser.Role != "admin" {
+        database.DB.Model(&adminUser).Update("role", "admin")
+        log.Printf("Usuario %s promovido a ADMIN.", targetEmail)
+    }
+} else {
+    log.Printf("AVISO: El usuario %s aún no existe. Regístrate y reinicia.", targetEmail)
+}
+```
+
+**Ventajas del Seeder vs Endpoint**:
+
+| Approach                      | Ventaja                                    | Desventaja                                        |
+| ----------------------------- | ------------------------------------------ | ------------------------------------------------- |
+| Endpoint POST /admin/register | Flexible, UI para crear admins             | Requiere protección adicional, riesgo de escalada |
+| Seeder en main.go             | Determinista, sin endpoint público, seguro | Solo un admin, requiere restart                   |
+| **Seeder (Elegido)**          | **Perfecto para MVP, no expone API**       | **Limitado a un email**                           |
+
+**Flujo del Seeder**:
+
+```
+Evento 1: Alonso se registra via app (email: alonso.vera@mail.udp.cl)
+  → AuthService.Register() crea User con role="adopter"
+  → BD: INSERT users(role="adopter")
+  → JWT: {sub: 1, role: "adopter"}
+  → Frontend: MainLayoutScreen (user normal)
+
+Evento 2: Developer reinicia backend
+  → main.go inicia
+  → AutoMigrate crea tablas
+  → Seeder ejecuta: WHERE email = "alonso.vera@mail.udp.cl"
+  → Encuentra registro (id=1)
+  → UPDATE users SET role="admin" WHERE id=1
+  → Log: "Usuario alonso.vera@mail.udp.cl promovido a ADMIN"
+
+Evento 3: Alonso hace login nuevamente
+  → AuthService.Login() genera JWT con user.Role = "admin"
+  → JWT: {sub: 1, role: "admin"}
+  → Frontend decodifica: role=="admin"
+  → Navega a AdminDashboardScreen en lugar de MainLayoutScreen
+```
+
+#### 4. Política de Roles en Endpoints (Etapa 7)
+
+No hay cambios en Fase 1 directamente, pero Etapa 7 implementa política: Fase 1 solo autentica (¿usuario válido?), Etapa 7 autoriza además (¿usuario tiene rol requerido?).
+
+**Flujo Pre-Etapa 7 (Fase 1-6)**:
+
+```
+Request con JWT
+  ↓
+AuthMiddleware: ¿Token válido? (Fase 1)
+  ↓
+Handler (IF user valid → execute)
+```
+
+**Flujo Post-Etapa 7 (Etapa 7)**:
+
+```
+Request con JWT
+  ↓
+AuthMiddleware: ¿Token válido? (Fase 1)
+  ↓
+RequireRole("admin"): ¿user.role == "admin"? (Etapa 7)
+  ↓
+Handler (IF both valid → execute)
+```
+
+**Implicación para Fase 1**:
+
+- Ningún cambio en código de Fase 1 necesario
+- El rol se extrae ya desde el JWT en AuthMiddleware
+- Etapa 7 agrega middleware adicional (RequireRole) que se compone con AuthMiddleware
+- Backward compatible: endpoints sin RequireRole() siguen funcionando para todos
+
+### Seguridad de RBAC en Contexto de Fase-1
+
+Fase-1 Establece la fundación de seguridad (autenticación + hashing), Etapa 7 añade la autorización:
+
+**Pilares de Seguridad (Fase 1)**:
+
+1. Contraseñas hasheadas con Bcrypt
+2. JWT con firma HMAC
+3. Verificación de token en AuthMiddleware
+4. BlacklistEntry para prevenir re-registro
+
+**Pilares de Seguridad (Etapa 7 - Nuevos)**:
+
+5. Role en JWT para distinguir niveles de acceso
+6. RequireRole() middleware para proteger endpoints administrativos
+7. Autopromoción determinista (no endpoint público)
+8. Doble guardián: Auth + Role (no solo Auth)
+
+**Cadena de Confianza**:
+
+```
+Contraseña → Bcrypt Hash
+           ↓
+        Login exitoso
+           ↓
+        JWT generado con role
+           ↓
+      JWT Validado (sig HMAC)
+           ↓
+      Role extraído del JWT
+           ↓
+    RequireRole() verifica
+           ↓
+   Acceso a recurso admin
+```
+
+### Implicaciones para Upgrade de Usuarios Existentes (Etapa 7)
+
+Si la BD ya existe con usuarios sin campo "role" (pre-Fase 1 fix):
+
+**Problema**:
+
+```sql
+SELECT * FROM users WHERE id=1;
+-- Retorna: role = NULL o "" (vacío)
+```
+
+**Solución (Ya implementada en Fase 1)**:
+
+```go
+type User struct {
+    ...
+    Role string `gorm:"default:'adopter'"`  // Default en DB
+    ...
+}
+```
+
+GORM AutoMigrate agrega columna con default. Usuarios existentes heredan "adopter" automáticamente.
+
+**Para Etapa 7**:
+
+```sql
+-- Manual check (si necesario)
+UPDATE users SET role='adopter' WHERE role IS NULL OR role='';
+
+-- Luego ejecutar seeder en main.go
+-- Solo alonso.vera@mail.udp.cl será promocionado a admin
+```
 
 ## Stack de Dependencias Completo
 

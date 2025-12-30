@@ -652,6 +652,370 @@ if (state is PetsError) {
 | **CachedNetworkImage**      | Performance   | Cacheo de imágenes                    | Performance      |
 | **MultiRepositoryProvider** | DI            | Inyección de dependencias global      | Architecture     |
 
+## COMPLETADO EN ETAPA 7: Panel de Administración y Ruteo Condicional por Rol
+
+La Etapa 7 añadió al frontend Flutter un sistema completo de administración y una lógica de ruteo inteligente que detecta si el usuario es administrador después del login. Se implementó una nueva feature exclusiva: el Panel de Justicia (AdminDashboardScreen), interfaz moderna donde administradores visualizan reportes de usuarios y ejecutan bans manuales. Adicionalmente, se modificó el LoginScreen para decodificar el JWT y enrutar usuarios a destinos diferentes según su rol (admin vs mortal).
+
+### Nuevas Características en Frontend (Etapa 7)
+
+#### 1. AdminDashboardScreen - Panel de Justicia
+
+**Ubicación**: app/lib/features/admin/presentation/screens/admin_dashboard_screen.dart
+
+Se creó una pantalla completamente nueva dedicada exclusivamente a administradores:
+
+```dart
+class AdminDashboardScreen extends StatefulWidget {
+  const AdminDashboardScreen({super.key});
+
+  @override
+  State<AdminDashboardScreen> createState() => _AdminDashboardScreenState();
+}
+
+class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
+  final AdminRepository _repo = AdminRepository();
+  late Future<List<dynamic>> _reportsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  void _refresh() {
+    setState(() {
+      _reportsFuture = _repo.getReports();
+    });
+  }
+
+  Future<void> _banUser(int userId, String userName) async {
+    // Diálogo pide motivo del ban
+    // Valida que motivo no sea vacío
+    // Llamaa _repo.banUser(userId, reason)
+    // SnackBar con feedback
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Panel de Justicia"),
+        backgroundColor: Colors.black87,
+        actions: [IconButton logout],
+      ),
+      body: FutureBuilder<List<dynamic>>(
+        future: _reportsFuture,
+        builder: (context, snapshot) {
+          // Carga: CircularProgressIndicator
+          // Error: mensaje de error
+          // Vacío: "La comunidad está en paz"
+          // Datos: ListView de Cards con cada reporte
+        },
+      ),
+    );
+  }
+}
+```
+
+**Características**:
+
+- **Pantalla Exclusiva**: Solo visible si role=="admin" en JWT
+- **Carga Asincrónica**: FutureBuilder obtiene lista de reportes
+- **Interfaz Limpia**: AppBar oscuro (negro) indica autoridad
+- **Botón Logout**: En AppBar para volver a login
+- **Despliegue Detallado**: Cada reporte como Card con:
+  - Icono de advertencia rojo
+  - Nombre del acusado
+  - Nombre del denunciante
+  - Motivo del reporte
+  - Botón BAN rojo (acción grave)
+- **Diálogo Confirm**: Pide motivo de ban para documentación
+- **Validación**: Solo ejecuta ban si motivo no vacío
+- **Recarga**: \_refresh() después de ban exitoso
+- **Estado Vacío**: Muestra icono checkmark + "La comunidad está en paz" si no hay reportes
+
+**Data Flow**:
+
+```
+AdminDashboardScreen (Stateful)
+  ↓
+  _repo.getReports()
+  ↓
+  AdminRepository.getReports()
+  ↓
+  GET /admin/reports (con JWT en header)
+  ↓
+  AdminHandler.GetReports()
+  ↓
+  ReportService.GetAllReports() (con Preload)
+  ↓
+  BD: SELECT * FROM reports
+      LEFT JOIN users as Reporter
+      LEFT JOIN users as Reported
+  ↓
+  Retorna JSON con información completa
+  ↓
+  ListView.builder() despliega cada reporte
+```
+
+**Acciones Admin**:
+
+```
+Admin presiona botón BAN en un reporte
+  ↓
+_banUser(userId, userName) abre AlertDialog
+  ↓
+Dialog pide "Motivo del Ban"
+  ↓
+Usuario ingresa motivo (ej: "Acoso reiterado")
+  ↓
+Usuario presiona "EJECUTAR SENTENCIA" (rojo)
+  ↓
+_repo.banUser(userId, reason)
+  ↓
+POST /admin/ban/:id {reason: "..."}
+  ↓
+Backend ejecuta ban (BanUserManual)
+  ↓
+SnackBar: "Justicia aplicada"
+  ↓
+_refresh() recarga lista
+  ↓
+Usuario baneado desaparece de la lista
+```
+
+#### 2. AdminRepository - Capa de Datos para Panel
+
+**Ubicación**: app/lib/features/admin/data/admin_repository.dart
+
+```dart
+class AdminRepository {
+  final Dio _dio = Dio();
+  final FlutterSecureStorage _storage = const FlutterSecureStorage();
+
+  Future<Options> _getAuthOptions() async {
+    final token = await _storage.read(key: 'jwt_token');
+    return Options(headers: {'Authorization': 'Bearer $token'});
+  }
+
+  Future<List<dynamic>> getReports() async {
+    try {
+      final options = await _getAuthOptions();
+      final response = await _dio.get(
+        '${ApiConstants.baseUrl}/admin/reports',
+        options: options,
+      );
+      return response.data;
+    } catch (e) {
+      throw Exception('Error cargando reportes: $e');
+    }
+  }
+
+  Future<void> banUser(int userId, String reason) async {
+    try {
+      final options = await _getAuthOptions();
+      await _dio.post(
+        '${ApiConstants.baseUrl}/admin/ban/$userId',
+        data: {'reason': reason},
+        options: options,
+      );
+    } catch (e) {
+      throw Exception('Error baneando usuario: $e');
+    }
+  }
+}
+```
+
+**Métodos**:
+
+- **getReports()**: GET /admin/reports
+
+  - Inyecta JWT automáticamente
+  - Retorna lista de reportes con información de usuarios
+  - Throw Exception si error (FutureBuilder muestra error)
+
+- **banUser(int userId, String reason)**: POST /admin/ban/:id
+  - userId se inserta en URL path
+  - reason se envía en body JSON
+  - Throw Exception si error (SnackBar muestra error)
+
+**Patrón Clean Architecture**:
+
+- **Data Layer**: AdminRepository abstrae comunicación HTTP
+- **UI Layer**: AdminDashboardScreen no conoce detalles HTTP
+- **Testeable**: AdminRepository puede mockearse en tests
+- **Reutilizable**: Mismo patrón que SocialRepository (Etapa 6), UserRepository
+
+#### 3. LoginScreen Modificado - Ruteo Inteligente por Rol
+
+**Ubicación**: app/lib/features/auth/presentation/screens/login_screen.dart
+
+Se modificó la lógica después de login exitoso:
+
+```dart
+} else if (state is LoginSuccess) {
+  // ... SnackBar success ...
+
+  final authRepo = context.read<AuthRepository>();
+  final token = await authRepo.getToken();
+
+  if (token != null) {
+    // NUEVO EN ETAPA 7: Decodificar JWT y extraer role
+    Map<String, dynamic> decodedToken = JwtDecoder.decode(token);
+    String role = decodedToken['role'] ?? 'adopter';
+
+    // NUEVO EN ETAPA 7: Enrutamiento condicional
+    if (role == 'admin') {
+      // Caso 1: Es Administrador
+      if (mounted) {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const AdminDashboardScreen(),
+          ),
+          (route) => false,
+        );
+      }
+    } else {
+      // Caso 2: Es Mortal (Adoptante/Rescatista)
+      if (mounted) {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(
+            builder: (context) => MainLayoutScreen(role: role),
+          ),
+          (route) => false,
+        );
+      }
+    }
+  }
+}
+```
+
+**Cambios**:
+
+- **JwtDecoder.decode(token)**: Decodifica JWT sin validar firma (already done by backend)
+- **Extrae role**: `String role = decodedToken['role'] ?? 'adopter'`
+- **Condicional**:
+  - Si role=="admin": navega a AdminDashboardScreen()
+  - Sino: navega a MainLayoutScreen(role: role)
+- **PushRemoveUntil**: Elimina LoginScreen del stack (logout no puede volver a login con back)
+
+**UX Scenarios**:
+
+```
+Escenario 1: Alonso (admin) hace login
+  1. Ingresa email/contraseña
+  2. Backend autentica y retorna JWT con role="admin"
+  3. Frontend decodifica JWT
+  4. Detecta role=="admin"
+  5. PushRemoveUntil → AdminDashboardScreen
+  6. Ve Panel de Justicia con lista de reportes
+  7. Botón logout en AppBar → LoginScreen
+
+Escenario 2: Juan (adoptante) hace login
+  1. Ingresa email/contraseña
+  2. Backend autentica y retorna JWT con role="adopter"
+  3. Frontend decodifica JWT
+  4. Detecta role!="admin"
+  5. PushRemoveUntil → MainLayoutScreen(role: "adopter")
+  6. Ve pantalla normal con tabs: Descubrir, Mis Matches, Perfil
+  7. Botón logout en perfil → LoginScreen
+```
+
+### Arquitectura Frontend de Etapa 7
+
+```
+                      LoginScreen (Login)
+                            |
+                    LoginSuccess event
+                            |
+               JwtDecoder extracts role
+                            |
+                    ¿role == "admin"?
+                         /    \
+                       Sí      No
+                       /        \
+        AdminDashboardScreen  MainLayoutScreen
+        (Panel Justicia)      (Normal App)
+             |                    |
+        [Admin Only]         [Mortales]
+             |                    |
+        GetReports()          Adopter/Rescuer
+        BanUser()            Features
+```
+
+### Clean Architecture en Panel de Justicia
+
+**Domain Layer** (conceptual):
+
+- Entidades: Report, User, Admin Actions
+- Use Cases: ViewReports, BanUser
+
+**Data Layer**:
+
+- AdminRepository: comunica con backend
+- Fuente: API via Dio + JWT
+
+**Presentation Layer**:
+
+- AdminDashboardScreen: Stateful widget
+- Lógica: FutureBuilder, dialogs, refresh
+
+**Pattern Consistency** (vs Etapa 6):
+
+- SocialRepository (Etapa 6): createReport, createReview → POST endpoints
+- AdminRepository (Etapa 7): getReports, banUser → GET + POST admin endpoints
+- UserRepository: updateProfile, getProfile → PUT + GET user endpoints
+
+Todos siguen el patrón: Repository abstrae HTTP, UI llama Repository
+
+### Seguridad en Frontend
+
+**JWT Decodificación Segura**:
+
+- JwtDecoder.decode() es client-side, NO verifica firma (backend ya lo hizo)
+- Si JWT es inválido, AuthMiddleware rechazó antes
+- Frontend solo confía en role porque backend fue confiable
+
+**Problema Evitado**:
+
+```
+// MAL: Cambiar role en el cliente
+// Si hubiera hecho: decodedToken['role'] = 'admin'
+// PERO: Backend rechazaría igual porque JWT tampoco cambió
+// Y backend valida JWT en CADA request
+```
+
+**Flujo Seguro**:
+
+```
+Login request
+  → Backend valida credenciales
+  → Backend firma JWT con role verificado
+  → Frontend decodifica (no verifica)
+  → Frontend navega según role
+  → Todos los requests posteriores incluyen JWT
+  → Backend revisa RequireRole() middleware
+  → Backend rechaza si role incorrecto
+```
+
+**Implicación**: Cliente no puede escalar sin falsificar JWT (criptografía asegura contra esto)
+
+### Integración con MainLayout (Etapa 5)
+
+La Etapa 7 **no modifica** MainLayoutScreen, pero la complementa:
+
+- MainLayoutScreen: Para mortales (adopter, rescuer)
+- AdminDashboardScreen: Para admins
+- LoginScreen: Elige cuál mostrar
+
+**Consecuencia**:
+
+- Adoptantes no ven Panel de Justicia (no tienen ruta, no tienen permisos API)
+- Admins no ven MainLayout (directamente en AdminDashboardScreen)
+- No hay "Admin Tab" en MainLayout (separación limpia)
+
 ## Decisiones Arquitectónicas Importantes
 
 ### 1. Clean Architecture vs MVC

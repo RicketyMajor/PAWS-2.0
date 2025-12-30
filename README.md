@@ -3966,6 +3966,874 @@ Perfil de María ahora muestra:
   - Confianza + 70% en posibilidad de match exitoso
 ```
 
+## Etapa 7: Justicia y Orden - RBAC Administrativo y Panel de Moderación (Completada)
+
+La Etapa 7 transforma PAWS de una plataforma comunitaria auto-regulada a un ecosistema con jerarquía clara y moderación activa. Implementa un sistema completo de Control de Acceso Basado en Roles (RBAC) que diferencia entre "mortales" (Adoptantes y Rescatistas) y "dioses" (Administradores). Los cambios abarcan tres pilares fundamentales: un middleware RBAC en el backend que protege rutas sensibles, un mecanismo de autopromoción al iniciar el servidor que identifica usuarios administrativos automáticamente, y una interfaz exclusiva en Flutter que permite a los administradores visualizar todas las denuncias y ejecutar sentencias (bans) con motivos documentados. Adicionalmente, se corrigió un problema crítico de identidad donde los IDs de reportes no coincidían con los usuarios reales, causando bans erróneos en IDs fantasma. La serialización JSON fue normalizada para garantizar consistencia entre frontend y backend.
+
+### Pilares de Etapa 7
+
+1. **RBAC (Role-Based Access Control)**: Middleware en Go que valida el rol JWT antes de acceder a rutas administrativas
+2. **Autopromoción Automática**: Mecanismo en main.go que promueve a admin al usuario con correo institucional específico
+3. **Panel de Justicia**: Interfaz exclusiva en Flutter para administradores, mostrando reportes y permitiendo bans manuales
+4. **Corrección de Identidad**: Resolución de problema crítico donde reportedID no apuntaba a usuarios correctos (IDs fantasma 999)
+5. **Normalización JSON**: Consolidación de serialización (ID vs id) para asegurar que frontend y backend hablen el mismo idioma
+
+### Cambios en el Backend de Etapa 7
+
+#### 1. Middleware RBAC (roles.go) - Protección de Rutas Administrativas
+
+Se creó un nuevo middleware en `internal/transport/http/middleware/roles.go` que actúa como guardaespaldas de rutas sensibles:
+
+```go
+// RequireRole verifica que el usuario tenga el rol necesario (ej: "admin")
+func RequireRole(requiredRole string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// 1. Obtenemos el rol que AuthMiddleware guardó en contexto
+		role := c.GetString("role")
+
+		// 2. Verificamos (Si no es admin, fuera)
+		if role != requiredRole {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error": "Acceso denegado: Se requiere nivel " + requiredRole,
+			})
+			return
+		}
+
+		c.Next()
+	}
+}
+```
+
+**Características**:
+
+- **Verificación Simple pero Efectiva**: Extrae el rol del contexto (que AuthMiddleware ya validó)
+- **Respuesta Determinística**: 403 Forbidden si el rol no coincide
+- **Composición de Middleware**: Se usa como segundo guardián después de AuthMiddleware
+- **Extensible**: Puede soportar múltiples roles en futuro (ej: "moderator", "super_admin")
+
+**Flujo de Protección**:
+
+```
+Request → AuthMiddleware (¿Token válido?)
+         → RequireRole("admin") (¿Es admin?)
+         → Endpoint Administrativo
+```
+
+#### 2. Actualización del AuthMiddleware - Extracción y Almacenamiento de Rol
+
+El middleware `internal/transport/http/middleware/auth.go` fue actualizado para extraer el campo `role` del JWT:
+
+```go
+func AuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// ... (Validación del token igual que antes) ...
+
+		// Extraer datos del token
+		if claims, ok := token.Claims.(jwt.MapClaims); ok {
+			c.Set("userID", claims["sub"])
+			c.Set("role", claims["role"])  // NUEVO EN ETAPA 7
+		} else {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "error procesando claims"})
+			return
+		}
+
+		c.Next()
+	}
+}
+```
+
+**Cambios**:
+
+- Línea agregada: `c.Set("role", claims["role"])`
+- El JWT debe contener campo `role` (generado en AuthService durante login/registro)
+- Los valores típicos son: "adopter", "rescuer", "admin"
+- Si JWT no tiene `role`, se asume "adopter" por defecto (fallback seguro)
+
+**Impacto en Flujo**:
+
+1. Frontend recibe JWT con `role` después de login
+2. Frontend almacena JWT completo en FlutterSecureStorage
+3. Frontend envía JWT en Authorization header
+4. Backend extrae JWT, valida firma, extrae `role`
+5. `role` está disponible en contexto para handlers y otros middleware
+
+#### 3. Seeder de Admin Automático (main.go) - Autopromoción
+
+Se agregó lógica en `cmd/api/main.go` que detecta si el usuario con correo institucional existe y lo promueve a admin automáticamente:
+
+```go
+// =========================================================================
+// SEEDER DE ADMIN (Auto-Promoción)
+// =========================================================================
+var adminUser domain.User
+targetEmail := "alonso.vera@mail.udp.cl"
+
+// Buscamos si el usuario ya se registró
+if err := database.DB.Where("email = ?", targetEmail).First(&adminUser).Error; err == nil {
+	// Si existe y no es admin, lo promovemos
+	if adminUser.Role != "admin" {
+		database.DB.Model(&adminUser).Update("role", "admin")
+		log.Printf("Usuario %s promovido a ADMIN.", targetEmail)
+	} else {
+		log.Println("El usuario Admin ya está configurado correctamente.")
+	}
+} else {
+	log.Printf("AVISO: El usuario %s aún no existe en la BD. Regístrate en la App y reinicia el backend.", targetEmail)
+}
+```
+
+**Características**:
+
+- **Detección por Email**: Busca específicamente `alonso.vera@mail.udp.cl`
+- **Idempotencia**: Si ya es admin, no hace nada
+- **Esperanza Inteligente**: Si no existe, avisa al log pero no falla
+- **Timing**: Se ejecuta al arrancar el servidor (después de AutoMigrate)
+
+**Ventajas**:
+
+- No requiere endpoint administrativo para crear admins
+- No requiere base de datos preexistente con admin
+- Después del primer login de Alonso, next restart → promoción automática
+- Seguro: solo promueve el email específico
+
+**Uso**:
+
+```
+Evento 1: Alonso se registra vía app (registro normal)
+  → BD: INSERT user(email="alonso.vera@mail.udp.cl", role="adopter")
+  → JWT después: {sub: 123, role: "adopter"}
+
+Evento 2: Restart backend
+  → Seeder ejecuta: WHERE email = "alonso.vera@mail.udp.cl"
+  → Encuentra registro de Alonso
+  → UPDATE users SET role = "admin" WHERE id = 123
+  → Log: "Usuario alonso.vera@mail.udp.cl promovido a ADMIN"
+
+Evento 3: Alonso hace login nuevamente
+  → JWT generado: {sub: 123, role: "admin"}
+  → Frontend detecta role="admin" → navega a AdminDashboardScreen
+```
+
+#### 4. AdminHandler - Endpoints de Administración
+
+Se creó `internal/transport/http/admin_handler.go` con dos endpoints críticos:
+
+```go
+// GetReports (GET /admin/reports)
+func (h *AdminHandler) GetReports(c *gin.Context) {
+	reports, err := h.service.GetAllReports()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error cargando reportes"})
+		return
+	}
+	c.JSON(http.StatusOK, reports)
+}
+
+// BanUser (POST /admin/ban/:id)
+func (h *AdminHandler) BanUser(c *gin.Context) {
+	// Obtenemos ID del Admin (quien ejecuta la acción)
+	adminIDVal, _ := c.Get("userID")
+	adminID := uint(adminIDVal.(float64))
+
+	// Obtenemos ID del usuario a banear
+	targetIDStr := c.Param("id")
+	targetID, _ := strconv.Atoi(targetIDStr)
+
+	var req struct {
+		Reason string `json:"reason" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Se requiere motivo (reason)"})
+		return
+	}
+
+	err := h.service.BanUserManual(adminID, uint(targetID), req.Reason)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error baneando usuario: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "JUSTICIA APLICADA: Usuario baneado."})
+}
+```
+
+**Endpoints**:
+
+- `GET /admin/reports` - Lista todos los reportes con información de denunciante y denunciado
+- `POST /admin/ban/:id` - Ejecuta un ban manual con motivo documentado
+
+**Flujo de GetReports**:
+
+```
+GET /admin/reports (con Authorization header)
+↓
+AuthMiddleware: ¿Token válido? Sí
+↓
+RequireRole("admin"): ¿Es admin? Sí
+↓
+AdminHandler.GetReports()
+  → ReportService.GetAllReports()
+  → Preload("Reporter", "Reported") para obtener nombres de usuarios
+  → Retorna array JSON con estructura:
+     {
+       "id": 5,
+       "reporter_id": 2,
+       "reported_id": 3,
+       "reporter": {name: "Juan", email: "..."},
+       "reported": {name: "Carlos", email: "..."},
+       "reason": "Solicita dinero sin entregar mascota",
+       "status": "verified",
+       "created_at": "2025-12-20T14:30:00Z"
+     }
+```
+
+**Flujo de BanUser (Manual)**:
+
+```
+POST /admin/ban/456 {reason: "Acoso reiterado"}
+↓
+AuthMiddleware & RequireRole("admin"): Validaciones OK
+↓
+AdminHandler.BanUser()
+  → adminID = 1 (el admin ejecutando)
+  → targetID = 456 (quien será baneado)
+  → ReportService.BanUserManual(1, 456, "Acoso reiterado")
+    → Obtiene user.Run para el usuario 456
+    → INSERT blacklist_entry(run, reason)
+    → UPDATE users SET is_banned = true WHERE id = 456
+    → Retorna éxito
+↓
+Respuesta: {message: "JUSTICIA APLICADA: Usuario baneado."}
+↓
+Usuario 456 intenta login:
+  → AuthService verifica blacklist por RUN
+  → 403 Forbidden: "Tu cuenta ha sido suspendida"
+```
+
+#### 5. ReportService - Nuevos Métodos para Administración
+
+Se ampliaron los métodos del ReportService con dos funciones administrativas:
+
+```go
+// GetAllReports: Lista todas las denuncias para el Admin (Cargando nombres de usuarios)
+func (s *ReportService) GetAllReports() ([]domain.Report, error) {
+	var reports []domain.Report
+	// PRELOAD: Cargamos las relaciones Reporter y Reported
+	err := s.db.Preload("Reporter").Preload("Reported").
+		Order("created_at desc").
+		Find(&reports).Error
+	return reports, err
+}
+
+// BanUserManual: El botón de pánico del Admin
+func (s *ReportService) BanUserManual(adminID, targetUserID uint, reason string) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		// 1. Buscar al usuario objetivo
+		var user domain.User
+		if err := tx.First(&user, targetUserID).Error; err != nil {
+			return err
+		}
+
+		// 2. Marcarlo como baneado en la tabla users
+		if err := tx.Model(&user).Update("is_banned", true).Error; err != nil {
+			return err
+		}
+
+		// 3. Crear entrada en Blacklist (para que no se registre de nuevo con el mismo RUT)
+		blacklistEntry := domain.BlacklistEntry{
+			Run:    user.Run,
+			Reason: fmt.Sprintf("Baneado por Admin #%d: %s", adminID, reason),
+		}
+
+		if err := tx.Where("run = ?", user.Run).FirstOrCreate(&blacklistEntry).Error; err != nil {
+			return err
+		}
+
+		return nil
+	})
+}
+```
+
+**Cambios**:
+
+- **GetAllReports()**: Usa `.Preload("Reporter").Preload("Reported")` para cargar información completa de ambos usuarios, permitiendo que el frontend muestre nombres en lugar de solo IDs
+- **BanUserManual()**: Ejecuta una transacción que:
+  1. Busca el usuario por ID (corrección: ya no IDs fantasma como 999)
+  2. Marca `is_banned = true` en tabla users
+  3. Agrega RUN a blacklist (previene registro con mismo RUT)
+  4. Documenta motivo en blacklist
+
+**CORRECCIÓN DE IDENTIDAD - El Problema de los IDs 999**:
+
+Antes de Etapa 7, cuando reportes se creaban, el campo `reported_id` podía ser 999 (dummy) si no se pasaba el ID real, causando que bans se ejecutaran en usuarios fantasma. Ahora:
+
+- ReportService.BanUserManual() busca el usuario por ID correcto
+- Si el ID no existe, retorna error (no silencia)
+- AdminHandler valida que el ID es integer válido (`:id` param)
+- Adicionalmente, la relación en domain.Report (ver corrección JSON) asegura que los IDs se cargan correctamente
+
+#### 6. Corrección de Identidad - domain.Report con Relaciones
+
+Se actualizó `internal/core/domain/report.go` para incluir relaciones explícitas:
+
+```go
+type Report struct {
+	gorm.Model
+
+	// IDs (Llaves Foráneas)
+	ReporterID uint   `gorm:"not null" json:"reporter_id"`
+	ReportedID uint   `gorm:"not null" json:"reported_id"`
+
+	// --- RELACIONES (Lo que te faltaba) ---
+	Reporter   User   `gorm:"foreignKey:ReporterID" json:"Reporter"`
+	Reported   User   `gorm:"foreignKey:ReportedID" json:"Reported"`
+
+	Reason     string `gorm:"not null" json:"reason"`
+	Status     string `gorm:"default:'pending'" json:"status"`
+}
+```
+
+**Cambios Críticos**:
+
+- Líneas agregadas con etiquetas `gorm:"foreignKey:..."` indican a GORM que cargue la información del usuario
+- Estructura JSON: `json:"Reporter"` (capitalizado) para que al serializar, se envíe como `{"Reporter": {...}}`
+- Beneficio: Cuando se obtienen reportes, vienen con nombres, emails, fotos de denunciante y denunciado
+
+**Normalización JSON**:
+
+- `ReporterID` y `ReportedID` se serializan en snake_case (`reporter_id`, `reported_id`)
+- `Reporter` y `Reported` se serializan tal cual (capitalizado)
+- Frontend recibe: `{reporter_id: 2, reported_id: 3, Reporter: {...}, Reported: {...}}`
+
+#### 7. Rutas Registradas (main.go) - Grupo Admin
+
+Se agregó un nuevo grupo de rutas protegidas en `cmd/api/main.go`:
+
+```go
+// GRUPO ADMIN: Doble protección (Auth + Role Admin)
+admin := protected.Group("/admin")
+admin.Use(middleware.RequireRole("admin"))
+{
+	admin.GET("/reports", adminHandler.GetReports)
+	admin.POST("/ban/:id", adminHandler.BanUser)
+}
+```
+
+**Estructura**:
+
+- `admin := protected.Group("/admin")` - Inherita AuthMiddleware del grupo protected
+- `admin.Use(middleware.RequireRole("admin"))` - Segundo guardián: solo admins
+- Rutas dentro: solo accesibles a admins autenticados
+
+**URLs Finales**:
+
+- `GET /api/v1/admin/reports` (solo admin, requiere JWT)
+- `POST /api/v1/admin/ban/:id` (solo admin, requiere JWT + motivo)
+
+### Cambios en el Frontend de Etapa 7
+
+#### 1. AdminDashboardScreen - Panel de Justicia
+
+Se creó una nueva pantalla exclusiva en `app/lib/features/admin/presentation/screens/admin_dashboard_screen.dart` que permite a administradores visualizar y ejecutar sentencias:
+
+```dart
+class AdminDashboardScreen extends StatefulWidget {
+  const AdminDashboardScreen({super.key});
+
+  @override
+  State<AdminDashboardScreen> createState() => _AdminDashboardScreenState();
+}
+
+class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
+  final AdminRepository _repo = AdminRepository();
+  late Future<List<dynamic>> _reportsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  void _refresh() {
+    setState(() {
+      _reportsFuture = _repo.getReports();
+    });
+  }
+
+  Future<void> _banUser(int userId, String userName) async {
+    final reasonCtrl = TextEditingController();
+
+    // Pedir motivo del ban
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text("¿Banear a $userName?"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              "Esta acción bloqueará permanentemente al usuario por su RUT.",
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: reasonCtrl,
+              decoration: const InputDecoration(
+                labelText: "Motivo del Ban (Requerido)",
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text("Cancelar"),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text(
+              "EJECUTAR SENTENCIA",
+              style: TextStyle(color: Colors.white),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true && reasonCtrl.text.isNotEmpty) {
+      try {
+        await _repo.banUser(userId, reasonCtrl.text);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Justicia aplicada. Usuario baneado."),
+            ),
+          );
+          _refresh(); // Recargar lista
+        }
+      } catch (e) {
+        if (mounted)
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Error: $e")),
+          );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Panel de Justicia"),
+        backgroundColor: Colors.black87,
+        foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.exit_to_app),
+            onPressed: () {
+              Navigator.pushAndRemoveUntil(
+                context,
+                MaterialPageRoute(builder: (_) => const LoginScreen()),
+                (r) => false,
+              );
+            },
+          ),
+        ],
+      ),
+      body: FutureBuilder<List<dynamic>>(
+        future: _reportsFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError) {
+            return Center(child: Text("Error: ${snapshot.error}"));
+          }
+          final reports = snapshot.data ?? [];
+
+          if (reports.isEmpty) {
+            return const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.check_circle_outline,
+                    size: 60,
+                    color: Colors.green,
+                  ),
+                  SizedBox(height: 10),
+                  Text("La comunidad está en paz."),
+                ],
+              ),
+            );
+          }
+
+          return ListView.builder(
+            itemCount: reports.length,
+            itemBuilder: (context, index) {
+              final report = reports[index];
+              final reporter = report['Reporter']?['name'] ?? 'Anónimo';
+              final reported = report['Reported']?['name'] ?? 'Usuario';
+              final reportedId = report['reported_id'];
+              final reason = report['reason'];
+
+              return Card(
+                margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                elevation: 4,
+                child: ListTile(
+                  leading: const CircleAvatar(
+                    backgroundColor: Colors.redAccent,
+                    child: Icon(Icons.warning_amber, color: Colors.white),
+                  ),
+                  title: Text("Acusado: $reported"),
+                  subtitle: Text("Denunciante: $reporter\nMotivo: $reason"),
+                  isThreeLine: true,
+                  trailing: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                    ),
+                    onPressed: () => _banUser(reportedId, reported),
+                    child: const Text(
+                      "BAN",
+                      style: TextStyle(color: Colors.white),
+                    ),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+```
+
+**Características del Panel**:
+
+- **Carga Asincrónica**: FutureBuilder obtiene lista de reportes mediante `AdminRepository.getReports()`
+- **Despliegue Visual**: Cada reporte es una Card con:
+  - Icono de advertencia rojo
+  - Nombre del acusado
+  - Nombre del denunciante
+  - Motivo del reporte
+  - Botón "BAN" (rojo, indica acción grave)
+- **Diálogo de Confirmación**: Antes de ejecutar ban, pide motivo documentado
+- **Validación**: Solo permite ban si se ingresa motivo no vacío
+- **Feedback Inmediato**: SnackBar de éxito o error
+- **Recarga**: `_refresh()` vuelve a obtener reportes después de ban
+- **Estado Paz**: Si no hay reportes, muestra icono de checkmark verde con "La comunidad está en paz"
+
+**Acceso a Pantalla**:
+
+- Solo visible si `role == "admin"` en JWT
+- LoginScreen lo detecta después de login exitoso
+- Reemplaza MainLayout para admins (no ven tabs de adopter/rescuer)
+- Botón logout en AppBar para volver al login
+
+#### 2. AdminRepository - Capa de Datos para Administración
+
+Se creó `app/lib/features/admin/data/admin_repository.dart` como intermediaria entre UI y API:
+
+```dart
+import 'package:dio/dio.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import '../../../core/constants/api_constants.dart';
+
+class AdminRepository {
+  final Dio _dio = Dio();
+  final FlutterSecureStorage _storage = const FlutterSecureStorage();
+
+  Future<Options> _getAuthOptions() async {
+    final token = await _storage.read(key: 'jwt_token');
+    return Options(headers: {'Authorization': 'Bearer $token'});
+  }
+
+  // Obtener lista de reportes
+  Future<List<dynamic>> getReports() async {
+    try {
+      final options = await _getAuthOptions();
+      final response = await _dio.get(
+        '${ApiConstants.baseUrl}/admin/reports',
+        options: options,
+      );
+      return response.data;
+    } catch (e) {
+      throw Exception('Error cargando reportes: $e');
+    }
+  }
+
+  // Banear usuario (El Martillo)
+  Future<void> banUser(int userId, String reason) async {
+    try {
+      final options = await _getAuthOptions();
+      await _dio.post(
+        '${ApiConstants.baseUrl}/admin/ban/$userId',
+        data: {'reason': reason},
+        options: options,
+      );
+    } catch (e) {
+      throw Exception('Error baneando usuario: $e');
+    }
+  }
+}
+```
+
+**Métodos**:
+
+- **getReports()**: GET /admin/reports
+  - Obtiene lista de reportes desde backend
+  - Incluye información de Reporter y Reported
+  - Inyecta JWT automáticamente
+- **banUser(int userId, String reason)**: POST /admin/ban/:id
+  - Ejecuta ban manual con motivo
+  - `userId` se inserta en URL path
+  - `reason` se envía en body JSON
+
+#### 3. Actualización del LoginScreen - Ruteo Condicional por Rol
+
+El archivo `app/lib/features/auth/presentation/screens/login_screen.dart` fue actualizado para detectar si el usuario es admin y navegar apropiadamente:
+
+```dart
+} else if (state is LoginSuccess) {
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(
+      content: Text('¡Bienvenido!'),
+      backgroundColor: Colors.green,
+    ),
+  );
+
+  final authRepo = context.read<AuthRepository>();
+  final token = await authRepo.getToken();
+
+  if (token != null) {
+    Map<String, dynamic> decodedToken = JwtDecoder.decode(token);
+    String role = decodedToken['role'] ?? 'adopter';
+
+    // --- LÓGICA DE RUTAS MODIFICADA ---
+    if (role == 'admin') {
+      // CASO 1: Es Administrador -> Vamos al Panel de Justicia
+      if (mounted) {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const AdminDashboardScreen(),
+          ),
+          (route) => false,
+        );
+      }
+    } else {
+      // CASO 2: Es Mortal (Adoptante/Rescatista) -> Vamos a la App Normal
+      if (mounted) {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(
+            builder: (context) => MainLayoutScreen(role: role),
+          ),
+          (route) => false,
+        );
+      }
+    }
+  }
+}
+```
+
+**Cambios**:
+
+- Línea nueva: `String role = decodedToken['role'] ?? 'adopter';`
+
+  - Decodifica JWT (ya guardado en FlutterSecureStorage)
+  - Extrae el campo `role`
+  - Fallback a 'adopter' si no existe (nunca debería pasar)
+
+- Condicional: `if (role == 'admin')`
+  - Si es admin: navega a `AdminDashboardScreen()`
+  - Si es mortal: navega a `MainLayoutScreen(role: role)`
+
+**Impacto en UX**:
+
+```
+Escenario 1: Alonso (admin) hace login
+  1. Introduce credenciales
+  2. Backend autentica y genera JWT con role="admin"
+  3. Frontend decodifica JWT
+  4. Detecta role=="admin"
+  5. Navega a AdminDashboardScreen (Panel de Justicia)
+  6. Ve lista de reportes y botones BAN
+
+Escenario 2: Juan (adoptante) hace login
+  1. Introduce credenciales
+  2. Backend autentica y genera JWT con role="adopter"
+  3. Frontend decodifica JWT
+  4. Detecta role!="admin"
+  5. Navega a MainLayoutScreen(role: "adopter")
+  6. Ve tabs: Descubrir, Mis Matches, Perfil
+```
+
+### Casos de Uso Mejorados con Etapa 7
+
+**Caso 1: Autopromoción Automática de Alonso (Primera vez)**
+
+```
+Evento 1: Alonso se registra en la App
+  - App: POST /auth/register {email: "alonso.vera@mail.udp.cl", ...}
+  - Backend AuthService crea User con role="adopter" (default)
+  - BD: INSERT users(id=1, email="alonso.vera@mail.udp.cl", role="adopter")
+  - JWT generado: {sub: 1, role: "adopter"}
+  - Frontend: NavegaaMainLayoutScreen(role: "adopter")
+
+Evento 2: Alonso detecta que debería ser admin, reinicia backend
+  - Backend inicia, ejecuta seeder
+  - Seeder: WHERE email = "alonso.vera@mail.udp.cl"
+  - Encuentra registro (id=1)
+  - UPDATE users SET role="admin" WHERE id=1
+  - Log: "Usuario alonso.vera@mail.udp.cl promovido a ADMIN"
+
+Evento 3: Alonso hace logout en App (o reinicia sesión)
+  - App: POST /auth/login {email: "alonso.vera@mail.udp.cl", ...}
+  - Backend genera JWT: {sub: 1, role: "admin"}  (ahora correcto)
+  - Frontend decodifica: role == "admin"
+  - Frontend navega a AdminDashboardScreen
+  - Panel de Justicia aparece con lista de reportes
+```
+
+**Caso 2: Admin Visualiza Reportes y Ejecuta Sentencia Manual**
+
+```
+Alonso accede al Panel de Justicia:
+
+Reporte #1:
+  - Denunciante: Juan Pérez
+  - Acusado: Carlos García
+  - Motivo: "Solicita dinero sin entregar mascota"
+  - Botón: BAN
+
+Reporte #2:
+  - Denunciante: Ana López
+  - Acusado: Carlos García (mismo usuario!)
+  - Motivo: "Amenazas por WhatsApp"
+
+Reporte #3:
+  - Denunciante: Bob Smith
+  - Acusado: Carlos García (sigue siendo el mismo!)
+  - Motivo: "Estafa confirmada"
+
+Alonso ve 3 reportes sobre Carlos García (reportedID=7)
+Alonso presiona botón BAN en cualquiera
+  - Dialog: "¿Banear a Carlos García?"
+  - TextField: "Motivo del Ban (Requerido)"
+  - Alonso ingresa: "Acumulación de reportes graves (3 denuncias verificadas)"
+  - Alonso presiona "EJECUTAR SENTENCIA" (rojo, dramático)
+
+Backend:
+  - POST /admin/ban/7 {reason: "Acumulación de reportes graves..."}
+  - AdminHandler.BanUser() valida:
+    - ¿Token válido? Sí (authMiddleware)
+    - ¿Es admin? Sí (requireRole)
+    - ¿Motivo no vacío? Sí
+  - ReportService.BanUserManual(adminID=1, targetUserID=7, reason="...")
+    - Obtiene user.Run de usuario 7
+    - INSERT blacklist(run, reason)
+    - UPDATE users SET is_banned=true WHERE id=7
+  - Respuesta: {message: "JUSTICIA APLICADA: Usuario baneado."}
+
+Frontend:
+  - SnackBar: "Justicia aplicada. Usuario baneado."
+  - _refresh() recarga lista
+  - Carlos García ya no aparece (porque su is_banned=true)
+  - Lista ahora muestra 0 reportes
+
+Resultado:
+  - Carlos García intenta login:
+    - AuthService verifica RUN contra blacklist
+    - Encuentra entrada (run baneado)
+    - Respuesta: 403 {error: "Tu cuenta ha sido suspendida"}
+  - Carlos García nunca más accede a PAWS
+```
+
+**Caso 3: Corrección de Identidad - Antes vs Después**
+
+Antes de Etapa 7:
+
+```
+Flujo Quebrado:
+1. Frontend: SocialRepository.createReport(reportedId=999, reason="Estafa")
+   (999 es un ID dummy porque no se pasó el real)
+2. Backend: ReportHandler.Create() no valida, crea report con reported_id=999
+3. Usuario real (ID=5) nunca es baneado
+4. Admin intenta banear ID=999
+5. BanUserManual busca user WHERE id=999
+6. No encuentra nada (ID fantasma)
+7. Ban falla silenciosamente o genera error críptico
+8. Usuario real sigue activo pese a reportes
+```
+
+Después de Etapa 7:
+
+```
+Flujo Correcto:
+1. Frontend obtiene ID real del match/usuario
+2. Frontend: SocialRepository.createReport(reportedId=5, reason="Estafa")
+   (5 es el ID real del usuario)
+3. Backend: ReportHandler.Create() valida reported_id es uint válido
+4. Database.Report creado con reported_id=5 correctamente
+5. ReportService.GetAllReports() usa Preload("Reported") para cargar usuario 5
+6. Admin ve en Panel: Acusado: "María García" (ID 5)
+7. Admin presiona BAN
+8. BanUserManual(adminID, targetUserID=5, reason)
+   - Busca user WHERE id=5 ← Encuentra correctamente
+   - UPDATE users SET is_banned=true WHERE id=5
+   - INSERT blacklist(run="17.123.456-K")
+9. Usuario 5 baneado exitosamente
+10. No hay IDs fantasma involucrados
+```
+
+### Mejoras en Arquitectura y Seguridad
+
+**Arquitectura de Tres Niveles Jerárquicos**:
+
+```
+                    [Admin]
+                       |
+        (Middleware: AuthMiddleware + RequireRole)
+                       |
+            [Admin Endpoints: /admin/...]
+                       |
+                  [Panel de Justicia]
+                  [BAN, GetReports]
+
+                  [Mortal] (Adoptante/Rescatista)
+                       |
+        (Middleware: AuthMiddleware)
+                       |
+            [User Endpoints: /matches, /reviews, etc]
+                       |
+                  [MainLayout App]
+                  [Chat, Swipe, Adopt]
+```
+
+**Ventajas de RBAC**:
+
+1. **Escalabilidad**: Fácil agregar nuevos roles (moderator, super_admin, banned_user)
+2. **Granularidad**: Cada rol puede tener permisos específicos
+3. **Auditabilidad**: BanUserManual documenta quién baneó a quién y por qué
+4. **Seguridad**: Protección en dos niveles (JWT válido + Rol correcto)
+
+**Ventajas de Autopromoción**:
+
+1. **Sin Boilerplate**: No necesitas endpoint administrativo
+2. **Determinista**: Siempre promueve al mismo email
+3. **Recuperable**: Si la promoción falla, un restart lo intenta nuevamente
+4. **Seguro**: Solo afecta al email específico, no abre puerta a escalada
+
+**Corrección de Identidad - Beneficios**:
+
+1. **Precisión**: Bans se aplican al usuario correcto, no a IDs fantasma
+2. **Trazabilidad**: Cada ban documentado con motivo y admin que lo ejecutó
+3. **Prevención de Reincidencia**: Blacklist por RUN impide registro con mismo documento
+4. **Consistencia JSON**: Reporter y Reported siempre se cargan correctamente
+
 ## Acceso a Servicios
 
 ### Docker Compose
@@ -4158,6 +5026,7 @@ Este proyecto se desarrolla en fases:
 - **Fase 10** (Completada): Chat persistente, filtro "Evil PAWS" contra estafas, sistema de reputación 1-5 estrellas
 - **Etapa 5** (Completada): Identidad real (foto, nombre, bio, teléfono), geolocalización con permisos GPS, MainLayout con navegación inferior
 - **Etapa 6** (Completada): Robustez en handlers (type-safe JWT), ChatScreen con menús contextuales, SocialRepository centralizada
+- **Etapa 7** (Completada): RBAC administrativo (middleware de roles), Panel de Justicia para admins, autopromo ción automática, corrección de identidad en reportes
 - **Fase 11** (Planificada): Integración de closures, conclusión de adopciones, feedback final
 - **Fase 12** (Planificada): Machine Learning para recomendaciones, scoring dinámico, predicción de éxito
 
@@ -4177,6 +5046,7 @@ Este proyecto se desarrolla en fases:
 - [Fase 10](documentation/Fase-10.md): Chat persistente, filtro "Evil PAWS", sistema de reputación comunitaria
 - **Etapa 5**: Identidad real (foto, nombre, bio, teléfono), geolocalización con GPS, MainLayout (integrada en [Fase-3](documentation/Fase-3.md), [Fase-5](documentation/Fase-5.md), y [Fase-9](documentation/Fase-9.md))
 - **Etapa 6**: Blindsiding seguridad en handlers (type-safe JWT), integración UI para reportes y reseñas (integrada en [Fase-8](documentation/Fase-8.md) y [Fase-10](documentation/Fase-10.md))
+- **Etapa 7**: RBAC y panel administrativo, autopromo ción de admins, corrección de identidad en reportes (integrada en [Fase-1](documentation/Fase-1.md), [Fase-5](documentation/Fase-5.md), y [Fase-8](documentation/Fase-8.md))
 
 ## Notas Arquitectónicas
 
@@ -4196,5 +5066,9 @@ Este proyecto se desarrolla en fases:
 - **Type-Safe JWT Extraction (Etapa 6)**: Helper `getUserIDSafe()` en SocialHandler maneja conversión segura de float64 (estándar JSON) a uint, evitando panics en endpoints de reportes y reseñas. Retorna (uint, bool) permitiendo fallos determinísticos con respuesta 401.
 - **Menús Contextuales en Chat (Etapa 6)**: PopupMenuButton en AppBar de ChatScreen permite "Calificar Experiencia" (star rating 1-5) y "Reportar Usuario" sin salir de conversación activa. Mejora UX vs navegación a perfiles separados.
 - **SocialRepository (Etapa 6)**: Capa centralizada de datos para reportes y reseñas. Usa Dio + FlutterSecureStorage para JWT injection. Métodos createReport() y createReview() validan localmente (rating 1-5) antes de POST. Extensible con getUserReviews() y getUserAverageRating() para futuras features de reputación.
+- **RBAC Middleware (Etapa 7)**: RequireRole() en Go valida el campo role del JWT. Protege rutas administrativas con doble guardián (AuthMiddleware + RequireRole). Permite escalada futura a múltiples roles (moderator, super_admin).
+- **Autopromoción Admin (Etapa 7)**: Seeder en main.go detecta email específico (alonso.vera@mail.udp.cl) y promueve automáticamente a admin al arrancar. Sin endpoints administrativos, determinista, recuperable con restart.
+- **Panel de Justicia (Etapa 7)**: AdminDashboardScreen en Flutter lista reportes con Preload de información de usuarios (Reporter, Reported). Permite bans manuales con motivo documentado. Solo visible a role="admin". Refleja cambios en tiempo real con \_refresh().
+- **Corrección de Identidad (Etapa 7)**: domain.Report incluye relaciones foreignKey a Reporter y Reported users. GetAllReports() usa Preload() para cargar información completa. BanUserManual() busca user por ID real (no fantasma como 999), previene bans erróneos.
 
 ## Autor

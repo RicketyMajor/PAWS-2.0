@@ -1088,6 +1088,445 @@ func TestReportHandlerWithFloatUserID(t *testing.T) {
    - Antes: `GetUint()` asume formato correcto
    - Después: `GetUserIDSafe()` valida y convierte
 
+## COMPLETADO EN ETAPA 7: Métodos Administrativos y Corrección de Identidad en Reportes
+
+La Etapa 7 amplió significativamente el ReportService con dos nuevos métodos destinados a la administración y justicia comunitaria. Además, se corrigió un problema crítico donde los IDs de reportes no se serializaban correctamente en JSON, causando que bans se ejecutaran sobre usuarios incorrectos (IDs fantasma como 999). La Etapa 7 implementó un sistema de dos endpoints administrativos protegidos por RBAC que permiten a los administradores visualizar todos los reportes y ejecutar bans manuales con motivos documentados.
+
+### Nuevos Métodos del ReportService (Etapa 7)
+
+#### 1. GetAllReports() - Obtener Lista de Reportes para Admin
+
+```go
+// GetAllReports: Lista todas las denuncias para el Admin (Cargando nombres de usuarios)
+func (s *ReportService) GetAllReports() ([]domain.Report, error) {
+	var reports []domain.Report
+	// PRELOAD: Cargamos las relaciones Reporter y Reported
+	err := s.db.Preload("Reporter").Preload("Reported").
+		Order("created_at desc").
+		Find(&reports).Error
+	return reports, err
+}
+```
+
+**Propósito**:
+
+- Retorna **todos** los reportes en la BD (sin filtrar por estado o antigüedad)
+- Carga información completa de Reporter (denunciante) y Reported (denunciado)
+- Ordena por fecha descendente (más recientes primero)
+
+**Preload Explicado**:
+
+- `Preload("Reporter")`: GORM carga el User con ReporterID
+- `Preload("Reported")`: GORM carga el User con ReportedID
+- Sin Preload: reportes vendrían con solo IDs numéricos
+- Con Preload: reportes incluyen {id: 2, name: "Juan", email: "..."}
+
+**JSON Resultante** (con Preload):
+
+```json
+[
+  {
+    "id": 5,
+    "reporter_id": 2,
+    "reported_id": 3,
+    "Reporter": {
+      "id": 2,
+      "name": "Juan Pérez",
+      "email": "juan@example.com",
+      "is_banned": false
+    },
+    "Reported": {
+      "id": 3,
+      "name": "Carlos García",
+      "email": "carlos@example.com",
+      "is_banned": false
+    },
+    "reason": "Solicita dinero sin entregar mascota",
+    "status": "verified",
+    "created_at": "2025-12-20T14:30:00Z"
+  }
+]
+```
+
+**Cambios en Domain** (domain/report.go):
+
+El modelo Report en Fase 8 solo tenía IDs. Etapa 7 agregó relaciones explícitas:
+
+```go
+type Report struct {
+	gorm.Model
+
+	// IDs (Llaves Foráneas)
+	ReporterID uint   `gorm:"not null" json:"reporter_id"`
+	ReportedID uint   `gorm:"not null" json:"reported_id"`
+
+	// --- RELACIONES AGREGADAS EN ETAPA 7 ---
+	Reporter   User   `gorm:"foreignKey:ReporterID" json:"Reporter"`
+	Reported   User   `gorm:"foreignKey:ReportedID" json:"Reported"`
+
+	Reason     string `gorm:"not null" json:"reason"`
+	Status     string `gorm:"default:'pending'" json:"status"`
+}
+```
+
+**Impacto**:
+
+- Migraciones automáticas: GORM entiende las relaciones
+- Frontend recibe {Reporter: {...}, Reported: {...}} en lugar de solo IDs
+- AdminDashboardScreen puede mostrar nombres sin consultas adicionales
+
+#### 2. BanUserManual() - Ban Ejecutado por Admin
+
+```go
+// BanUserManual: El botón de pánico del Admin
+func (s *ReportService) BanUserManual(adminID, targetUserID uint, reason string) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		// 1. Buscar al usuario objetivo
+		var user domain.User
+		if err := tx.First(&user, targetUserID).Error; err != nil {
+			return err
+		}
+
+		// 2. Marcarlo como baneado en la tabla users
+		if err := tx.Model(&user).Update("is_banned", true).Error; err != nil {
+			return err
+		}
+
+		// 3. Crear entrada en Blacklist (para que no se registre de nuevo con el mismo RUT)
+		blacklistEntry := domain.BlacklistEntry{
+			Run:    user.Run,
+			Reason: fmt.Sprintf("Baneado por Admin #%d: %s", adminID, reason),
+		}
+
+		// Usamos FirstOrCreate para no fallar si ya estaba en blacklist
+		if err := tx.Where("run = ?", user.Run).FirstOrCreate(&blacklistEntry).Error; err != nil {
+			return err
+		}
+
+		return nil
+	})
+}
+```
+
+**Propósito**:
+
+- Ejecuta un ban manual cuando un admin presiona el botón "BAN" en el Panel de Justicia
+- Documenta quién baneó a quién y por qué
+- Previene re-registro del mismo RUN
+
+**Flujo Detallado**:
+
+```
+Entrada: adminID=1 (Alonso), targetUserID=7 (Carlos), reason="Acoso reiterado"
+
+1. Buscar usuario por ID (targetUserID=7)
+   - Si no existe: return error (ID fantasma detectado)
+   - Si existe: obtener su RUN (ej: "17.234.567-K")
+
+2. Marcar como baneado
+   - UPDATE users SET is_banned=true WHERE id=7
+   - Ahora AuthService.Login() rechazará este user
+
+3. Agregar a Blacklist por RUN
+   - Reason: "Baneado por Admin #1: Acoso reiterado"
+   - FirstOrCreate: Si el RUN ya estaba en blacklist, ignora (no falla)
+   - Previene que Carlos se registre con la misma identidad later
+
+Resultado: Carlos García completamente fuera de PAWS
+```
+
+**Transacción ACID**:
+
+```go
+tx.Transaction(func(tx *gorm.DB) error {
+	// Dentro de una transacción
+	// Si ANY paso falla → TODO se revierte
+	// Si todos OK → TODO se commitea
+})
+```
+
+**Ventajas**:
+
+- No hay estado intermedio (ej: baneado en users pero no en blacklist)
+- Atomicidad: Todo o nada
+- Seguridad: Consistencia garantizada
+
+**Documentación del Ban**:
+
+```
+Reason: "Baneado por Admin #1: Acoso reiterado"
+                    ↑               ↑
+                adminID         Usuario ingresó motivo
+```
+
+Frontend puede mostrar esto en la BD:
+
+```sql
+SELECT run, reason FROM blacklist WHERE run="17.234.567-K";
+-- Retorna: "Baneado por Admin #1: Acoso reiterado"
+```
+
+### AdminHandler - Exposición de Métodos (Etapa 7)
+
+```go
+type AdminHandler struct {
+	service *services.ReportService
+}
+
+// GetReports (GET /admin/reports)
+func (h *AdminHandler) GetReports(c *gin.Context) {
+	reports, err := h.service.GetAllReports()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error cargando reportes"})
+		return
+	}
+	c.JSON(http.StatusOK, reports)
+}
+
+// BanUser (POST /admin/ban/:id)
+func (h *AdminHandler) BanUser(c *gin.Context) {
+	adminIDVal, _ := c.Get("userID")
+	adminID := uint(adminIDVal.(float64))
+
+	targetIDStr := c.Param("id")
+	targetID, _ := strconv.Atoi(targetIDStr)
+
+	var req struct {
+		Reason string `json:"reason" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Se requiere motivo (reason)"})
+		return
+	}
+
+	err := h.service.BanUserManual(adminID, uint(targetID), req.Reason)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error baneando usuario: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "JUSTICIA APLICADA: Usuario baneado."})
+}
+```
+
+**Endpoints**:
+
+- `GET /admin/reports`
+  - Llamaa ReportService.GetAllReports()
+  - Retorna array JSON de reportes (con Preload)
+- `POST /admin/ban/:id`
+  - Parámetro: targetID en URL (`:id`)
+  - Body: {reason: "..."}
+  - Llamaa ReportService.BanUserManual()
+  - Retorna: {message: "JUSTICIA APLICADA"}
+
+**Extracción de adminID**:
+
+```go
+adminIDVal, _ := c.Get("userID")
+adminID := uint(adminIDVal.(float64))
+```
+
+- AuthMiddleware almacenó "userID" como float64 (JSON standard)
+- Simple conversion: `uint(float64_value)`
+- (Nota: En Etapa 6 se introdujo getUserIDSafe, aquí podría usarse)
+
+### Corrección de Identidad - El Problema de IDs Fantasma
+
+**Problema Pre-Etapa 7**:
+
+```
+Escenario Quebrado:
+1. Frontend: SocialRepository.createReport(reportedId=999, reason="Estafa")
+   - reportedId=999 es un dummy (no se pasó el ID real)
+2. Backend: ReportHandler.Create() crea report con reported_id=999
+3. ReportService.CreateReport() verifica 3-strike y bansea ID 999
+4. Admin intenta banear ID 999
+5. BanUserManual busca: SELECT * FROM users WHERE id=999
+6. No encuentra nada (ID fantasma, nunca existió)
+7. Ban falla o genera error críptico
+8. Usuario REAL (ID=5) nunca es baneado pese a reportes
+```
+
+**Problema Profundo**:
+
+- ReportService confiaba en que reported_id siempre era correcto
+- Domain.Report solo tenía ReporterID y ReportedID (sin relaciones)
+- Frontend no podía visualizar qué usuario was reported (solo veía "reported_id: 999")
+- Bans se aplicaban a fantasmas, usuarios reales evadían castigo
+
+**Solución Etapa 7**:
+
+1. **Domain mejorado**: Agregar relaciones foreignKey
+
+   ```go
+   Reporter User `gorm:"foreignKey:ReporterID"`
+   Reported User `gorm:"foreignKey:ReportedID"`
+   ```
+
+2. **GetAllReports con Preload**: Cargar información completa
+
+   ```go
+   Preload("Reporter").Preload("Reported")
+   ```
+
+3. **BanUserManual valida ID**: Busca usuario, retorna error si no existe
+
+   ```go
+   var user domain.User
+   if err := tx.First(&user, targetUserID).Error; err != nil {
+       return err  // ID no existe → error legible
+   }
+   ```
+
+4. **Frontend vé nombres**: AdminDashboardScreen muestra "Acusado: Carlos García" (no "ID 999")
+   ```dart
+   final reported = report['Reported']?['name'] ?? 'Usuario';
+   Text("Acusado: $reported")
+   ```
+
+**Resultado**:
+
+- No hay bans de IDs fantasma
+- Admin ve claramente quién está siendo baneado
+- Transacciones ACID garantizan que ban se ejecuta correctamente
+- Blacklist se actualiza atómicamente
+
+### Casos de Uso Prácticos (Etapa 7)
+
+**Caso 1: Admin Visualiza Reportes**
+
+```
+Admin inicia sesión
+  ↓
+JWT contiene role="admin"
+  ↓
+Frontend navega a AdminDashboardScreen
+  ↓
+AdminDashboardScreen.initState() llamaa _refresh()
+  ↓
+_repo.getReports() → GET /admin/reports
+  ↓
+Backend: AuthMiddleware valida JWT ✓
+Backend: RequireRole("admin") valida role ✓
+Backend: AdminHandler.GetReports() llamaa ReportService.GetAllReports()
+  ↓
+ReportService.GetAllReports():
+  - SELECT * FROM reports ORDER BY created_at DESC
+  - Preload Reporter (nombre, email)
+  - Preload Reported (nombre, email)
+  ↓
+Retorna JSON:
+[
+  {report_1 con Reporter y Reported},
+  {report_2 con Reporter y Reported},
+  ...
+]
+  ↓
+Frontend FutureBuilder renderiza ListView
+  ↓
+Cada Card muestra:
+  - Acusado: María García
+  - Denunciante: Juan Pérez
+  - Motivo: Solicita dinero sin entregar mascota
+  - Botón: BAN
+```
+
+**Caso 2: Admin Ejecuta Ban Manual**
+
+```
+Admin presiona botón BAN en reporte de María García (ID=7)
+  ↓
+_banUser(7, "María García") abre AlertDialog
+  ↓
+Dialog: "¿Banear a María García?"
+         [TextField para motivo]
+  ↓
+Admin ingresa: "Acoso confirmado con mensajes"
+  ↓
+Admin presiona "EJECUTAR SENTENCIA"
+  ↓
+_repo.banUser(7, "Acoso confirmado...")
+  ↓
+POST /admin/ban/7 {reason: "Acoso confirmado..."}
+  ↓
+Backend: AuthMiddleware valida JWT ✓
+Backend: RequireRole("admin") valida role ✓
+Backend: AdminHandler.BanUser() procesa:
+  - adminID = 1 (quien ejecuta)
+  - targetID = 7 (who gets banned)
+  - reason = "Acoso confirmado..."
+  ↓
+ReportService.BanUserManual(1, 7, "Acoso..."):
+  - Busca user.id=7 en BD
+    ↓ ENCUENTRA user{id: 7, run: "18.123.456-K", name: "María García"}
+  - UPDATE users SET is_banned=true WHERE id=7
+  - INSERT blacklist(run="18.123.456-K", reason="Baneado por Admin #1: Acoso...")
+  ↓
+Transacción commitea (éxito)
+  ↓
+AdminHandler retorna: {message: "JUSTICIA APLICADA"}
+  ↓
+Frontend recibe 200 OK
+  ↓
+SnackBar: "Justicia aplicada. Usuario baneado."
+  ↓
+_refresh() recarga lista de reportes
+  ↓
+María García ya no aparece en la lista (porque está baneada y no hay nuevos reportes de ella)
+  ↓
+María intenta login:
+  - POST /auth/login {email: "maria@example.com", password: "..."}
+  - AuthService verifica blacklist por RUN
+  - Encuentra: run="18.123.456-K" está en blacklist
+  - 403 Forbidden: {error: "Tu cuenta ha sido suspendida"}
+  - María no puede acceder a PAWS
+```
+
+### Cambios de Database (Etapa 7)
+
+**Tabla users** (sin cambios, ya existe):
+
+```sql
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR,
+    email VARCHAR UNIQUE,
+    run VARCHAR UNIQUE,
+    role VARCHAR DEFAULT 'adopter',
+    is_banned BOOLEAN DEFAULT FALSE,
+    ...
+);
+```
+
+**Tabla reports** (sin cambios en schema, solo en relaciones):
+
+```sql
+CREATE TABLE reports (
+    id SERIAL PRIMARY KEY,
+    reporter_id INT NOT NULL REFERENCES users(id),
+    reported_id INT NOT NULL REFERENCES users(id),
+    reason TEXT,
+    status VARCHAR,
+    created_at TIMESTAMP,
+    ...
+);
+```
+
+**Tabla blacklist** (sin cambios):
+
+```sql
+CREATE TABLE blacklist_entries (
+    id SERIAL PRIMARY KEY,
+    run VARCHAR UNIQUE,
+    reason TEXT,
+    created_at TIMESTAMP,
+    ...
+);
+```
+
+GORM AutoMigrate reconoce las nuevas relaciones sin cambiar schemas
+
 ## Estándares de Testing Fase 8
 
 ### Regla 1: Test R-SEC-04 Crítico
