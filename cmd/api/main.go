@@ -26,6 +26,15 @@ func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Println("Info: No se encontró archivo .env, usando variables del sistema")
 	}
+	// --- AGREGAR ESTO TEMPORALMENTE ---
+    url := os.Getenv("DATABASE_URL")
+    if url != "" {
+        log.Println("DEBUG: ¡Variable DATABASE_URL encontrada! Longitud:", len(url))
+        // No imprimas la URL completa por seguridad, solo verifica que existe.
+    } else {
+        log.Println("DEBUG: DATABASE_URL está vacía. Godotenv cargó el archivo pero no leyó la variable.")
+    }
+    // ----------------------------------
 
 	database.Connect()
 	database.DB.Migrator().DropTable(&domain.Report{}) // SOLO para desarrollo, elimina en producción
