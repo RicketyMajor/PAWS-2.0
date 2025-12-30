@@ -6,6 +6,7 @@ import '../bloc/login_bloc.dart';
 import 'register_screen.dart';
 // IMPORTANTE: Importamos el nuevo Layout Principal
 import '../../../../core/presentation/main_layout_screen.dart';
+import '../../../admin/presentation/screens/admin_dashboard_screen.dart'; // <--- AGREGAR ESTO
 
 class LoginScreen extends StatelessWidget {
   const LoginScreen({super.key});
@@ -55,18 +56,31 @@ class _LoginFormState extends State<_LoginForm> {
             Map<String, dynamic> decodedToken = JwtDecoder.decode(token);
             String role = decodedToken['role'] ?? 'adopter';
 
-            // --- CAMBIO CLAVE ---
-            // Ya no navegamos a pantallas individuales, sino al Layout Principal
-            if (mounted) {
-              Navigator.pushAndRemoveUntil(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => MainLayoutScreen(role: role),
-                ),
-                (route) => false,
-              );
+            // --- LÓGICA DE RUTAS MODIFICADA ---
+            if (role == 'admin') {
+              // CASO 1: Es Administrador -> Vamos al Panel de Justicia
+              if (mounted) {
+                Navigator.pushAndRemoveUntil(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const AdminDashboardScreen(),
+                  ),
+                  (route) => false,
+                );
+              }
+            } else {
+              // CASO 2: Es Mortal (Adoptante/Rescatista) -> Vamos a la App Normal
+              if (mounted) {
+                Navigator.pushAndRemoveUntil(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => MainLayoutScreen(role: role),
+                  ),
+                  (route) => false,
+                );
+              }
             }
-            // --------------------
+            // ----------------------------------
           }
         }
       },

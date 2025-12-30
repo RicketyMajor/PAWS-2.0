@@ -8,8 +8,14 @@ import '../../../social/data/social_repository.dart';
 class ChatScreen extends StatelessWidget {
   final int matchId;
   final String peerName; // Nombre de la otra persona
+  final int peerId;
 
-  const ChatScreen({super.key, required this.matchId, required this.peerName});
+  const ChatScreen({
+    super.key,
+    required this.matchId,
+    required this.peerName,
+    required this.peerId,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -141,7 +147,7 @@ class ChatScreen extends StatelessWidget {
                 // Por ahora pasamos matchId como placeholder si tu backend lo acepta,
                 // o pasamos 0 y ajustamos backend.
                 await repo.createReport(
-                  reportedId: 999,
+                  reportedId: peerId,
                   reason: reasonController.text,
                 );
 

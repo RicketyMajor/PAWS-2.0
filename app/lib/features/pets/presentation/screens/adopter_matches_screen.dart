@@ -34,7 +34,6 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
       final token = await _storage.read(key: 'jwt_token');
       final options = Options(headers: {'Authorization': 'Bearer $token'});
 
-      // Hacemos las dos peticiones en paralelo
       final responses = await Future.wait([
         _dio.get(
           '${ApiConstants.baseUrl}/matches/mine',
@@ -48,8 +47,9 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
 
       if (mounted) {
         setState(() {
-          _acceptedMatches = responses[0].data;
-          _pendingMatches = responses[1].data;
+          // 1. CORRECCIÓN: Agregamos "?? []" para evitar la pantalla morada de error NULL
+          _acceptedMatches = responses[0].data ?? [];
+          _pendingMatches = responses[1].data ?? [];
           _isLoading = false;
         });
       }
@@ -82,15 +82,11 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
           ? const Center(child: CircularProgressIndicator())
           : TabBarView(
               controller: _tabController,
-              children: [
-                _buildChatsList(), // Pestaña 1
-                _buildPendingList(), // Pestaña 2
-              ],
+              children: [_buildChatsList(), _buildPendingList()],
             ),
     );
   }
 
-  // LISTA DE CHATS (Lo que ya tenías)
   Widget _buildChatsList() {
     if (_acceptedMatches.isEmpty) {
       return _buildEmptyState(
@@ -104,7 +100,19 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
       itemBuilder: (context, index) {
         final match = _acceptedMatches[index];
         final pet = match['pet'];
-        final rescuerName = pet['User']?['name'] ?? 'Rescatista';
+
+        // 2. CORRECCIÓN ROBUSTA DE LECTURA DE DATOS
+        // Intentamos leer 'User' (Go default) o 'user' (si tienes tags json)
+        final rescuerData = pet['User'] ?? pet['user'];
+
+        final rescuerName = rescuerData?['name'] ?? 'Rescatista';
+
+        // 3. CORRECCIÓN CRÍTICA DEL ID
+        // GORM envía 'ID' (Mayúscula). Probamos ambas por seguridad.
+        final rescuerId = rescuerData?['ID'] ?? rescuerData?['id'] ?? 0;
+
+        // DEBUG: Imprimir en consola para verificar qué está llegando
+        print("DEBUG CHECK: Nombre: $rescuerName, ID detectado: $rescuerId");
 
         return Card(
           child: ListTile(
@@ -122,8 +130,11 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (_) =>
-                      ChatScreen(matchId: match['id'], peerName: rescuerName),
+                  builder: (_) => ChatScreen(
+                    matchId: match['id'],
+                    peerName: rescuerName,
+                    peerId: rescuerId, // Ahora sí enviamos el ID correcto
+                  ),
                 ),
               );
             },
@@ -133,7 +144,6 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
     );
   }
 
-  // LISTA DE PENDIENTES (NUEVO)
   Widget _buildPendingList() {
     if (_pendingMatches.isEmpty) {
       return _buildEmptyState(
@@ -149,7 +159,7 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
         final pet = match['pet'];
 
         return Card(
-          color: Colors.grey[50], // Un poco más oscuro para diferenciar
+          color: Colors.grey[50],
           child: ListTile(
             leading: CircleAvatar(
               backgroundImage: _getPetImage(pet['photo_url']),

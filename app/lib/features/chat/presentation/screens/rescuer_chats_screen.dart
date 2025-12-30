@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import '../../../pets/data/matches_repository.dart'; // Asegúrate de importar esto
+import '../../../pets/data/matches_repository.dart';
 import 'chat_screen.dart';
 
 class RescuerChatsScreen extends StatefulWidget {
@@ -16,7 +16,6 @@ class _RescuerChatsScreenState extends State<RescuerChatsScreen> {
   @override
   void initState() {
     super.initState();
-    // Usamos el repositorio de matches para traer los chats
     _chatsFuture = context.read<MatchesRepository>().getRescuerChats();
   }
 
@@ -37,6 +36,7 @@ class _RescuerChatsScreenState extends State<RescuerChatsScreen> {
           if (snapshot.hasError) {
             return Center(child: Text("Error: ${snapshot.error}"));
           }
+          // Protección contra null
           final chats = snapshot.data ?? [];
 
           if (chats.isEmpty) {
@@ -47,31 +47,56 @@ class _RescuerChatsScreenState extends State<RescuerChatsScreen> {
             itemCount: chats.length,
             itemBuilder: (context, index) {
               final match = chats[index];
-              final adopter = match['adopter'];
-              final pet = match['pet'];
 
-              // Datos para mostrar
+              // 1. BLINDAJE DE DATOS (Probar mayúsculas y minúsculas)
+              final adopter = match['Adopter'] ?? match['adopter'];
+              final pet = match['Pet'] ?? match['pet'];
+
               final adopterName = adopter?['name'] ?? 'Adoptante';
               final petName = pet?['name'] ?? 'Mascota';
+
+              // 2. EXTRACCIÓN ROBUSTA DE ID
+              final adopterId = adopter?['ID'] ?? adopter?['id'] ?? 0;
+
+              // 3. DEBUG: ¡Mira esto en tu consola de Flutter!
+              print(
+                "RESCUER_DEBUG: Chat con $adopterName. ID detectado: $adopterId",
+              );
 
               return Card(
                 margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 child: ListTile(
                   leading: CircleAvatar(
                     backgroundColor: Colors.purple[100],
-                    child: Text(adopterName[0].toUpperCase()),
+                    child: Text(
+                      adopterName.isNotEmpty
+                          ? adopterName[0].toUpperCase()
+                          : '?',
+                    ),
                   ),
                   title: Text(adopterName),
                   subtitle: Text("Interesado en $petName"),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () {
-                    // Navegar al chat
+                    // Si el ID es 0, mostramos alerta para no crashear el backend
+                    if (adopterId == 0) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            "Error: No se pudo identificar al usuario",
+                          ),
+                        ),
+                      );
+                      return;
+                    }
+
                     Navigator.push(
                       context,
                       MaterialPageRoute(
                         builder: (_) => ChatScreen(
                           matchId: match['id'],
-                          peerName: adopterName, // Hablamos con el Adoptante
+                          peerName: adopterName,
+                          peerId: adopterId,
                         ),
                       ),
                     );
