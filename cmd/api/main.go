@@ -37,7 +37,6 @@ func main() {
     // ----------------------------------
 
 	database.Connect()
-	database.DB.Migrator().DropTable(&domain.Report{}) // SOLO para desarrollo, elimina en producción
 	// Migraciones
 	if err := database.DB.AutoMigrate(
 		&domain.User{}, 
