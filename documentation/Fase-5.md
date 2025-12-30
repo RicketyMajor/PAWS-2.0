@@ -1951,6 +1951,232 @@ dependencies:
 - Scroll position, form state preservado
 - Mejor performance en navegación
 
+## COMPLETADO EN ETAPA 8: Frontend Web y Configuración Inteligente de Endpoints
+
+La Etapa 8 amplió el alcance de Fase 5 permitiendo que la misma aplicación Flutter compile no solo para Android/iOS, sino también para web (HTML + JavaScript). Se implementó detección automática de entorno para que el código sepa cuándo conectarse a localhost (desarrollo) vs Railway (producción).
+
+### Compilación a Web - Transformación del Frontend
+
+**Fase 5**: Aplicación Flutter solo para móvil (Android/iOS). Ejecutable via `flutter run`.
+
+**Etapa 8**: Aplicación Flutter universal - móvil Y web. Compilación adicional:
+
+```bash
+# Antes (Fase 5)
+flutter run  # Solo ejecuta en emulador/dispositivo
+
+# Después (Etapa 8)
+flutter run -d web  # Ahora también ejecuta en navegador
+flutter build web --release  # Genera HTML/JS/CSS para hosting
+```
+
+**Resultado**: Directorio `app/build/web/` contiene:
+
+- `index.html`: Punto de entrada (carga main.dart.js)
+- `main.dart.js`: Dart VM compilado a JavaScript (varios MB)
+- `assets/`: Imágenes, fuentes, datos estáticos
+- `canvaskit/`: Runtime de Flutter para renderizar widgets en canvas
+
+### Hosting en Vercel
+
+**Sin Etapa 8**: No hay forma de desplegar - es solo app móvil.
+
+**Con Etapa 8**: Vercel conectado al repositorio detecta `app/pubspec.yaml` y:
+
+1. Ejecuta `flutter build web --release`
+2. Toma contenido de `app/build/web/`
+3. Lo sube a CDN global
+4. Disponible en `https://paws.vercel.app`
+
+**Ventajas**:
+
+- **Distribución Global**: CDN de Vercel en 200+ ciudades
+- **Auto-Deploy**: Cada push a GitHub activa build automático
+- **Zero Config**: Vercel detecta Flutter web automáticamente
+- **Free Tier**: Hosting gratuito para proyectos públicos
+
+### ApiConstants - Switch Inteligente de Endpoints
+
+**Fase 5**: Hardcodeado para localhost o IP fija:
+
+```dart
+// app/lib/core/constants/api_constants.dart (Fase 5)
+
+class ApiConstants {
+  static const String baseUrl = "http://10.0.2.2:8080/api/v1";  // Solo Android emulator
+  static const String wsUrl = "ws://10.0.2.2:8080/api/v1";
+}
+```
+
+**Limitaciones**:
+
+- `10.0.2.2` SOLO funciona en Android emulator
+- Web necesita `localhost:8080`
+- Dispositivo físico necesita IP local del host (ej: 192.168.1.100)
+- No hay forma de cambiar dinámicamente sin re-compilar
+
+**Etapa 8**: Detección automática basada en modo y plataforma:
+
+```dart
+// app/lib/core/constants/api_constants.dart (Etapa 8)
+
+import 'package:flutter/foundation.dart';
+import '../config/environment_config.dart';
+
+class ApiConstants {
+  static const String baseUrl = kReleaseMode
+      ? 'https://paws-20-production.up.railway.app/api/v1'  // Producción (Vercel)
+      : 'http://localhost:8080/api/v1';  // Desarrollo local
+
+  static String get wsUrl => EnvironmentConfig.wsUrl;
+
+  // Endpoints (sin cambios)
+  static const String login = '/auth/login';
+  static const String register = '/auth/register';
+  // ...
+}
+```
+
+**EnvironmentConfig.wsUrl** (también en Etapa 8):
+
+```dart
+// app/lib/core/config/environment_config.dart
+
+class EnvironmentConfig {
+  static String get wsUrl {
+    if (kIsWeb) {
+      return kReleaseMode
+          ? 'wss://paws-20-production.up.railway.app/api/v1'  // WebSocket seguro (Vercel)
+          : 'ws://localhost:8080/api/v1';  // WebSocket local
+    } else if (Platform.isAndroid) {
+      return 'ws://10.0.2.2:8080/api/v1';
+    } else {
+      return 'ws://localhost:8080/api/v1';
+    }
+  }
+}
+```
+
+**Detección Automática**:
+
+- `kReleaseMode = true`: Compilación release (Vercel, `flutter build web --release`)
+- `kReleaseMode = false`: Compilación debug (`flutter run` en local)
+- `kIsWeb`: Plataforma es web (JavaScript en navegador)
+- `Platform.isAndroid`: Plataforma es Android (emulador o dispositivo)
+
+**Flujo en Desarrollo**:
+
+```
+Desarrollador abre IDE en laptop
+  ↓
+Ejecuta: flutter run -d web
+  ↓
+kReleaseMode = false (debug)
+  ↓
+ApiConstants.baseUrl = "http://localhost:8080/api/v1"
+  ↓
+App web se conecta a backend local (localhost:8080)
+  ↓
+Desarrollador ve cambios en tiempo real
+```
+
+**Flujo en Producción**:
+
+```
+Desarrollador hace push a GitHub
+  ↓
+Vercel detecta cambios
+  ↓
+Ejecuta: flutter build web --release
+  ↓
+kReleaseMode = true (release)
+  ↓
+ApiConstants.baseUrl = "https://paws-20-production.up.railway.app/api/v1"
+  ↓
+App web compilada se conecta a Railway (producción)
+  ↓
+URL publicada: https://paws.vercel.app
+  ↓
+Usuario final accede sin instalar nada
+```
+
+### Compatibilidad con Fase 5 - Sin Cambios Rotos
+
+Todos los widgets, servicios y repositorios de Fase 5 funcionan sin modificación:
+
+- **PetsRepository**, **ChatRepository**, **UserRepository**: Usan `ApiConstants.baseUrl` dinámicamente
+- **Dio HTTP Client**: No necesita cambios (usa el baseUrl elegido automáticamente)
+- **WebSocket (chat)**: Usa `EnvironmentConfig.wsUrl` que también es dinámico
+- **BLoC + Clean Architecture**: Completamente agnóstico al endpoint (inyectado en constructores)
+
+**Ejemplo**: ChatRepository funcionaba en Fase 5 con hardcoded `10.0.2.2:8080`. En Etapa 8, sin tocar código:
+
+```dart
+// Fase 5
+final wsUrl = "ws://10.0.2.2:8080/api/v1";  // Hardcoded
+
+// Etapa 8 (mismo archivo, misma línea, pero ahora dinámica)
+final wsUrl = "${EnvironmentConfig.wsUrl}/chat/ws";  // Dinámico: local o Railway
+```
+
+### Migraciones Necesarias en Código
+
+Ningún código funcional necesita cambios. Solo ajustes de configuración:
+
+**Cambio 1**: Actualizar ApiConstants para usar kReleaseMode
+
+```dart
+// ANTES (Fase 5)
+static const String baseUrl = "http://10.0.2.2:8080/api/v1";
+
+// DESPUÉS (Etapa 8)
+static const String baseUrl = kReleaseMode
+    ? 'https://paws-20-production.up.railway.app/api/v1'
+    : 'http://localhost:8080/api/v1';
+```
+
+**Cambio 2**: WebSocket en ChatRepository ahora usa EnvironmentConfig
+
+```dart
+// ANTES (Fase 5)
+return "ws://10.0.2.2:8080/api/v1";
+
+// DESPUÉS (Etapa 8)
+return "${EnvironmentConfig.wsUrl}/chat/ws";
+```
+
+**Cambio 3**: Importar kReleaseMode en api_constants.dart
+
+```dart
+import 'package:flutter/foundation.dart';  // <-- Agregar
+
+class ApiConstants {
+  static const String baseUrl = kReleaseMode ? '...' : '...';
+}
+```
+
+### Beneficios Finales
+
+**Para Desarrollo**:
+
+- No necesita cambiar código para testear local vs producción
+- `flutter run` usa localhost automáticamente
+- `flutter build web --release` usa Railway automáticamente
+- Desarrollo web posible sin Android emulator (más rápido)
+
+**Para Usuarios**:
+
+- Acceso directo desde navegador: `https://paws.vercel.app`
+- Sin instalaciones requeridas (iOS, Android app store, APK)
+- Mismo código en web y móvil = funcionalidad consistente
+- Accesible desde smartphone, tablet, laptop, desktop
+
+**Para Portafolio**:
+
+- "Live Demo" listo para entrevistadores: un enlace, sin setup
+- Demuestra full-stack: Frontend (Vercel), Backend (Railway), DB (Supabase)
+- Muestra DevOps: CI/CD automático, environment detection, cloud deployment
+
 ## Referencias y Recursos
 
 - **Flutter Bloc Pattern**: https://bloclibrary.dev/

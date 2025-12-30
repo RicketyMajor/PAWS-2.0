@@ -359,7 +359,6 @@ WHERE ST_DWithin(
 - Si existe Servidor A y B, ambos se conectan al mismo Redis
 - Usuario en Servidor A puede chatear con usuario en Servidor B
 
-
 ## Actualización Etapa 1: Kill Switch de RabbitMQ (Asincronía Condicional)
 
 La Etapa 1 de Operación PAWS Real introduce un mecanismo crítico de "Kill Switch" que permite que el sistema funcione sin RabbitMQ, una dependencia pesada no adecuada para desarrollo local rápido.
@@ -367,11 +366,13 @@ La Etapa 1 de Operación PAWS Real introduce un mecanismo crítico de "Kill Swit
 ### Problema de Infraestructura
 
 El envío de emails (especialmente códigos OTP) requería integración con RabbitMQ para:
+
 - Desacoplar el servicio de autenticación de la tarea de envío de email
 - Permitir reintentos automáticos si el servicio de email falla
 - Escalar el envío de notificaciones en producción
 
 Sin embargo, esto creaba un obstáculo para desarrolladores locales:
+
 - Instalación y configuración de RabbitMQ es pesada
 - Requiere conocimiento de colas y pub/sub
 - Ralentiza el ciclo de desarrollo (iniciar múltiples servicios)
@@ -403,11 +404,11 @@ import (
 
 func main() {
     godotenv.Load()
-    
+
     // KILL SWITCH: Decidir si usar RabbitMQ
     var mqClient *messaging.RabbitMQClient
     var err error
-    
+
     if os.Getenv("ENABLE_ASYNC_FEATURES") == "true" {
         mqClient, err = messaging.ConnectRabbitMQ(
             "amqp://guest:guest@rabbitmq:5672/",
@@ -422,11 +423,11 @@ func main() {
     } else {
         log.Println("[INFO] Async Features DESACTIVADAS - Modo sincrónico")
     }
-    
+
     // Inyectar mqClient (puede ser nil) en servicios
     otpService := services.NewOTPService(mqClient)
     authHandler := handlers.NewAuthHandler(otpService)
-    
+
     r := gin.Default()
     // ... resto de configuración
 }
@@ -435,6 +436,7 @@ func main() {
 #### Flujo por Modo
 
 **Modo Asincrónico (ENABLE_ASYNC_FEATURES=true)**:
+
 ```
 Usuario registra → AuthHandler.Register()
     → OTPService.GenerateOTP()
@@ -444,6 +446,7 @@ Usuario registra → AuthHandler.Register()
 ```
 
 **Modo Sincrónico (default)**:
+
 ```
 Usuario registra → AuthHandler.Register()
     → OTPService.GenerateOTP()
@@ -467,7 +470,7 @@ func NewOTPService(mq *messaging.RabbitMQClient) *OTPService {
 
 func (s *OTPService) GenerateOTP(email string) (string, error) {
     code := s.generateRandomCode(6)  // "123456"
-    
+
     if s.mqClient != nil {
         // Modo async: Publicar a cola
         err := s.mqClient.Publish("email_notifications", OTPEvent{
@@ -483,7 +486,7 @@ func (s *OTPService) GenerateOTP(email string) (string, error) {
         // Modo sync: Loguear directamente
         log.Printf("[DEV MODE] OTP generado para %s: %s", email, code)
     }
-    
+
     return code, nil
 }
 ```
@@ -493,21 +496,21 @@ func (s *OTPService) GenerateOTP(email string) (string, error) {
 La configuración de docker-compose.yml deliberadamente **NO incluye RabbitMQ**:
 
 ```yaml
-version: '3.8'
+version: "3.8"
 
 services:
   db:
     image: postgis/postgis:15-3.3
     # ...
-  
+
   redis:
     image: redis:alpine
     # ...
-  
+
   backend:
     build: .
     environment:
-      ENABLE_ASYNC_FEATURES: "false"  # Explícitamente desactivado
+      ENABLE_ASYNC_FEATURES: "false" # Explícitamente desactivado
     ports:
       - "8080:8080"
     # ... NO incluye RabbitMQ
@@ -586,6 +589,137 @@ curl -X POST http://localhost:8080/api/v1/auth/register \
 - **Rescatista Dashboard**: Backend puede escalar a async en producción sin cambios de código
 - **Chat Real-time**: Redis ya está disponible para pub/sub
 - **Producción**: Infraestructura preparada para full async con RabbitMQ
+
+## COMPLETADO EN ETAPA 8: Extensión a Infraestructura Cloud
+
+La Etapa 8 amplió la infraestructura local de Fase 0 permitiendo que el mismo código funcione tanto en desarrollo local como en producción cloud. Se mantuvo la compatibilidad con Docker Compose local mientras se agregó soporte para Supabase (PostgreSQL managed), Railway (backend cloud) y Vercel (frontend web).
+
+### Base de Datos Híbrida - Evolución de postgres.go
+
+En Fase 0, postgres.go conectaba solo a PostgreSQL local via docker-compose. Etapa 8 mejoró el módulo con detección automática:
+
+**Antes (Fase 0)**:
+
+```go
+// Hardcodeado para local
+dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s",
+    "localhost", "paws_user", "paws_secret_password", "paws_db", "5433", "disable")
+```
+
+**Después (Etapa 8)**:
+
+```go
+// Inteligente: detecta entorno automáticamente
+dsn := os.Getenv("DATABASE_URL")  // Prioridad: Supabase/Railway
+
+if dsn == "" {  // Fallback: Local
+    dsn = fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s",
+        os.Getenv("DB_HOST"),
+        os.Getenv("DB_USER"),
+        os.Getenv("DB_PASSWORD"),
+        os.Getenv("DB_NAME"),
+        os.Getenv("DB_PORT"),
+        sslMode)
+}
+```
+
+**Ventajas**:
+
+1. **Portabilidad**: Mismo código ejecuta en laptop (localhost:5433) y en Supabase (cloud)
+2. **Seguridad**: DATABASE_URL nunca se commitea (archivo .env en .gitignore)
+3. **Escalabilidad**: Supabase maneja réplicas, backups, SSL obligatorio
+4. **Connection Pooling**: Supabase pooler en puerto 6543 vs direct 5432 (resuelve IPv6 issues)
+
+### Infraestructura Local - Sin Cambios
+
+Docker Compose de Fase 0 permanece igual:
+
+```yaml
+# docker-compose.yml - Sigue funcionando para desarrollo local
+
+services:
+  postgres:
+    image: postgis/postgis:15-3.3
+    environment:
+      POSTGRES_USER: paws_user
+      POSTGRES_PASSWORD: paws_secret_password
+      POSTGRES_DB: paws_db
+    ports:
+      - "5433:5432"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  pgadmin:
+    image: dpage/pgadmin4
+    ports:
+      - "5050:80"
+```
+
+Cuando `DATABASE_URL` está vacío en .env, el código usa variables locales y conecta a `localhost:5433`. Sin cambios en Docker Compose o inicio de servicios.
+
+### Variables de Entorno - Estrategia Híbrida
+
+**.env Local (Desarrollo)**:
+
+```dotenv
+# Modo Local - Variables individuales
+DB_HOST=localhost
+DB_PORT=5433
+DB_USER=paws_user
+DB_PASSWORD=paws_secret_password
+DB_NAME=paws_db
+DB_SSL_MODE=disable
+
+# DATABASE_URL está vacío, por lo que postgres.go usa variables arriba
+DATABASE_URL=
+```
+
+**.env Producción (Railway)**:
+
+```dotenv
+# Modo Cloud - URL única de Supabase
+DATABASE_URL=postgresql://postgres.xyz:Password123@db.supabase.co:6543/postgres?pgbouncer=true
+
+# Variables locales ignoradas (DATABASE_URL tiene prioridad)
+DB_HOST=
+DB_USER=
+...
+```
+
+### Migraciones Automáticas - Funcionan en Ambos
+
+El código de Fase 0 ya usaba GORM AutoMigrate:
+
+```go
+// cmd/api/main.go
+err := database.DB.AutoMigrate(
+    &domain.User{},
+    &domain.UserProfile{},
+    &domain.Pet{},
+    // ... más modelos
+)
+```
+
+En Etapa 8, cuando se despliega a Railway con DATABASE_URL de Supabase:
+
+1. Railway ejecuta aplicación Go
+2. postgres.go conecta a Supabase (detecta DATABASE_URL)
+3. GORM ejecuta AutoMigrate()
+4. Crea/actualiza esquema en Supabase automáticamente
+5. No requiere scripts manuales o herramientas CLI
+
+**Ventajas**:
+
+- **Zero Downtime**: Migraciones son idempotentes (CREATE TABLE IF NOT EXISTS)
+- **Reproducible**: Mismo esquema en local y nube
+- **Versioned**: Si se agregan nuevos modelos en domain/, se migran automáticamente
+
+### Contexto Evolutivo
+
+Fase 0 estableció la estructura de infraestructura local. Etapa 8 expandió esa estructura a cloud manteniendo compatibilidad con local. El resultado es un sistema verdaderamente **cloud-native** que también funciona perfectamente en laptop sin cambios de código.
 
 ## Referencias y Documentación
 

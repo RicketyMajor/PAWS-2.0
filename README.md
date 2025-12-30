@@ -4834,6 +4834,436 @@ Flujo Correcto:
 3. **Prevención de Reincidencia**: Blacklist por RUN impide registro con mismo documento
 4. **Consistencia JSON**: Reporter y Reported siempre se cargan correctamente
 
+## Etapa 8: Hacia la Nube y el Mundo - Despliegue en Supabase, Railway y Vercel (Completada)
+
+La Etapa 8 marca el punto de inflexión donde PAWS abandona localhost y se despliega al mundo real con una arquitectura híbrida de tres servicios en la nube. Se implementó una base de datos cloud-first con Supabase, un backend API públicamente accesible en Railway, y una aplicación web en Vercel, con configuración inteligente que permite al código detectar automáticamente si está en desarrollo o producción.
+
+### 1. Base de Datos Híbrida - De PostgreSQL Local a Supabase Cloud
+
+**Migración de PostgreSQL**:
+
+En etapas anteriores, el proyecto usaba PostgreSQL en Docker local (puerto 5433 en docker-compose.yml). Etapa 8 mantiene esta capacidad pero agrega soporte para Supabase, un servicio PostgreSQL hosted en AWS con replicas globales.
+
+**Cambio en postgres.go - Detección Inteligente Local vs Nube**:
+
+```go
+// internal/platform/database/postgres.go
+
+func Connect() {
+	var dsn string
+
+	// 1. PRIORIDAD: Intentamos leer la Connection String completa (Estilo Supabase/Railway)
+	// Ejemplo: postgres://postgres:password@db.supabase.co:5432/postgres
+	dsn = os.Getenv("DATABASE_URL")
+
+	// 2. FALLBACK: Si no hay URL completa, construimos la cadena manualmente (Estilo Local/Docker)
+	if dsn == "" {
+		host := os.Getenv("DB_HOST")
+		user := os.Getenv("DB_USER")
+		password := os.Getenv("DB_PASSWORD")
+		dbName := os.Getenv("DB_NAME")
+		port := os.Getenv("DB_PORT")
+
+		sslMode := os.Getenv("DB_SSL_MODE")
+		if sslMode == "" {
+			sslMode = "disable"
+		}
+
+		dsn = fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s",
+			host, user, password, dbName, port, sslMode)
+
+		log.Println("Modo Local detectado: Usando variables individuales.")
+	} else {
+		log.Println("Modo Nube detectado: Usando DATABASE_URL.")
+	}
+
+	connection, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
+		PrepareStmt: false,
+	})
+	if err != nil {
+		log.Fatal("Error fatal conectando a la base de datos: ", err)
+	}
+
+	DB = connection
+	log.Println("Conexión a Base de Datos exitosa")
+}
+```
+
+**Lógica de Detección**:
+
+1. **Prioridad 1**: Busca variable `DATABASE_URL` (estilo Supabase/Railway)
+
+   - Formato: `postgresql://usuario:contraseña@host:puerto/basedatos`
+   - Ejemplo real: `postgresql://postgres.sfpgibalxrecscjcevrk:Password123@aws-0-us-west-2.pooler.supabase.com:6543/postgres?pgbouncer=true`
+   - Ventaja: Una sola variable, fácil de pasar en CI/CD o Railway dashboard
+
+2. **Fallback**: Si DATABASE_URL está vacía, construye DSN de variables individuales
+
+   - `DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_PORT`, `DB_SSL_MODE`
+   - Modo local (Docker Compose): Usa valores como `localhost`, `paws_user`, etc.
+   - Ventaja: Compatible con desarrollo sin cambiar código
+
+3. **SSL Mode**:
+   - Producción (Supabase): `sslmode=require` o `sslmode=verify-full` (seguro)
+   - Local (Docker): `sslmode=disable` (sin SSL, unsafe pero válido en localhost)
+
+**Ventajas de esta Estrategia**:
+
+- **Portabilidad**: Mismo código funciona en local y en nube sin cambios
+- **Seguridad**: DATABASE_URL no se commitea a git (.env está en .gitignore)
+- **Escalabilidad**: Supabase maneja réplicas, backups automáticos, SSL obligatorio
+- **Performance**: Supabase ofrece Connection Pooling (puerto 6543) para limitar conexiones
+
+**Connection Pooler - Solución al Problema IPv6 de Supabase**:
+
+Supabase requiere Connection Pooler para evitar problemas de timeout en infraestructuras modernas con IPv6. En vez de conectar directamente al puerto 5432, usamos puerto 6543 (Connection Pooler) que distribuye conexiones inteligentemente:
+
+```
+// OLD (sin pooler - problemas de timeout)
+Host: db.supabase.co:5432
+
+// NEW (con pooler - estable)
+Host: db.supabase.co:6543?pgbouncer=true
+```
+
+**Configuración en .env (Desarrollo Local)**:
+
+```dotenv
+# Modo local (Docker Compose)
+DB_HOST=localhost
+DB_PORT=5433
+DB_USER=paws_user
+DB_PASSWORD=paws_secret_password
+DB_NAME=paws_db
+DB_SSL_MODE=disable
+
+# DATABASE_URL está vacía, así que usa las variables arriba
+DATABASE_URL=
+```
+
+**Configuración en .env (Producción - Supabase)**:
+
+```dotenv
+# Modo nube (Supabase via Railway)
+DATABASE_URL=postgresql://postgres.sfpgibalxrecscjcevrk:YanoespistaShow123---@aws-0-us-west-2.pooler.supabase.com:6543/postgres?pgbouncer=true
+
+# Las variables abajo son ignoradas (DATABASE_URL tiene prioridad)
+# DB_HOST=
+# DB_USER=
+# ...
+```
+
+**Migraciones Automáticas en Nube**:
+
+Etapa 8 mantiene las migraciones automáticas en `main.go`:
+
+```go
+// cmd/api/main.go - Las migraciones se aplican automáticamente
+
+if err := database.DB.AutoMigrate(
+    &domain.User{},
+    &domain.UserProfile{},
+    &domain.Pet{},
+    &domain.Match{},
+    &domain.Message{},
+    &domain.Review{},
+    &domain.Report{},
+    &domain.BlacklistEntry{},
+); err != nil {
+    log.Fatal("Error en la migración de base de datos: ", err)
+}
+log.Println("Migración de base de datos completada")
+```
+
+Cuando el backend se despliega en Railway (con DATABASE_URL apuntando a Supabase):
+
+1. Backend conecta a Supabase exitosamente
+2. GORM ejecuta AutoMigrate()
+3. Crea/actualiza esquema en Supabase automáticamente
+4. No requiere scripts manuales o CLI herramientas
+
+### 2. Backend en Railway - API Pública Accesible
+
+**¿Qué es Railway?**
+
+Railway es una plataforma de despliegue que conecta tu repositorio GitHub, detecta que es una aplicación Go, la compila, la dockeriza y la despliega en servidores globales. El resultado es una URL pública como `https://paws-20-production.up.railway.app`.
+
+**Proceso de Despliegue**:
+
+1. **Conexión GitHub**: Railway accede a tu repositorio (OAuth)
+2. **Detección Automática**: Detecta `go.mod` → Aplicación Go
+3. **Compilación**: `go build` en el entorno de Railway
+4. **Dockerización**: Crea imagen Docker automáticamente
+5. **Despliegue**: Ejecuta contenedor en servidores de Railway
+6. **URL Pública**: Asigna dominio `*.up.railway.app` automáticamente
+
+**Variables de Entorno en Railway**:
+
+Railway proporciona dashboard donde configuras variables antes del despliegue:
+
+```
+PORT=8080                     # Puerto interno (Railway mapea a 443 HTTPS automáticamente)
+JWT_SECRET=your-secret-key    # Secreto para firmar JWTs
+DATABASE_URL=postgresql://... # Conexión a Supabase
+ENABLE_ASYNC_FEATURES=false   # Desactiva RabbitMQ si no disponible
+```
+
+**Flujo en Tiempo Real**:
+
+```
+Usuario en Frontend (web o app)
+    ↓
+Hace request a API
+    ↓
+URL: https://paws-20-production.up.railway.app/api/v1/...
+    ↓
+Railway recibe request en servidores cloud
+    ↓
+Backend (Go) procesa request
+    ↓
+Conecta a Supabase (DATABASE_URL)
+    ↓
+Responde JSON al usuario
+    ↓
+Frontend recibe y renderiza
+```
+
+**URLs Públicas Resultantes**:
+
+- Backend API: `https://paws-20-production.up.railway.app/api/v1`
+- Chat WebSocket: `wss://paws-20-production.up.railway.app/api/v1/chat/ws`
+- Health Check: `https://paws-20-production.up.railway.app/api/v1/health` (si existe endpoint)
+
+**Beneficios**:
+
+- **Accesible Globalmente**: Usuarios desde cualquier país pueden conectar
+- **SSL/TLS Automático**: Railway gestiona certificados HTTPS
+- **Escalado Automático**: Aumenta recursos si hay picos de tráfico
+- **Logs en Tiempo Real**: Dashboard de Railway muestra logs del backend
+- **CI/CD Integrado**: Cada push a GitHub trigger despliegue automático
+
+### 3. Frontend Web - De Flutter Mobile a Vercel
+
+**Transformación de App Móvil a Web**:
+
+Antes de Etapa 8, PAWS era solo aplicación Flutter Mobile (Android/iOS). Flutter soporta compilación a Web (HTML + JavaScript), permitiendo que el mismo código Dart funcione en navegadores.
+
+**Compilación a Web**:
+
+```bash
+# Generar código web (HTML/JS/CSS)
+flutter build web --release
+
+# Resultado en: app/build/web/
+# - index.html
+# - main.dart.js (Dart VM compilado a JavaScript)
+# - assets/
+# - canvaskit/ (runtime de Flutter para web)
+```
+
+**¿Qué es Vercel?**
+
+Vercel es una plataforma de hosting optimizada para aplicaciones web estáticas (HTML/CSS/JS) y dinámicas. Detecta tu repositorio, construye tu proyecto y lo despliega en CDN global. La aplicación está disponible en `https://paws.vercel.app` (o dominio personalizado).
+
+**Proceso de Despliegue**:
+
+1. **Conexión GitHub**: Vercel accede al repositorio
+2. **Detección Build**: Lee `app/pubspec.yaml` o detección automática
+3. **Build**: Ejecuta `flutter build web --release`
+4. **Artefactos**: Toma contenido de `app/build/web/`
+5. **Hosting**: Sube a CDN global de Vercel
+6. **URL Pública**: Asigna `*.vercel.app` automáticamente
+
+**Variables de Entorno en Vercel**:
+
+Vercel no ejecuta backend, solo sirve HTML/JS/CSS. Sin embargo, la aplicación web necesita saber dónde conectarse al backend. Se configura en el código:
+
+```dart
+// app/lib/core/constants/api_constants.dart
+
+class ApiConstants {
+  static const String baseUrl = kReleaseMode
+      ? 'https://paws-20-production.up.railway.app/api/v1'  // Producción (Railway)
+      : 'http://localhost:8080/api/v1';                    // Desarrollo local
+}
+```
+
+En Vercel, `kReleaseMode` es siempre `true` (compilación release), así que conecta al backend en Railway.
+
+### 4. Configuración Inteligente - ApiConstants y EnvironmentConfig
+
+**Problema**: Durante desarrollo local, el código necesita hablar con `localhost:8080`. En producción, debe hablar con `https://paws-20-production.up.railway.app`. ¿Cómo sabe el código cuál usar?
+
+**Solución 1: kReleaseMode**
+
+```dart
+// app/lib/core/constants/api_constants.dart
+
+import 'package:flutter/foundation.dart';
+
+class ApiConstants {
+  static const String baseUrl = kReleaseMode
+      ? 'https://paws-20-production.up.railway.app/api/v1'  // Compilación release (Vercel)
+      : 'http://localhost:8080/api/v1';                    // Debug (desarrollo local)
+}
+```
+
+- **kReleaseMode = true**: Modo release (`flutter run --release` o compilación Vercel)
+- **kReleaseMode = false**: Modo debug (`flutter run` normal)
+
+**Solución 2: EnvironmentConfig**
+
+Para aplicaciones móviles (Android/iOS), el código también usa `EnvironmentConfig`:
+
+```dart
+// app/lib/core/config/environment_config.dart
+
+import 'package:flutter/foundation.dart';
+import 'dart:io';
+
+class EnvironmentConfig {
+  static String get baseUrl {
+    if (kIsWeb) {
+      // Web (Vercel o localhost:3000)
+      return 'http://localhost:8080/api/v1';  // Configurado para desarrollo local
+      // En Vercel, reemplazaría con Railway URL
+    } else if (Platform.isAndroid) {
+      // Android emulator
+      return 'http://10.0.2.2:8080/api/v1';
+    } else {
+      // iOS simulator, desktop, etc.
+      return 'http://localhost:8080/api/v1';
+    }
+  }
+
+  static String get wsUrl {
+    if (kIsWeb) {
+      return 'ws://localhost:8080/api/v1';
+    } else if (Platform.isAndroid) {
+      return 'ws://10.0.2.2:8080/api/v1';
+    } else {
+      return 'ws://localhost:8080/api/v1';
+    }
+  }
+}
+```
+
+### 5. Flujo Completo - De Desarrollo a Producción
+
+**Escenario 1: Desarrollo Local**
+
+```
+Máquina del Desarrollador (Alonso)
+│
+├─ Backend: Backend Go ejecutándose en http://localhost:8080
+│  ├─ Conecta a: PostgreSQL en Docker Compose (localhost:5433)
+│  └─ Lee: .env local con DB_HOST=localhost
+│
+├─ Frontend (App Móvil): flutter run
+│  ├─ Conecta a: http://10.0.2.2:8080 (emulador Android)
+│  └─ kReleaseMode = false
+│
+└─ Frontend (Web local): flutter run -d web
+   ├─ Conecta a: http://localhost:8080
+   └─ Corre en: http://localhost:54321 (desarrollo)
+
+Flujo de Request:
+  User toca botón "Login" en App
+    → App: POST http://10.0.2.2:8080/api/v1/auth/login
+    → Backend (Go): Verifica credenciales contra BD local
+    → Responde JWT
+    → App almacena en FlutterSecureStorage
+    → App: GET http://10.0.2.2:8080/api/v1/matches/candidates
+    → Backend retorna lista de mascotas
+    → App renderiza swipe deck
+```
+
+**Escenario 2: Producción (Vercel + Railway)**
+
+```
+Internet
+│
+├─ Usuario abre navegador
+│  └─ URL: https://paws.vercel.app
+│
+├─ Vercel (CDN Global)
+│  ├─ Sirve: HTML + JavaScript (Flutter compilado)
+│  ├─ Se ejecuta en: Navegador del usuario
+│  └─ JavaScript hace requests a...
+│
+└─ Railway Backend (Nube)
+   ├─ URL: https://paws-20-production.up.railway.app/api/v1
+   ├─ Conecta a: Supabase (postgresql://...)
+   └─ Responde JSON
+
+Flujo de Request (Producción):
+  User abre https://paws.vercel.app en navegador
+    → Vercel sirve HTML/JS (Flutter web app)
+    → App carga en navegador
+    → User toca botón "Login"
+    → App: POST https://paws-20-production.up.railway.app/api/v1/auth/login
+    → Railway Backend: Autentica contra Supabase
+    → Responde JWT (firmado con JWT_SECRET de Railway)
+    → App almacena JWT en localStorage/sessionStorage
+    → App: GET https://paws-20-production.up.railway.app/api/v1/matches/candidates
+    → Backend retorna lista de mascotas
+    → App renderiza swipe deck
+```
+
+### 6. Archivo de Configuración Resultante
+
+**Backend (.env en Railway)**:
+
+```dotenv
+# ETAPA 8: Configuración Producción en Railway
+PORT=8080
+JWT_SECRET=secreto_super_seguro_paws_2025
+
+# Supabase Cloud
+DATABASE_URL=postgresql://postgres.sfpgibalxrecscjcevrk:YanoespistaShow123---@aws-0-us-west-2.pooler.supabase.com:6543/postgres?pgbouncer=true
+
+# Async Features (desactivar si RabbitMQ no disponible)
+ENABLE_ASYNC_FEATURES=false
+```
+
+**Frontend (.dart constant)**:
+
+```dart
+// app/lib/core/constants/api_constants.dart
+class ApiConstants {
+  static const String baseUrl = kReleaseMode
+      ? 'https://paws-20-production.up.railway.app/api/v1'
+      : 'http://localhost:8080/api/v1';
+}
+```
+
+### 7. Beneficios de Etapa 8
+
+**Para Desarrollo**:
+
+- Mismo código backend + frontend en desarrollo y producción
+- Cambios de configuración mínimos (solo URLs)
+- Fácil testear producción localmente sin cambios de código
+
+**Para Usuarios Finales**:
+
+- Demo en vivo sin instalaciones: `https://paws.vercel.app`
+- Acceso global desde cualquier navegador
+- API backend accesible desde cualquier cliente (mobile, web, desktop)
+- Escalado automático en Railway si hay picos de tráfico
+
+**Para Seguridad**:
+
+- Credenciales (DATABASE_URL, JWT_SECRET) nunca en git
+- SSL/TLS automático en ambos Vercel (HTTPS) y Railway (HTTPS)
+- Supabase proporciona backups automáticos y encriptación en tránsito
+
+**Para Portafolio**:
+
+- Enlace en vivo para mostrar en entrevistas/ofertas
+- "Live Demo" sin requierreque entrevistador instale nada
+- Arquitectura escalable demostrando conocimiento de DevOps
+
 ## Acceso a Servicios
 
 ### Docker Compose
@@ -5026,9 +5456,10 @@ Este proyecto se desarrolla en fases:
 - **Fase 10** (Completada): Chat persistente, filtro "Evil PAWS" contra estafas, sistema de reputación 1-5 estrellas
 - **Etapa 5** (Completada): Identidad real (foto, nombre, bio, teléfono), geolocalización con permisos GPS, MainLayout con navegación inferior
 - **Etapa 6** (Completada): Robustez en handlers (type-safe JWT), ChatScreen con menús contextuales, SocialRepository centralizada
-- **Etapa 7** (Completada): RBAC administrativo (middleware de roles), Panel de Justicia para admins, autopromo ción automática, corrección de identidad en reportes
-- **Fase 11** (Planificada): Integración de closures, conclusión de adopciones, feedback final
-- **Fase 12** (Planificada): Machine Learning para recomendaciones, scoring dinámico, predicción de éxito
+- **Etapa 7** (Completada): RBAC administrativo (middleware de roles), Panel de Justicia para admins, autopromoci\u00f3n autom\u00e1tica, correcci\u00f3n de identidad en reportes
+- **Etapa 8** (Completada): Despliegue cloud (Supabase, Railway, Vercel), base de datos h\u00edbrida local/nube, frontend web, API p\u00fablica global
+- **Fase 11** (Planificada): Integraci\u00f3n de closures, conclusi\u00f3n de adopciones, feedback final
+- **Fase 12** (Planificada): Machine Learning para recomendaciones, scoring din\u00e1mico, predicci\u00f3n de \u00e9xito
 
 ## Documentación Adicional
 
@@ -5046,7 +5477,8 @@ Este proyecto se desarrolla en fases:
 - [Fase 10](documentation/Fase-10.md): Chat persistente, filtro "Evil PAWS", sistema de reputación comunitaria
 - **Etapa 5**: Identidad real (foto, nombre, bio, teléfono), geolocalización con GPS, MainLayout (integrada en [Fase-3](documentation/Fase-3.md), [Fase-5](documentation/Fase-5.md), y [Fase-9](documentation/Fase-9.md))
 - **Etapa 6**: Blindsiding seguridad en handlers (type-safe JWT), integración UI para reportes y reseñas (integrada en [Fase-8](documentation/Fase-8.md) y [Fase-10](documentation/Fase-10.md))
-- **Etapa 7**: RBAC y panel administrativo, autopromo ción de admins, corrección de identidad en reportes (integrada en [Fase-1](documentation/Fase-1.md), [Fase-5](documentation/Fase-5.md), y [Fase-8](documentation/Fase-8.md))
+- **Etapa 7**: RBAC y panel administrativo, autopromoci\u00f3n de admins, correcci\u00f3n de identidad en reportes (integrada en [Fase-1](documentation/Fase-1.md), [Fase-5](documentation/Fase-5.md), y [Fase-8](documentation/Fase-8.md))
+- **Etapa 8**: Despliegue cloud e infraestructura global (integrada en [Fase-0](documentation/Fase-0.md), [Fase-5](documentation/Fase-5.md), y nueva [Fase-12](documentation/Fase-12.md) para detalles de despliegue)
 
 ## Notas Arquitectónicas
 
@@ -5070,5 +5502,10 @@ Este proyecto se desarrolla en fases:
 - **Autopromoción Admin (Etapa 7)**: Seeder en main.go detecta email específico (alonso.vera@mail.udp.cl) y promueve automáticamente a admin al arrancar. Sin endpoints administrativos, determinista, recuperable con restart.
 - **Panel de Justicia (Etapa 7)**: AdminDashboardScreen en Flutter lista reportes con Preload de información de usuarios (Reporter, Reported). Permite bans manuales con motivo documentado. Solo visible a role="admin". Refleja cambios en tiempo real con \_refresh().
 - **Corrección de Identidad (Etapa 7)**: domain.Report incluye relaciones foreignKey a Reporter y Reported users. GetAllReports() usa Preload() para cargar información completa. BanUserManual() busca user por ID real (no fantasma como 999), previene bans erróneos.
+- **Base de Datos Híbrida (Etapa 8)**: postgres.go detecta automáticamente si está en modo local (variables individuales DB_HOST, DB_USER, etc.) o nube (DATABASE_URL). Connection Pooler de Supabase (puerto 6543) resuelve problemas IPv6. Migraciones automáticas en GORM funcionan en ambos entornos.
+- **Backend Cloud (Etapa 8)**: Railway conecta repositorio GitHub, compila Go automáticamente, dockeriza, y despliega con URL pública (paws-20-production.up.railway.app). Variables de entorno (JWT_SECRET, DATABASE_URL) configurables en dashboard. SSL/TLS automático, logs en tiempo real.
+- **Frontend Web (Etapa 8)**: Flutter compila a web (HTML/JS/CSS). Vercel deploya aplicación estática desde app/build/web/ con CDN global. ApiConstants detecta kReleaseMode para switchear entre localhost (desarrollo) y Railway (producción). Mismo código Dart para mobile y web.
+- **Smart Configuration (Etapa 8)**: Uso de kReleaseMode en Dart y EnvironmentConfig para detección automática de plataforma/entorno. En desarrollo local usa localhost:8080, en Android emulator usa 10.0.2.2:8080, en web usa ApiConstants con URL de Railway. Sin hardcoding de URLs.
+- **DevOps Pipeline (Etapa 8)**: Flujo integrado: push a GitHub → Railway auto-deploya backend, Vercel auto-deploya frontend. Base de datos en Supabase con backups automáticos. Escalado automático de Railway. No requiere CI/CD manual (Fase 7) por ser PaaS.
 
 ## Autor
