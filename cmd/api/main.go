@@ -124,6 +124,7 @@ func main() {
 	// Worker solo arranca si hay conexión real
 	if mqClient != nil {
 		workers.StartEmailConsumer(mqClient, emailClient)
+		workers.StartNotificationConsumer(mqClient, database.DB)
 	}
 
 	
@@ -143,10 +144,10 @@ func main() {
 	identityService := services.NewIdentityService()
 
 	reportService   := services.NewReportService(database.DB, authService)
-	matchService    := services.NewMatchService(database.DB, petService)
+	matchService := services.NewMatchService(database.DB, petService, mqClient)
 
 	// WebSocket Hub
-	hub := httpTransport.NewHub(chatService) 
+	hub := httpTransport.NewHub(chatService, mqClient)
 	go hub.Run()
 
 	// =========================================================================
@@ -163,6 +164,7 @@ func main() {
 	identityHandler := httpTransport.NewIdentityHandler(identityService)
 	wsHandler       := httpTransport.NewWSHandler(hub)
 	adminHandler    := httpTransport.NewAdminHandler(reportService)
+	notificationHandler := httpTransport.NewNotificationHandler(userService)
 
 	// =========================================================================
 	// 4. RUTAS & MIDDLEWARE
@@ -204,6 +206,7 @@ func main() {
 			protected.POST("/pets", petHandler.Create)
 			protected.POST("/files/upload", uploadHandler.Upload)
 			protected.DELETE("/pets/:id", petHandler.Delete)
+			protected.POST("/notifications/token", notificationHandler.UpdateToken)
 
 			match := protected.Group("/matches")
 			{

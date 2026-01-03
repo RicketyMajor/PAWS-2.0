@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/services"
+	"github.com/RicketyMajor/PAWS-2.0/internal/infrastructure/messaging" // <--- IMPORTAR
 )
 
 // InputMessage: Lo que envía el Frontend (Flutter)
@@ -15,37 +16,36 @@ type InputMessage struct {
 
 // OutputMessage: Lo que enviamos de vuelta al Frontend
 type OutputMessage struct {
-	Type    string      `json:"type"` // "new_message", "error", etc.
+	Type    string      `json:"type"` 
 	Payload interface{} `json:"payload"`
 }
 
 type Hub struct {
-	// Mapa de Clientes: UserID -> Puntero al Cliente
-	// Esto nos permite buscar rápidamente "¿Dónde está conectado Juan?"
 	clients map[uint]*Client
-
-	// Inyectamos el servicio para guardar en BD
 	chatService *services.ChatService
+	
+	// --- NUEVO: Cliente RabbitMQ ---
+	mqClient *messaging.RabbitMQClient 
 
-	// Canales
-	broadcast  chan *ClientMessageWrapper // Canal interno modificado
+	broadcast  chan *ClientMessageWrapper
 	register   chan *Client
 	unregister chan *Client
 }
 
-// Wrapper para saber quién envió el mensaje crudo
 type ClientMessageWrapper struct {
 	Client  *Client
 	Message []byte
 }
 
-func NewHub(chatService *services.ChatService) *Hub {
+// --- ACTUALIZAR CONSTRUCTOR ---
+func NewHub(chatService *services.ChatService, mq *messaging.RabbitMQClient) *Hub {
 	return &Hub{
 		broadcast:   make(chan *ClientMessageWrapper),
 		register:    make(chan *Client),
 		unregister:  make(chan *Client),
 		clients:     make(map[uint]*Client),
 		chatService: chatService,
+		mqClient:    mq, // Inyección
 	}
 }
 
@@ -53,7 +53,6 @@ func (h *Hub) Run() {
 	for {
 		select {
 		case client := <-h.register:
-			// Registramos al usuario por su ID
 			h.clients[client.userID] = client
 			log.Printf("Usuario %d conectado. Total online: %d", client.userID, len(h.clients))
 
@@ -65,46 +64,76 @@ func (h *Hub) Run() {
 			}
 
 		case wrapper := <-h.broadcast:
-			// AQUÍ PROCESAMOS EL MENSAJE ENTRANTE
 			h.handleMessage(wrapper.Client, wrapper.Message)
 		}
 	}
 }
 
 func (h *Hub) handleMessage(sender *Client, msgBytes []byte) {
-	// 1. Parsear el JSON que viene de Flutter
+	// 1. Parsear
 	var input InputMessage
 	if err := json.Unmarshal(msgBytes, &input); err != nil {
 		log.Printf("Error JSON: %v", err)
 		return
 	}
 
-	// 2. Guardar en Base de Datos (Persistencia)
+	// 2. Guardar en BD
 	savedMsg, receiverID, err := h.chatService.SaveMessage(input.MatchID, sender.userID, input.Content)
 	if err != nil {
-		// Opcional: Enviar error al remitente
 		sender.sendJSON("error", map[string]string{"message": err.Error()})
 		return
 	}
 
-	// 3. Preparar respuesta para el Frontend
+	// 3. Preparar respuesta
 	response := OutputMessage{
 		Type:    "new_message",
-		Payload: savedMsg, // Enviamos el objeto Message completo con ID y timestamp
+		Payload: savedMsg,
 	}
 
-	// 4. Enrutamiento Inteligente (Routing)
+	// 4. Enrutamiento Inteligente + Notificaciones
 	
-	// A) Enviar al DESTINATARIO (si está conectado)
-	if receiver, ok := h.clients[receiverID]; ok {
-		receiver.sendJSON(response.Type, response.Payload)
-	}
-
-	// B) Enviar confirmación al REMITENTE (para que pinte el doble check o actualice ID)
+	// A) Enviar confirmación al REMITENTE (siempre)
 	sender.sendJSON(response.Type, response.Payload)
+
+	// B) Intentar enviar al DESTINATARIO
+	if receiver, isOnline := h.clients[receiverID]; isOnline {
+		// CASO 1: Está ONLINE (Conectado al Socket) -> Enviar en vivo
+		receiver.sendJSON(response.Type, response.Payload)
+	} else {
+		// CASO 2: Está OFFLINE -> Enviar Notificación Push (RabbitMQ) 
+		h.sendPushNotification(receiverID, sender.userID, input.Content)
+	}
 }
 
-// Helper para enviar JSON bonito
+// --- NUEVA FUNCIÓN PRIVADA PARA NOTIFICAR ---
+func (h *Hub) sendPushNotification(receiverID, senderID uint, content string) {
+	if h.mqClient == nil {
+		return 
+	}
+
+	// Obtenemos nombre del remitente (Opcional, podrías consultarlo al userService si quisieras ser más preciso,
+	// pero por rendimiento podemos poner "Nuevo Mensaje" o hacer una query rápida).
+	// Para MVP rápido:
+	
+	event := services.NotificationEvent{
+		UserID: receiverID,
+		Title:  "Nuevo Mensaje",
+		Body:   content, // "Hola, ¿cómo estás?"
+		Type:   "message",
+	}
+
+	body, _ := json.Marshal(event)
+	
+	// Publicar a la cola 'push_notifications' (la misma que usaste para Match)
+	err := h.mqClient.Publish("push_notifications", body)
+	if err != nil {
+		log.Printf("Error encolando notificación chat: %v", err)
+	} else {
+		log.Printf("Notificación de chat encolada para usuario %d", receiverID)
+	}
+}
+
+// Helper
 func (c *Client) sendJSON(typeMsg string, payload interface{}) {
 	msg := OutputMessage{Type: typeMsg, Payload: payload}
 	bytes, _ := json.Marshal(msg)

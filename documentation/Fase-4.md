@@ -682,6 +682,386 @@ c.Send <- []byte("Mensaje bloqueado por sistema de seguridad")
 | gorilla/websocket   | v1.5.3  | Protocolo WebSocket          | Fase 4       |
 | redis/go-redis      | v9.17.2 | Cliente Redis                | Fase 4       |
 
+## COMPLETADO EN ETAPA 11: Hub Inteligente, Enrutamiento por Roles y Persistencia Garantizada
+
+### Introducción a Etapa 11 en Fase-4
+
+La Etapa 11 transforma el Hub genérico de Fase 4 en un sistema de routing inteligente que distingue roles (Adoptante vs Rescatista) y garantiza persistencia de mensajes en PostgreSQL antes de difundirse. Esta etapa convierte el chat de un sistema de distribución ciega a uno consciente del contexto y persistente.
+
+### Cambios Arquitectónicos en el Hub
+
+**Antes (Fase 4): Hub Distribuidor Ciego**
+
+```go
+type Hub struct {
+    clients    map[*Client]bool  // Todos los clientes
+    broadcast  chan []byte        // Broadcast a TODOS
+}
+
+func (h *Hub) Run() {
+    for message := range h.broadcast {
+        for client := range h.clients {
+            client.send <- message  // Enviar a todos
+        }
+    }
+}
+```
+
+Problema: No distingue a quién enviar. Un mensaje del Adoptante llega también a otros adoptantes del mismo match.
+
+**Ahora (Etapa 11): Hub con Routing Inteligente**
+
+```go
+type Hub struct {
+    // Mapa de Usuarios: UserID -> Cliente (búsqueda O(1))
+    clients map[uint]*Client
+
+    // Wrapper para saber quién envió el mensaje
+    broadcast  chan *ClientMessageWrapper
+    chatService *services.ChatService  // Inyección de servicio
+}
+
+type ClientMessageWrapper struct {
+    Client  *Client
+    Message []byte
+}
+
+func (h *Hub) Run() {
+    for wrapper := <-h.broadcast {
+        // Procesamiento inteligente del mensaje
+        h.handleMessage(wrapper.Client, wrapper.Message)
+    }
+}
+```
+
+Mejora: Conocemos al remitente y podemos tomar decisiones de enrutamiento basadas en roles.
+
+### Método handleMessage: Enrutamiento Inteligente
+
+```go
+func (h *Hub) handleMessage(sender *Client, msgBytes []byte) {
+    // 1. PARSEAR MENSAJE ENTRANTE
+    var input InputMessage
+    if err := json.Unmarshal(msgBytes, &input); err != nil {
+        log.Printf("Error JSON: %v", err)
+        return
+    }
+
+    // 2. GUARDAR EN BASE DE DATOS Y OBTENER RECEIVER_ID
+    // SaveMessage retorna ahora dos valores:
+    // - savedMsg: Mensaje guardado en BD (con ID y timestamp)
+    // - receiverID: ID automático del destinatario (basado en roles)
+    savedMsg, receiverID, err := h.chatService.SaveMessage(
+        input.MatchID,
+        sender.userID,
+        input.Content,
+    )
+    if err != nil {
+        // Si falla validación, enviar error solo al remitente
+        sender.sendJSON("error", map[string]string{"message": err.Error()})
+        return
+    }
+
+    // 3. PREPARAR RESPUESTA CON PROTOCOLO JSON
+    response := OutputMessage{
+        Type:    "new_message",
+        Payload: savedMsg,  // Incluye ID, timestamp, sender_id
+    }
+
+    // 4. ENRUTAMIENTO INTELIGENTE (PUNTO CLAVE)
+
+    // A) Enviar al DESTINATARIO si está conectado
+    if receiver, ok := h.clients[receiverID]; ok {
+        receiver.sendJSON(response.Type, response.Payload)
+    }
+    // Si no está conectado, el mensaje ya está en BD para recuperarlo después
+
+    // B) Enviar confirmación al REMITENTE (doble check)
+    sender.sendJSON(response.Type, response.Payload)
+}
+
+// Helper para enviar JSON estructurado
+func (c *Client) sendJSON(typeMsg string, payload interface{}) {
+    msg := OutputMessage{Type: typeMsg, Payload: payload}
+    bytes, _ := json.Marshal(msg)
+    c.send <- bytes
+}
+```
+
+**Flujo de Enrutamiento**:
+
+1. Usuario A (Adoptante, ID=5) envía mensaje en Match 1
+2. HandleMessage() llama SaveMessage(1, 5, "¿Cuándo nos vemos?")
+3. ChatService determina: Sender=Adoptante → Receiver=Rescatista (ID=3)
+4. Hub busca en clients[3] → encontrado, envía a ese socket
+5. Cliente B (Rescatista, ID=3) recibe el mensaje en tiempo real
+6. Ambos tienen confirmación (ID de BD, timestamp) para rendering correcto
+
+### ChatService: Lógica de Routing por Roles
+
+```go
+func (s *ChatService) SaveMessage(matchID, senderID uint, content string) (*domain.Message, uint, error) {
+    // 1. Validación de contenido
+    if s.containsForbiddenContent(content) {
+        return nil, 0, errors.New("mensaje bloqueado por contenido inapropiado")
+    }
+
+    // 2. Obtener Match con relaciones
+    var match domain.Match
+    // CLAVE: Preload("Pet") para acceder al UserID del rescatista (dueño de mascota)
+    if err := s.db.Preload("Pet").First(&match, matchID).Error; err != nil {
+        return nil, 0, errors.New("match no encontrado")
+    }
+
+    // Validar que Match esté aceptado (ambas partes están de acuerdo)
+    if match.Status != domain.MatchAccepted {
+        return nil, 0, errors.New("no puedes chatear en un match no aceptado")
+    }
+
+    // 3. DETERMINAR RECEIVER_ID BASADO EN ROLES
+    // En un Match:
+    // - AdopterID: Persona que busca adoptar
+    // - Pet.UserID: Rescatista (dueño de la mascota)
+
+    adopterID := match.AdopterID      // Ejemplo: 5
+    rescuerID := match.Pet.UserID      // Ejemplo: 3
+
+    var receiverID uint
+
+    if senderID == adopterID {
+        // Si escribe el adoptante (5), recibe el rescatista (3)
+        receiverID = rescuerID
+    } else if senderID == rescuerID {
+        // Si escribe el rescatista (3), recibe el adoptante (5)
+        receiverID = adopterID
+    } else {
+        // Ni adoptante ni rescatista → error (seguridad)
+        return nil, 0, errors.New("no perteneces a este match")
+    }
+
+    // 4. GUARDAR MENSAJE
+    msg := domain.Message{
+        MatchID:  matchID,
+        SenderID: senderID,
+        Content:  content,
+        IsRead:   false,
+    }
+
+    if err := s.db.Create(&msg).Error; err != nil {
+        return nil, 0, errors.New("error al guardar mensaje")
+    }
+
+    // 5. RETORNAR MENSAJE CON RECEIVER_ID
+    // HandleMessage() usa este receiverID para enrutar
+    return &msg, receiverID, nil
+}
+```
+
+**Beneficios de Este Enfoque**:
+
+- **Seguridad**: Solo dos usuarios pueden escribir en un Match
+- **Privacidad**: Un adoptante A no ve mensajes de adoptante B en el mismo rescatista
+- **Escalabilidad**: La lógica de routing está centralizada (fácil de mantener)
+- **Auditoría**: SenderID y ReceiverID están en BD, trazable
+
+### Protocolo de Comunicación (JSON Estructurado)
+
+**Desde Frontend a Backend**:
+
+```json
+{
+  "match_id": 1,
+  "content": "¿Cuándo podemos reunirnos?"
+}
+```
+
+**Desde Backend a Frontend**:
+
+```json
+{
+  "type": "new_message",
+  "payload": {
+    "id": 42,
+    "match_id": 1,
+    "sender_id": 5,
+    "content": "¿Cuándo podemos reunirnos?",
+    "is_read": false,
+    "created_at": "2025-01-03T14:30:00Z"
+  }
+}
+```
+
+Frontend usa `payload.id` y `payload.created_at` para:
+
+- Actualizar el mensaje local (antes solo tenía timestamp del cliente)
+- Evitar duplicados cuando llega confirmación del servidor
+- Ordenar mensajes correctamente por hora del servidor (no cliente)
+
+### Persistencia Garantizada: El Ciclo de Vida de un Mensaje
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Etapa 11: Ciclo de Vida Completo de un Mensaje                 │
+└─────────────────────────────────────────────────────────────────┘
+
+1. CLIENTE ENVÍA (Adoptante)
+   └─ WebSocket: {"match_id": 1, "content": "Hola"}
+
+2. READPUMP RECIBE
+   └─ Valida: No es texto vacío, no tiene malas palabras
+   └─ Envía al Hub: h.broadcast <- &ClientMessageWrapper{client: A, msg: [...]}
+
+3. HUB PROCESA
+   └─ handleMessage():
+      1. Parse JSON: match_id=1, content="Hola"
+      2. Llamar ChatService.SaveMessage(1, userID_A, "Hola")
+      3. Base de datos: INSERT INTO messages (...) → ID=500, created_at=2025-01-03T14:30:00Z
+      4. Determinar receiver: A es adoptante → receiver=rescatista (ID=3)
+      5. Retornar savedMsg (con ID y timestamp de BD)
+
+4. HUB ENRUTA
+   └─ Si clients[3] existe (rescatista conectado):
+      └─ Envía: {"type": "new_message", "payload": {id: 500, ...}}
+   └─ Si clients[3] NO existe:
+      └─ Mensaje sigue en BD (recuperable después)
+   └─ Envía confirmación a remitente: {"type": "new_message", "payload": {id: 500, ...}}
+
+5. PERSISTENCIA GARANTIZADA
+   └─ Incluso si servidor se cae AQUÍ → Mensaje está en PostgreSQL
+   └─ Si cliente se desconecta → Recuperable por GetHistory()
+   └─ Si rescatista se conecta después → Ve el historial completo
+
+6. FRONTEND RECIBE (Ambos lados)
+   └─ Remitente: Reemplaza su mensaje local (optimista) con confirmación
+   └─ Destinatario: Agrega a lista (realtime)
+   └─ Ambos muestran el mismo timestamp (hora del servidor)
+```
+
+### Cambios en el Frontend: Recepción Inteligente
+
+El ChatBloc en Flutter ahora procesa mensajes que llegan del servidor con estructura JSON:
+
+```dart
+_wsSubscription = repository.messages.listen((data) {
+    try {
+        final decoded = jsonDecode(data);
+
+        // Protocolo versión Etapa 11
+        if (decoded['type'] == 'new_message') {
+            final payload = decoded['payload'];
+
+            // Solo procesar si es del Match actual
+            if (payload['match_id'] == _currentMatchId) {
+                // Construir ChatMessage desde servidor (con ID real y timestamp)
+                final newMsg = ChatMessage.fromJson(payload, _myUserId);
+
+                // Determinar si es mío o del otro
+                // isMe = (sender_id == _myUserId)
+
+                add(_ReceiveMessageEvent(newMsg));
+            }
+        } else if (decoded['type'] == 'error') {
+            // Manejar errores de validación
+            print("Error: ${decoded['payload']['message']}");
+        }
+    } catch (e) {
+        print("Error parseando mensaje WS: $e");
+    }
+});
+```
+
+Ventajas:
+
+- `payload.id` permite deduplicación (si llega dos veces, mismo ID)
+- `payload.created_at` garantiza orden correcto (aunque cliente esté desincronizado)
+- `payload.sender_id` clarifica quién envió (no asumimos basado en flujo)
+
+### Tabla de Actores en un Match
+
+Para entender el enrutamiento inteligente:
+
+| Campo                 | Tipo | Quién    | Rol                         |
+| --------------------- | ---- | -------- | --------------------------- |
+| match.AdopterID       | uint | Juan     | Busca adoptar               |
+| match.Pet.UserID      | uint | María    | Dueña de "Max" (rescatista) |
+| message.SenderID      | uint | Variable | Quien escribió              |
+| receiverID (derivado) | uint | Variable | A quién se envía            |
+
+**Ejemplos**:
+
+- Juan (AdopterID=5) escribe → Send to receiver=María (Pet.UserID=3)
+- María escribe → Send to receiver=Juan (AdopterID=5)
+- Pedro (ID=999) intenta escribir → Error (no es ni Juan ni María)
+
+### Mejoras de Seguridad en Etapa 11
+
+1. **Authenticity**: Solo usuarios en el Match pueden escribir
+   - Validación: senderID debe ser AdopterID o Pet.UserID
+2. **Confidentiality**: Mensajes privados entre dos usuarios
+
+   - Enrutamiento específico, no broadcast a todos
+
+3. **Integrity**: Mensajes no se pierden
+
+   - Persistencia garantizada en PostgreSQL antes de enviar
+
+4. **Non-repudiation**: Usuario no puede negar que escribió
+   - SenderID está registrado con timestamp
+
+### Diferencias Clave: Fase 4 vs Etapa 11
+
+| Aspecto           | Fase 4               | Etapa 11                       |
+| ----------------- | -------------------- | ------------------------------ |
+| Mapeo de Clientes | Por socket (ciego)   | Por UserID (identificado)      |
+| Routing           | Broadcast a todos    | Inteligente por roles          |
+| Persistencia      | Antes del Hub        | ANTES de enrutar (garantizada) |
+| Validación        | En ReadPump          | En ChatService (BD-aware)      |
+| Protocolo         | Bytes puros          | JSON estructurado              |
+| Receiver          | Todos los conectados | Un usuario específico          |
+| Base de datos     | Opcional, después    | Obligatorio, antes             |
+
+### Flujo de Desconexión en Etapa 11
+
+Cuando el rescatista se desconecta:
+
+```go
+case client := <-h.unregister:
+    if _, ok := h.clients[client.userID]; ok {
+        delete(h.clients, client.userID)
+        close(client.send)
+        log.Printf("Usuario %d desconectado. Total online: %d",
+            client.userID, len(h.clients))
+    }
+```
+
+Impacto:
+
+- Cliente se registra de h.clients
+- Futuras llamadas a handleMessage() buscarán clients[receiverID] y no encontrarán
+- Mensajes se guardan en BD igual (no se pierden)
+- Cuando se reconecte, GetHistory() recupera todo
+
+### Testing de Etapa 11
+
+Para verificar enrutamiento inteligente:
+
+```bash
+# Terminal 1: Conectar como Adoptante (ID=5)
+wscat -c "ws://localhost:8080/api/v1/ws" \
+  -H "Authorization: Bearer TOKEN_ADOPTANTE"
+> {"match_id": 1, "content": "Hola rescatista"}
+
+# Terminal 2: Conectar como Rescatista (ID=3)
+wscat -c "ws://localhost:8080/api/v1/ws" \
+  -H "Authorization: Bearer TOKEN_RESCATISTA"
+
+# Resultado esperado:
+# Adoptante: Recibe confirmación con {type: "new_message", payload: {id: 500, ...}}
+# Rescatista: Recibe mensaje en tiempo real
+# Base de datos: SELECT * FROM messages WHERE match_id=1
+#   └─ Contiene el mensaje con created_at del servidor
+```
+
 ## Referencias
 
 - Gorilla WebSocket: https://github.com/gorilla/websocket

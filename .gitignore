@@ -9,3 +9,7 @@
 # Directorios de IDEs
 .vscode/
 .idea/
+
+# Firebase - Ignorar llave privada
+firebase-service-account.json
+**/firebase-service-account.json
