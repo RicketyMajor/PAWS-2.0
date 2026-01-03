@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../../../core/constants/api_constants.dart';
 import '../../../chat/presentation/screens/chat_screen.dart';
+import '../../../../core/presentation/widgets/smart_image.dart';
 
 class AdopterMatchesScreen extends StatefulWidget {
   const AdopterMatchesScreen({super.key});
@@ -116,9 +117,13 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
 
         return Card(
           child: ListTile(
-            leading: CircleAvatar(
-              backgroundImage: _getPetImage(pet['photo_url']),
-              child: pet['photo_url'] == null ? const Icon(Icons.pets) : null,
+            leading: SizedBox(
+              width: 60,
+              height: 60,
+              child: SmartImage(
+                pet['photo_url'],
+                borderRadius: BorderRadius.circular(30), // Para hacerlo redondo
+              ),
             ),
             title: Text(
               pet['name'],
@@ -161,9 +166,13 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
         return Card(
           color: Colors.grey[50],
           child: ListTile(
-            leading: CircleAvatar(
-              backgroundImage: _getPetImage(pet['photo_url']),
-              child: pet['photo_url'] == null ? const Icon(Icons.pets) : null,
+            leading: SizedBox(
+              width: 60,
+              height: 60,
+              child: SmartImage(
+                pet['photo_url'],
+                borderRadius: BorderRadius.circular(30), // Para hacerlo redondo
+              ),
             ),
             title: Text(pet['name']),
             subtitle: const Text("Esperando respuesta del rescatista..."),

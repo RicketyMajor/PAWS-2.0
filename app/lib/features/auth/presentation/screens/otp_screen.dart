@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 import '../../data/auth_repository.dart';
-import '../../../../features/pets/presentation/screens/match_screen.dart';
 
-// CORRECCIÓN: Importamos la pantalla real
-import '../../../../features/pets/presentation/screens/rescuer_home_screen.dart';
+// --- CORRECCIÓN: Importamos el Layout Principal (El que tiene el menú) ---
+import '../../../../core/presentation/main_layout_screen.dart';
 
 class OTPScreen extends StatefulWidget {
   final String email;
@@ -37,26 +36,17 @@ class _OTPScreenState extends State<OTPScreen> {
           ),
         );
 
-        // Decodificar Token
+        // Decodificar Token para saber el Rol
         Map<String, dynamic> decodedToken = JwtDecoder.decode(token);
         String role = decodedToken['role'] ?? 'adopter';
 
-        // Redirección corregida
-        if (role == 'rescuer') {
-          Navigator.pushAndRemoveUntil(
-            context,
-            MaterialPageRoute(
-              builder: (context) => const RescuerHomeScreen(),
-            ), // <--- AQUI
-            (route) => false,
-          );
-        } else {
-          Navigator.pushAndRemoveUntil(
-            context,
-            MaterialPageRoute(builder: (context) => const MatchScreen()),
-            (route) => false,
-          );
-        }
+        // --- SOLUCIÓN DEL BUG ---
+        // En lugar de ir a pantallas sueltas, vamos al Layout Principal
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (context) => MainLayoutScreen(role: role)),
+          (route) => false,
+        );
       }
     } else {
       if (mounted) {

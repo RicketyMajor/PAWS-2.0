@@ -6,18 +6,14 @@ import '../../../core/constants/api_constants.dart';
 class AuthRepository {
   final Dio _dio = Dio(
     BaseOptions(
-      connectTimeout: const Duration(
-        seconds: 10,
-      ), // Falla si no conecta en 5 segs
+      connectTimeout: const Duration(seconds: 10),
       receiveTimeout: const Duration(seconds: 10),
     ),
   );
-  // Almacenamiento seguro para el Token (Keychain en iOS, Keystore en Android)
+
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
 
-  // --- AGREGA ESTE CONSTRUCTOR ---
   AuthRepository() {
-    // Esto imprimirá TODO lo que pasa por la red en tu terminal
     _dio.interceptors.add(
       LogInterceptor(
         request: true,
@@ -36,15 +32,11 @@ class AuthRepository {
         data: {'email': email, 'password': password},
       );
 
-      // Si llegamos aquí, Go respondió 200 OK
       final token = response.data['token'];
-
-      // Guardamos el token en el celular de forma segura
       await _storage.write(key: 'jwt_token', value: token);
 
       print('Login exitoso. Token guardado: ${token.substring(0, 10)}...');
     } on DioException catch (e) {
-      // Manejamos errores de red o credenciales inválidas
       if (e.response != null) {
         throw Exception(e.response?.data['error'] ?? 'Error desconocido');
       } else {
@@ -58,7 +50,7 @@ class AuthRepository {
     required String password,
     required String name,
     required String run,
-    String role = 'adopter', // Por defecto creamos "Adoptantes"
+    String role = 'adopter',
   }) async {
     try {
       final response = await _dio.post(
@@ -67,17 +59,17 @@ class AuthRepository {
           'email': email,
           'password': password,
           'name': name,
-          'run': run, // <--- Agregamos el RUN
-          'role': role, // <--- Agregamos el Rol
+          'run': run,
+          'role': role,
         },
       );
 
+      // Aceptamos 200 y 201
       if (response.statusCode == 201 || response.statusCode == 200) {
         print('Registro exitoso');
       }
     } on DioException catch (e) {
       if (e.response != null) {
-        // Esto captura el error rojo que viste y lo lanza para mostrarlo en el SnackBar
         throw Exception(
           e.response?.data['error'] ?? 'Error de validación en el servidor',
         );
@@ -87,14 +79,11 @@ class AuthRepository {
     }
   }
 
-  // --- AGREGAR ESTA FUNCIÓN (Soluciona el error rojo en LoginScreen) ---
   Future<String?> getToken() async {
-    // Lee el token guardado en el almacenamiento seguro
     return await _storage.read(key: 'jwt_token');
   }
 
-  // --- ACTUALIZAR ESTA FUNCIÓN (Para el Auto-Login en OTP) ---
-  // Cambiamos Future<bool> por Future<String?>
+  // --- AQUÍ ESTABA EL ERROR ---
   Future<String?> verifyOtp(String email, String code) async {
     try {
       final response = await _dio.post(
@@ -102,19 +91,18 @@ class AuthRepository {
         data: {'email': email, 'code': code},
       );
 
-      if (response.statusCode == 200) {
-        // 1. Extraer el token de la respuesta
+      if (response.statusCode == 200 || response.statusCode == 201) {
         final token = response.data['token'];
 
-        // 2. Guardarlo (Login automático)
         if (token != null) {
+          // Guardamos el token para Auto-Login
           await _storage.write(key: 'jwt_token', value: token);
           return token.toString();
         }
       }
       return null;
     } on DioException catch (e) {
-      // Manejo de errores silencioso para la UI
+      // Si el código es realmente incorrecto (401), caerá aquí y retornará null
       return null;
     }
   }
