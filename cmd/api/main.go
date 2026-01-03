@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 	"os"
-
+	"fmt"
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/domain"
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/services"
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/workers"
@@ -37,7 +37,20 @@ func main() {
     // ----------------------------------
 
 	database.Connect()
-	// Migraciones
+
+    // ZONA DE PELIGRO: LIMPIEZA PARA TESTEO 
+    // Descomenta estas líneas para borrar TODOS los usuarios y empezar de cero.
+    // Vuélvelas a comentar cuando quieras persistencia.
+    
+    //database.DB.Migrator().DropTable(&domain.User{})         // Borra usuarios
+    //database.DB.Exec("DELETE FROM blacklist_entries")        // Borra blacklist (opcional)
+    //database.DB.Exec("DELETE FROM otps")                     // (Si tuvieras tabla de OTPs)
+    
+    // Nota: Si borras User, se borrarán en cascada perfiles, mascotas, etc.
+    
+	//database.DB.Migrator().DropTable(&domain.Report{}) // Esta ya la tenías
+
+	// Migraciones (Esto volverá a crear la tabla vacía inmediatamente después)
 	if err := database.DB.AutoMigrate(
 		&domain.User{}, 
 		&domain.UserProfile{},
@@ -72,23 +85,38 @@ func main() {
 	// =========================================================================
 
 	// -------------------------------------------------------------------------
-	// KILL SWITCH: RabbitMQ & Async (Etapa 1)
+	// KILL SWITCH: RabbitMQ & Async (Etapa 10)
 	// -------------------------------------------------------------------------
 	var mqClient *messaging.RabbitMQClient
 	var err error
 	
-	// Solo intentamos conectar si esta variable NO es "false"
-	// Esto te permite trabajar en frontend sin levantar infraestructura pesada
+	// 1. Leemos configuración de RabbitMQ del entorno
+	// Si estamos en local (go run), usaremos localhost. En K8s, usaremos el servicio.
+	rabbitUser := os.Getenv("RABBITMQ_USER")
+	rabbitPass := os.Getenv("RABBITMQ_PASSWORD")
+	rabbitHost := os.Getenv("RABBITMQ_HOST")
+	rabbitPort := os.Getenv("RABBITMQ_PORT")
+
+	// Valores por defecto (Para K8s o Local standard)
+	if rabbitUser == "" { rabbitUser = "guest" }
+	if rabbitPass == "" { rabbitPass = "guest" }
+	if rabbitHost == "" { rabbitHost = "localhost" } // <--- CAMBIO CLAVE: Default a localhost
+	if rabbitPort == "" { rabbitPort = "5672" }
+
+	rabbitURL := fmt.Sprintf("amqp://%s:%s@%s:%s/", rabbitUser, rabbitPass, rabbitHost, rabbitPort)
+
+	// 2. Intentamos conectar si está habilitado
 	if os.Getenv("ENABLE_ASYNC_FEATURES") == "true" {
-		mqClient, err = messaging.ConnectRabbitMQ("amqp://guest:guest@rabbitmq-service:5672/")
+		log.Printf("Intentando conectar a RabbitMQ en: %s:%s...", rabbitHost, rabbitPort)
+		mqClient, err = messaging.ConnectRabbitMQ(rabbitURL)
 		if err != nil {
-			log.Println("RabbitMQ error: El sistema funcionará en MODO SÍNCRONO (fallback).")
+			log.Printf("RabbitMQ error: %v. \nEl sistema funcionará en MODO SÍNCRONO (Terminal).", err)
 		} else {
 			defer mqClient.Close()
-			log.Println("Conectado a RabbitMQ (Modo Asíncrono Activado)")
+			log.Println("Conectado a RabbitMQ (Sistema de Correos Activo)")
 		}
 	} else {
-		log.Println("Async Features desactivadas (ENABLE_ASYNC_FEATURES != true). Usando modo síncrono simple.")
+		log.Println("ℹAsync Features desactivadas. Usando modo síncrono simple (Logs en Terminal).")
 	}
 
 	emailClient := email.NewEmailClient()

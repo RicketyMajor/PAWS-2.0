@@ -31,7 +31,7 @@ func (c *EmailClient) Send(to, subject, body string) error {
 	}
 
 	// Modo Real (SendGrid)
-	from := mail.NewEmail("PAWS Security", "no-reply@paws.cl") // Cambia esto por tu remitente verificado en SendGrid
+	from := mail.NewEmail("PAWS Security", "alonso.vera@mail.udp.cl") // Cambia esto por tu remitente verificado en SendGrid
 	toUser := mail.NewEmail("Usuario", to)
 	message := mail.NewSingleEmail(from, subject, toUser, body, body) // PlainText y HTML content iguales por ahora
 	

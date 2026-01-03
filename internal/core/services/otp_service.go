@@ -4,15 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math/rand"
-	"time"
 	"log"
+	"math/rand"
+	"os"
+	"time"
 
+	"github.com/RicketyMajor/PAWS-2.0/internal/infrastructure/messaging"
 	"github.com/redis/go-redis/v9"
-	"github.com/RicketyMajor/PAWS-2.0/internal/infrastructure/messaging" // Importar
 )
 
-// Estructura del evento que viajará por RabbitMQ
 type EmailEvent struct {
 	To      string `json:"to"`
 	Subject string `json:"subject"`
@@ -21,30 +21,38 @@ type EmailEvent struct {
 
 type OTPService struct {
 	redisClient *redis.Client
-	mqClient    *messaging.RabbitMQClient // <--- NUEVO
+	mqClient    *messaging.RabbitMQClient
 }
 
-// Actualizar Constructor
 func NewOTPService(mq *messaging.RabbitMQClient) *OTPService {
-	// Configuración Redis (se mantiene igual)
+	// 1. Leemos configuración del entorno (Soporte Híbrido Local/K8s)
+	redisHost := os.Getenv("REDIS_HOST")
+	redisPort := os.Getenv("REDIS_PORT")
+	
+	// Fallback por si faltan variables
+	if redisHost == "" { redisHost = "localhost" }
+	if redisPort == "" { redisPort = "6379" }
+
+	addr := fmt.Sprintf("%s:%s", redisHost, redisPort)
+
+	// 2. Conexión a Redis
 	rdb := redis.NewClient(&redis.Options{
-		Addr:     "redis-service:6379",
-		Password: "",
+		Addr:     addr,
+		Password: "", // Si tienes pass, agrégalo a las variables de entorno
 		DB:       0,
 	})
 
 	return &OTPService{
 		redisClient: rdb,
-		mqClient:    mq, // <--- Inyectar
+		mqClient:    mq,
 	}
 }
 
 func (s *OTPService) GenerateOTP(email string) (string, error) {
-	// 1. Generar código (Igual que antes)
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	code := fmt.Sprintf("%06d", rng.Intn(1000000))
 
-	// 2. Guardar en Redis (Igual que antes)
+	// Guardar OTP en Redis (TTL 5 min)
 	ctx := context.Background()
 	key := fmt.Sprintf("otp:%s", email)
 	err := s.redisClient.Set(ctx, key, code, 5*time.Minute).Err()
@@ -52,43 +60,42 @@ func (s *OTPService) GenerateOTP(email string) (string, error) {
 		return "", fmt.Errorf("error guardando OTP en Redis: %v", err)
 	}
 
-	// 3. EN LUGAR DE LOGUEAR -> PUBLICAR EVENTO (Async)
+	// Crear evento de correo
 	event := EmailEvent{
 		To:      email,
 		Subject: "Tu código de verificación PAWS",
-		Body:    fmt.Sprintf("Hola, tu código es: %s. Válido por 5 minutos.", code),
+		Body:    fmt.Sprintf("Hola, tu código de verificación es: %s. \n\nEste código expirará en 5 minutos.", code),
 	}
 
 	eventBytes, _ := json.Marshal(event)
 
-	// Publicar a la cola "email_notifications"
+	// Enviar a RabbitMQ (si existe) o Fallback a Log
 	if s.mqClient != nil {
 		err = s.mqClient.Publish("email_notifications", eventBytes)
 		if err != nil {
-			log.Printf("Error publicando evento RabbitMQ: %v", err)
-			// Fallback: loguear en consola si falla la cola
-			log.Printf("[FALLBACK] Para: %s | Código: %s", email, code)
+			log.Printf("Error RabbitMQ: %v. Usando Log.", err)
+			log.Printf("[FALLBACK EMAIL] Para: %s | Código: %s", email, code)
 		} else {
-			log.Printf("Evento enviado a RabbitMQ para: %s", email)
+			log.Printf("Evento de email enviado a RabbitMQ para: %s", email)
 		}
 	} else {
-		// Modo desarrollo sin RabbitMQ
-		log.Printf("[DEV] Para: %s | Código: %s", email, code)
+		log.Printf("[DEV EMAIL] Para: %s | Código: %s", email, code)
 	}
 
 	return code, nil
 }
 
-// VerifyOTP se mantiene igual...
 func (s *OTPService) VerifyOTP(email, inputCode string) bool {
-    // ... (copiar código anterior o dejar intacto)
 	ctx := context.Background()
 	key := fmt.Sprintf("otp:%s", email)
+	
 	val, err := s.redisClient.Get(ctx, key).Result()
 	if err == redis.Nil || err != nil {
 		return false
 	}
+	
 	if val == inputCode {
+		// Borramos el OTP para que no se pueda usar dos veces
 		s.redisClient.Del(ctx, key)
 		return true
 	}

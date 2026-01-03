@@ -4,74 +4,86 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	// Ajusta este import si tu ruta es diferente, pero mantenlo apuntando a tu dominio
+	"gorm.io/gorm/logger" // Importante para ver logs limpios
+
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/domain"
-	
 )
 
-// DB es una variable global (por ahora) que guardará la conexión.
 var DB *gorm.DB
 
-// Connect inicializa la conexión a PostgreSQL (Soporta URL completa o variables individuales)
 func Connect() {
-	var dsn string
-
-	// 1. PRIORIDAD: Intentamos leer la Connection String completa (Estilo Supabase/Railway)
-	// Ejemplo: postgres://postgres:password@db.supabase.co:5432/postgres
-	dsn = os.Getenv("DATABASE_URL")
-
-	// 2. FALLBACK: Si no hay URL completa, construimos la cadena manualmente (Estilo Local/Docker)
+	// 1. Obtener la URL base
+	dsn := os.Getenv("DATABASE_URL")
+	
+	// Si no hay URL directa, construimos la local (Fallback)
 	if dsn == "" {
-		host := os.Getenv("DB_HOST")
-		user := os.Getenv("DB_USER")
-		password := os.Getenv("DB_PASSWORD")
-		dbName := os.Getenv("DB_NAME")
-		port := os.Getenv("DB_PORT")
-		
-		sslMode := os.Getenv("DB_SSL_MODE")
-		if sslMode == "" {
-			sslMode = "disable"
-		}
-
 		dsn = fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s",
-			host, user, password, dbName, port, sslMode)
-		
-		log.Println("Modo Local detectado: Usando variables individuales.")
+			os.Getenv("DB_HOST"), 
+			os.Getenv("DB_USER"), 
+			os.Getenv("DB_PASSWORD"), 
+			os.Getenv("DB_NAME"), 
+			os.Getenv("DB_PORT"), 
+			"disable",
+		)
+		log.Println("Modo Local detectado (Variables individuales)")
 	} else {
-		log.Println("Modo Nube detectado: Usando DATABASE_URL.")
+		log.Println("Modo Nube detectado (DATABASE_URL)")
 	}
 
-	connection, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
-		PrepareStmt: false,
-	})
+	// --------------------------------------------------------------------
+	//  LIMPIEZA Y FORZADO DE PROTOCOLO (FIX SUPABASE 6543)
+	// --------------------------------------------------------------------
+	// 1. Quitamos cualquier parámetro conflictivo antiguo si existiera
+	if strings.Contains(dsn, "pgbouncer=true") {
+		dsn = strings.ReplaceAll(dsn, "pgbouncer=true", "")
+	}
+
+	// 2. Aseguramos que 'prefer_simple_protocol' esté presente
+	if !strings.Contains(dsn, "prefer_simple_protocol=true") {
+		if strings.Contains(dsn, "?") {
+			dsn += "&prefer_simple_protocol=true"
+		} else {
+			dsn += "?prefer_simple_protocol=true"
+		}
+	}
+	// --------------------------------------------------------------------
+
+	log.Println("Conectando con protocolo simple (Sin Caché)...")
+
+	// 3. Configuración GORM
+	config := &gorm.Config{
+		PrepareStmt: false, // APAGADO OBLIGATORIO
+		Logger:      logger.Default.LogMode(logger.Info), // Logs detallados para debug
+	}
+
+	connection, err := gorm.Open(postgres.Open(dsn), config)
 	if err != nil {
 		log.Fatal("Error fatal conectando a la base de datos: ", err)
 	}
 
 	DB = connection
-	log.Println("Conexión a Base de Datos exitosa")
+	log.Println("Conexión a Base de Datos exitosa y estabilizada")
 }
 
-// Migrate ejecuta las migraciones automáticas
 func Migrate() {
-	// Asegúrate de incluir TODOS tus modelos aquí
-	// Nota: Agregué Report y Review que hicimos en etapas anteriores
+	// Ejecutamos la migración
 	err := DB.AutoMigrate(
 		&domain.User{}, 
 		&domain.UserProfile{}, 
 		&domain.Pet{}, 
-		&domain.BlacklistEntry{},
 		&domain.Match{},
-		&domain.Message{},
+		&domain.Message{}, 
 		&domain.Report{},
 		&domain.Review{},
+		&domain.BlacklistEntry{},
 	)
 	
 	if err != nil {
-		log.Fatal("Error en la migración de base de datos: ", err)
+		log.Fatal("Error crítico migrando BD:", err)
 	}
-	log.Println("Migración de base de datos completada")
+	log.Println("Migración de base de datos completada sin errores")
 }
