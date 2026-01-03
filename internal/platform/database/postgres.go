@@ -1,14 +1,12 @@
 package database
 
 import (
-	"fmt"
 	"log"
 	"os"
-	"strings"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger" // Importante para ver logs limpios
+	"gorm.io/gorm/logger"
 
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/domain"
 )
@@ -16,48 +14,17 @@ import (
 var DB *gorm.DB
 
 func Connect() {
-	// 1. Obtener la URL base
 	dsn := os.Getenv("DATABASE_URL")
 	
-	// Si no hay URL directa, construimos la local (Fallback)
 	if dsn == "" {
-		dsn = fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s",
-			os.Getenv("DB_HOST"), 
-			os.Getenv("DB_USER"), 
-			os.Getenv("DB_PASSWORD"), 
-			os.Getenv("DB_NAME"), 
-			os.Getenv("DB_PORT"), 
-			"disable",
-		)
-		log.Println("Modo Local detectado (Variables individuales)")
-	} else {
-		log.Println("Modo Nube detectado (DATABASE_URL)")
+		log.Fatal("DATABASE_URL no encontrada en variables de entorno")
 	}
 
-	// --------------------------------------------------------------------
-	//  LIMPIEZA Y FORZADO DE PROTOCOLO (FIX SUPABASE 6543)
-	// --------------------------------------------------------------------
-	// 1. Quitamos cualquier parámetro conflictivo antiguo si existiera
-	if strings.Contains(dsn, "pgbouncer=true") {
-		dsn = strings.ReplaceAll(dsn, "pgbouncer=true", "")
-	}
+	log.Println("Conectando a Base de Datos (Modo Session/Direct)...")
 
-	// 2. Aseguramos que 'prefer_simple_protocol' esté presente
-	if !strings.Contains(dsn, "prefer_simple_protocol=true") {
-		if strings.Contains(dsn, "?") {
-			dsn += "&prefer_simple_protocol=true"
-		} else {
-			dsn += "?prefer_simple_protocol=true"
-		}
-	}
-	// --------------------------------------------------------------------
-
-	log.Println("Conectando con protocolo simple (Sin Caché)...")
-
-	// 3. Configuración GORM
+	// Configuración estándar para puerto 5432
 	config := &gorm.Config{
-		PrepareStmt: false, // APAGADO OBLIGATORIO
-		Logger:      logger.Default.LogMode(logger.Info), // Logs detallados para debug
+		Logger: logger.Default.LogMode(logger.Info),
 	}
 
 	connection, err := gorm.Open(postgres.Open(dsn), config)
@@ -66,11 +33,10 @@ func Connect() {
 	}
 
 	DB = connection
-	log.Println("Conexión a Base de Datos exitosa y estabilizada")
+	log.Println("Conexión Exitosa")
 }
 
 func Migrate() {
-	// Ejecutamos la migración
 	err := DB.AutoMigrate(
 		&domain.User{}, 
 		&domain.UserProfile{}, 
@@ -85,5 +51,5 @@ func Migrate() {
 	if err != nil {
 		log.Fatal("Error crítico migrando BD:", err)
 	}
-	log.Println("Migración de base de datos completada sin errores")
+	log.Println("Migración completada")
 }
