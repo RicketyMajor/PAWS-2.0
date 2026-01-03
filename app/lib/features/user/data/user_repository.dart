@@ -66,4 +66,21 @@ class UserRepository {
       throw Exception('Error subiendo imagen: $e');
     }
   }
+
+  // --- NUEVO: Enviar Token FCM al Backend ---
+  Future<void> saveDeviceToken(String fcmToken) async {
+    try {
+      final options = await _getAuthOptions();
+      // Asumiremos que crearás este endpoint en Go
+      await _dio.post(
+        '${ApiConstants.baseUrl}/notifications/token',
+        data: {'token': fcmToken},
+        options: options,
+      );
+      print("Token FCM enviado al backend");
+    } catch (e) {
+      print("Error guardando token FCM: $e");
+      // No lanzamos excepción para no bloquear el flujo de la app
+    }
+  }
 }

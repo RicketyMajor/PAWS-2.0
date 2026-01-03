@@ -4,9 +4,10 @@ import 'package:jwt_decoder/jwt_decoder.dart';
 import '../../data/auth_repository.dart';
 import '../bloc/login_bloc.dart';
 import 'register_screen.dart';
-// IMPORTANTE: Importamos el nuevo Layout Principal
 import '../../../../core/presentation/main_layout_screen.dart';
-import '../../../admin/presentation/screens/admin_dashboard_screen.dart'; // <--- AGREGAR ESTO
+import '../../../admin/presentation/screens/admin_dashboard_screen.dart';
+import 'package:firebase_messaging/firebase_messaging.dart'; // Importante
+import '../../../../features/user/data/user_repository.dart'; // Importante
 
 class LoginScreen extends StatelessWidget {
   const LoginScreen({super.key});
@@ -49,6 +50,28 @@ class _LoginFormState extends State<_LoginForm> {
             ),
           );
 
+          // ---------------------------------------------------------
+          // 🔔 NUEVA LÓGICA DE NOTIFICACIONES (Etapa 12)
+          // Justo aquí, antes de navegar, guardamos el token FCM.
+          // ---------------------------------------------------------
+          try {
+            // 1. Pedimos el token a Google
+            String? fcmToken = await FirebaseMessaging.instance.getToken();
+
+            if (fcmToken != null && mounted) {
+              // 2. Lo enviamos a nuestro Backend
+              await context.read<UserRepository>().saveDeviceToken(fcmToken);
+              print("Token FCM enviado y guardado correctamente.");
+            }
+          } catch (e) {
+            // Si falla esto, NO detenemos el login, solo avisamos en consola.
+            print("Error configurando notificaciones: $e");
+          }
+          // ---------------------------------------------------------
+
+          if (!mounted)
+            return; // Seguridad por si el usuario cerró la app rápido
+
           final authRepo = context.read<AuthRepository>();
           final token = await authRepo.getToken();
 
@@ -56,9 +79,8 @@ class _LoginFormState extends State<_LoginForm> {
             Map<String, dynamic> decodedToken = JwtDecoder.decode(token);
             String role = decodedToken['role'] ?? 'adopter';
 
-            // --- LÓGICA DE RUTAS MODIFICADA ---
+            // --- LÓGICA DE RUTAS ---
             if (role == 'admin') {
-              // CASO 1: Es Administrador -> Vamos al Panel de Justicia
               if (mounted) {
                 Navigator.pushAndRemoveUntil(
                   context,
@@ -69,7 +91,6 @@ class _LoginFormState extends State<_LoginForm> {
                 );
               }
             } else {
-              // CASO 2: Es Mortal (Adoptante/Rescatista) -> Vamos a la App Normal
               if (mounted) {
                 Navigator.pushAndRemoveUntil(
                   context,
@@ -80,7 +101,7 @@ class _LoginFormState extends State<_LoginForm> {
                 );
               }
             }
-            // ----------------------------------
+            // -----------------------
           }
         }
       },
