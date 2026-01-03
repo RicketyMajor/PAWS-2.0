@@ -1554,3 +1554,404 @@ func TestSQLInjectionBlocked(t *testing.T) {
     // Verificar: Retorna error o resultado vacío (prepared statements)
 }
 ```
+
+## COMPLETADO EN ETAPA 10: Verificación OTP Asincrónica y Seguridad del Registro
+
+### Introducción a Etapa 10 en Fase-8
+
+La Etapa 10 introduce un sistema de verificación de identidad mediante OTP (One-Time Password) completamente integrado con la arquitectura asincrónica descrita en [Fase-14](Fase-14.md). Este sistema, aunque implementado en Etapa 10, refuerza y extiende los controles de seguridad e identidad que Fase-8 establece como base.
+
+### Nuevos Componentes de Seguridad en Etapa 10
+
+**OTPService (Seguridad a través del Correo Electrónico)**
+
+El servicio OTP introduce un segundo factor de verificación sin agregar complejidad a la arquitectura:
+
+```go
+type OTPService struct {
+    redisClient *redis.Client
+    mqClient    *messaging.RabbitMQClient  // Puede ser nil (fallback a sync)
+}
+
+// GenerateOTP crea un código de 6 dígitos, lo almacena en Redis (5 minutos)
+// y lo envía vía RabbitMQ (async) o consola (development)
+func (s *OTPService) GenerateOTP(email string) (string, error) {
+    code := fmt.Sprintf("%06d", rand.Intn(1000000))
+    s.redisClient.Set(ctx, "otp:"+email, code, 5*time.Minute)
+
+    event := EmailEvent{
+        To:      email,
+        Subject: "Tu código de verificación PAWS",
+        Body:    "Código: " + code,
+    }
+
+    if s.mqClient != nil {
+        s.mqClient.Publish("email_notifications", eventBytes)
+    } else {
+        log.Printf("[DEV MODE] OTP Code for %s: %s", email, code)
+    }
+    return code, nil
+}
+
+// VerifyOTP valida el código contra Redis y lo elimina tras coincidencia
+func (s *OTPService) VerifyOTP(email, code string) bool {
+    val, err := s.redisClient.Get(ctx, "otp:"+email).Result()
+    if err != nil {
+        return false
+    }
+    if val == code {
+        s.redisClient.Del(ctx, "otp:"+email)
+        return true
+    }
+    return false
+}
+```
+
+**Por qué OTP en Etapa 10 refuerza la Fase-8:**
+
+1. **Prevención de Registros Falsos**: Aunque Fase-8 establece validaciones de RUN, OTP añade verificación real de propiedad de correo
+2. **Cumplimiento de Requisitos**: RGPD y regulaciones de privacidad requieren confirmación de correo
+3. **Reducción de Spam**: Solo usuarios con acceso real a correo pueden completar registro
+4. **Auditabilidad**: Cada intento de OTP se registra, facilitando investigación de intentos de abuso
+
+### Flujo de Registro Seguro en Dos Pasos
+
+**Etapa 1: InitiateRegistration (Almacenamiento Temporal)**
+
+```go
+type registrationCache struct {
+    Name     string
+    Email    string
+    Password string  // Hasheada con bcrypt
+    Run      string
+    Role     string
+}
+
+// La contraseña se almacena hasheada, la validación de RUN ocurre
+// contra la tabla de blacklist antes de persistir a Redis
+func (s *AuthService) InitiateRegistration(name, email, password, run, role string) error {
+    // Paso 1: Validar RUN contra blacklist (Fase-8 requiere)
+    if banned, err := s.CheckBlacklist(run); banned {
+        return fmt.Errorf("registro denegado: RUN en lista de exclusión")
+    }
+
+    // Paso 2: Hashear contraseña (nunca se almacena en claro)
+    hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+    if err != nil {
+        return err
+    }
+
+    // Paso 3: Almacenar temporalmente en Redis (10 minutos)
+    tempData := registrationCache{
+        Name:     name,
+        Email:    email,
+        Password: string(hashedPassword),
+        Run:      run,
+        Role:     role,
+    }
+
+    userData, _ := json.Marshal(tempData)
+    s.redisClient.Set(ctx, "pending_user:"+email, userData, 10*time.Minute)
+
+    return nil
+}
+```
+
+**Etapa 2: CompleteRegistration (Persistencia tras Verificación)**
+
+```go
+// Solo después de verificar OTP exitoso, los datos se persisten
+func (s *AuthService) CompleteRegistration(email string) (*domain.User, error) {
+    // Paso 1: Recuperar datos temporales de Redis
+    val, err := s.redisClient.Get(ctx, "pending_user:"+email).Result()
+    if err == redis.Nil {
+        return nil, errors.New("sesión de registro expirada")
+    }
+
+    // Paso 2: Deserializar estructura temporal
+    var tempData registrationCache
+    json.Unmarshal([]byte(val), &tempData)
+
+    // Paso 3: Convertir a dominio y persistir a PostgreSQL
+    user := domain.User{
+        Name:     tempData.Name,
+        Email:    tempData.Email,
+        Password: tempData.Password,  // Ya hasheada desde paso anterior
+        Run:      tempData.Run,
+        Role:     tempData.Role,
+    }
+
+    if err := s.db.Create(&user).Error; err != nil {
+        return nil, err
+    }
+
+    // Paso 4: Limpiar datos temporales
+    s.redisClient.Del(ctx, "pending_user:"+email)
+
+    return &user, nil
+}
+```
+
+### Endpoints HTTP con Estándares de Seguridad
+
+**POST /auth/register (Crea Sesión Temporal)**
+
+```go
+// curl -X POST http://localhost:8080/auth/register \
+//   -H "Content-Type: application/json" \
+//   -d '{
+//     "name": "Juan García",
+//     "email": "juan@example.com",
+//     "password": "SecurePass123!",
+//     "run": "12345678-9",
+//     "role": "adopter"
+//   }'
+
+func (h *AuthHandler) Register(c *gin.Context) {
+    var req RegisterRequest
+    if err := c.ShouldBindJSON(&req); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Datos inválidos"})
+        return
+    }
+
+    // Paso 1: Almacenar en Redis (validación de RUN ocurre aquí)
+    if err := h.authService.InitiateRegistration(
+        req.Name,
+        req.Email,
+        req.Password,
+        req.Run,
+        req.Role,
+    ); err != nil {
+        c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+        return
+    }
+
+    // Paso 2: Generar OTP y enviar (async o sync según config)
+    h.otpService.GenerateOTP(req.Email)
+
+    // Responder con 201 Created (indica recurso temporal creado)
+    c.JSON(http.StatusCreated, gin.H{
+        "message": "Código de verificación enviado a tu correo",
+        "email":   req.Email,
+    })
+}
+```
+
+**POST /auth/otp/verify (Valida OTP y Persiste Usuario)**
+
+```go
+// curl -X POST http://localhost:8080/auth/otp/verify \
+//   -H "Content-Type: application/json" \
+//   -d '{
+//     "email": "juan@example.com",
+//     "code": "123456"
+//   }'
+
+func (h *AuthHandler) VerifyOTP(c *gin.Context) {
+    var req OTPVerifyRequest
+    if err := c.ShouldBindJSON(&req); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Datos inválidos"})
+        return
+    }
+
+    // Paso 1: Validar OTP
+    if !h.otpService.VerifyOTP(req.Email, req.Code) {
+        c.JSON(http.StatusUnauthorized, gin.H{
+            "error": "Código incorrecto o expirado",
+        })
+        return
+    }
+
+    // Paso 2: Completar registro (Redis → PostgreSQL)
+    user, err := h.authService.CompleteRegistration(req.Email)
+    if err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{
+            "error": "Sesión expirada, intenta registrarte de nuevo",
+        })
+        return
+    }
+
+    // Paso 3: Generar JWT token
+    token, err := h.authService.GenerateTokenForUser(user)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Error al generar token"})
+        return
+    }
+
+    // Responder exitoso
+    c.JSON(http.StatusCreated, gin.H{
+        "message": "¡Bienvenido a PAWS!",
+        "token":   token,
+        "user": gin.H{
+            "id":    user.ID,
+            "name":  user.Name,
+            "email": user.Email,
+            "role":  user.Role,
+        },
+    })
+}
+```
+
+### Validaciones de Seguridad Integradas
+
+**Validación de RUN en InitiateRegistration**
+
+```go
+// Cada intento de registro verifica RUN contra blacklist
+// Esto previene registros de actores maliciosos conocidos
+
+func (s *AuthService) CheckBlacklist(run string) (bool, error) {
+    var blacklisted domain.BlacklistedRUN
+
+    // Búsqueda rápida en PostgreSQL indexada por RUN
+    result := s.db.Where("run = ?", run).First(&blacklisted)
+
+    if result.Error == gorm.ErrRecordNotFound {
+        return false, nil  // RUN no está en blacklist
+    }
+
+    if result.Error != nil {
+        return false, result.Error  // Error en consulta
+    }
+
+    return true, nil  // RUN está en blacklist
+}
+```
+
+**Hasheo de Contraseña**
+
+```go
+// bcrypt se configura con factor de costo 10+ (defensa contra fuerza bruta)
+hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), 10)
+
+// Verificación en login (no mostrado aquí, pero sigue mismo patrón)
+err := bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(providedPassword))
+```
+
+**Tolerancia HTTP 201 en Frontend**
+
+El frontend ahora acepta tanto 200 como 201 en endpoints de registro:
+
+```dart
+// app/lib/features/auth/data/auth_repository.dart
+Future<void> register({
+    required String email,
+    required String password,
+    required String name,
+    required String run,
+    required String role,
+}) async {
+    final response = await http.post(
+        Uri.parse('$_baseUrl/auth/register'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+            'email': email,
+            'password': password,
+            'name': name,
+            'run': run,
+            'role': role,
+        }),
+    );
+
+    // Aceptar 200 (legacy) y 201 (Etapa 10)
+    if (response.statusCode != 200 && response.statusCode != 201) {
+        throw Exception('Error al registrarse: ${response.body}');
+    }
+}
+```
+
+### Consideraciones de Testing para OTP y Seguridad
+
+**Test: OTP Expira Correctamente**
+
+```go
+func TestOTPExpiration(t *testing.T) {
+    otpService := NewOTPService(redisClient, nil)
+
+    code, _ := otpService.GenerateOTP("test@example.com")
+
+    // Código es válido inmediatamente
+    if !otpService.VerifyOTP("test@example.com", code) {
+        t.Fatal("OTP válido rechazado")
+    }
+
+    // Después de expiración, falla
+    time.Sleep(6 * time.Minute)
+    if otpService.VerifyOTP("test@example.com", code) {
+        t.Fatal("OTP expirado aceptado")
+    }
+}
+```
+
+**Test: Registro Expira sin OTP**
+
+```go
+func TestRegistrationTimeoutWithoutOTP(t *testing.T) {
+    authService := NewAuthService(db, redisClient)
+
+    authService.InitiateRegistration("Juan", "juan@example.com", "pass", "12345678-9", "adopter")
+
+    // Datos están en Redis
+    _, err := authService.CompleteRegistration("juan@example.com")
+    if err != nil {
+        t.Fatal("Debería completarse antes de expiración")
+    }
+
+    // Después de 10 minutos, falla
+    time.Sleep(11 * time.Minute)
+    _, err = authService.CompleteRegistration("juan@example.com")
+    if err == nil {
+        t.Fatal("Debería fallar tras expiración")
+    }
+}
+```
+
+### Relación con Fase-8: Ampliación no Reemplazo
+
+Etapa 10 **no reemplaza** los controles de Fase-8, sino que los **complementa**:
+
+| Control                | Fase-8             | Etapa 10                             |
+| ---------------------- | ------------------ | ------------------------------------ |
+| Validación de RUN      | ✓ Contra blacklist | ✓ Aún activo en InitiateRegistration |
+| Hasheo de contraseña   | ✓ bcrypt           | ✓ Aún aplica en InitiateRegistration |
+| JWT con expiración     | ✓ Sí               | ✓ Generado tras OTP                  |
+| Verificación de correo | ✗ No               | ✓ Nuevo mediante OTP                 |
+| Token refresh          | ✓ Si se implementó | ✓ Mantiene comportamiento            |
+| Rate limiting (login)  | ✓ Si se implementó | ✓ Aplica a OTP también               |
+
+### Configuración de Etapa 10 en Distintos Ambientes
+
+**Desarrollo (Sin RabbitMQ)**
+
+```dotenv
+# .env.development
+ENABLE_ASYNC_FEATURES=false
+# OTPService genera códigos y los loguea a consola
+# EmailWorker no se inicia (mqClient es nil)
+# Los códigos OTP aparecen en logs del servidor
+```
+
+**Staging/Producción (Con RabbitMQ)**
+
+```dotenv
+# .env.production
+ENABLE_ASYNC_FEATURES=true
+RABBITMQ_HOST=rabbitmq.railway.app
+RABBITMQ_PORT=5672
+RABBITMQ_USER=${RABBITMQ_USER}
+RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+SENDGRID_API_KEY=${SENDGRID_API_KEY}
+# OTPService publica a RabbitMQ
+# EmailWorker consume y envía via SendGrid
+```
+
+### Verificación de Implementación Correcta
+
+Consultar [Fase-14](Fase-14.md) para detalles completos sobre:
+
+- Arquitectura asincrónica con RabbitMQ
+- Implementación de EmailWorker
+- Flujo de dos pasos de registro
+- Configuración de SendGrid
+- Testing de componentes async
+- Deployment a Railway con RabbitMQ

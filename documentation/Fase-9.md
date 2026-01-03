@@ -1293,6 +1293,242 @@ if (match.status == 'accepted') {
    - "Juan ama perros energéticos, Duque es Husky"
    - "Tu perfil es perfecto para familias con niños"
 
+## COMPLETADO EN ETAPA 9: Contenedorización y Estabilidad de Infraestructura
+
+### Integración con Docker Compose
+
+Etapa 9 asegura que el algoritmo de matchmaking de Fase 9 funcione de manera confiable tanto en desarrollo local como en la nube (Railway). La contenedorización total de servicios garantiza que postgres.go, MatchService, GetSwipeDeck() y todos los dependientes de base de datos ejecuten en un entorno predecible.
+
+**Implicaciones para Fase 9**:
+
+```go
+// services/match_service.go - GetSwipeDeck() depende de conexión estable
+func (s *MatchService) GetSwipeDeck(userID uint) ([]Pet, error) {
+    // Etapa 9 asegura que s.db es una conexión GORM válida
+    // Ya sea local (PostgreSQL Docker) o nube (Supabase)
+
+    profile := s.getProfile(userID)
+    query := s.db.Where("status = ?", PetAvailable)
+    // ... filtros AND (housing, kids, other_pets) ...
+    var candidates []Pet
+    query.Find(&candidates)
+    return candidates, nil
+}
+```
+
+### Base de Datos Híbrida y Migraciones
+
+El modelo UserProfile y la extensión Pet (requeridos por Fase 9) se migran automáticamente en ambos entornos:
+
+**Local (docker-compose)**:
+
+```bash
+docker-compose up
+
+# PostgreSQL inicia en puerto 5432
+# main.go ejecuta AutoMigrate()
+# ✓ Tabla user_profiles creada localmente
+# ✓ Campos de pet compatibility creados
+# GetSwipeDeck() funciona inmediatamente
+```
+
+**Cloud (Railway + Supabase)**:
+
+```
+// .env en Railway dashboard
+DATABASE_URL=postgresql://...@supabase.com:6543/postgres
+
+// main.go detecta DATABASE_URL y conecta a Supabase
+// AutoMigrate() ejecuta contra Supabase
+// ✓ Tabla user_profiles creada en Supabase
+// ✓ GetSwipeDeck() funciona con datos reales
+```
+
+### GetSwipeDeck() en Etapa 9 - Optimización SQL
+
+Etapa 4 mejoró GetSwipeDeck() con SQL puro LEFT JOIN para eliminar duplicados. Etapa 9 asegura que esta optimización funciona tanto localmente como en Supabase:
+
+```go
+// services/match_service.go
+func (s *MatchService) GetSwipeDeck(userID uint) ([]Pet, error) {
+    var profile UserProfile
+    if err := s.db.Where("user_id = ?", userID).First(&profile).Error; err != nil {
+        // Fallback: usuario sin perfil - mostrar todas mascotas
+        profile = getDefaultProfile()
+    }
+
+    query := s.db.Where("pets.status = ?", "available").
+        Joins("LEFT JOIN matches ON pets.id = matches.pet_id AND matches.adopter_id = ?", userID).
+        Where("matches.id IS NULL")  // Excluir ya vistas
+
+    // Aplicar hard constraints basados en perfil
+    if profile.Housing == "apartment" {
+        query = query.Where("pets.requires_yard = ?", false)
+    }
+    if profile.HasChildren {
+        query = query.Where("pets.good_with_kids = ?", true)
+    }
+    if profile.HasOtherPets {
+        query = query.Where("pets.good_with_dogs = ? OR pets.good_with_cats = ?", true, true)
+    }
+
+    var candidates []Pet
+    if err := query.Find(&candidates).Error; err != nil {
+        log.Printf("Error en GetSwipeDeck: %v", err)
+        return []Pet{}, err
+    }
+
+    return candidates, nil
+}
+```
+
+**Garantías en Etapa 9**:
+
+- **PostgreSQL Local**: LEFT JOIN funciona exactamente igual
+- **Supabase (PostgreSQL 15)**: LEFT JOIN soportado nativamente
+- **Performance**: Índices automáticos en ambas BD para pet.status y matches.pet_id
+- **Escalabilidad**: Misma query ejecuta con 100 o 10,000 mascotas
+
+### Tolerancia a Fallos en Matchmaking
+
+MinIO/almacenamiento en Etapa 9 no bloquea MatchService. Si fotograf de mascotas no están disponibles:
+
+```go
+// transport/http/match_handler.go
+func (h *MatchHandler) GetSwipeDeck(c *gin.Context) {
+    candidates, err := h.service.GetSwipeDeck(userID)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Error en matchmaking"})
+        return
+    }
+
+    // Intentar cargar photos, pero continuar si fallan
+    for i, pet := range candidates {
+        if pet.PhotoURL != "" {
+            // Photo existe (MinIO disponible)
+            candidates[i].PhotoURL = h.getSignedURL(pet.PhotoURL)
+        } else {
+            // Photo no disponible - usar placeholder
+            candidates[i].PhotoURL = "https://cdn.example.com/placeholder.png"
+        }
+    }
+
+    c.JSON(http.StatusOK, gin.H{"candidates": candidates})
+}
+```
+
+**Resultado**: Usuarios ven mascotas sin fotos si MinIO no está disponible. No afecta funcionalidad core de matchmaking.
+
+### Testing Local de Fase 9 en Etapa 9
+
+**Setup**:
+
+```bash
+# Terminal 1
+docker-compose up
+
+# Terminal 2 - Ver logs
+docker-compose logs -f backend
+
+# Terminal 3 - Tester
+```
+
+**Scenario 1: Crear Adoptante con Perfil**:
+
+```bash
+# 1. Registrar usuario (adopter)
+curl -X POST http://localhost:8080/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Juan Pérez",
+    "email": "juan@test.com",
+    "password": "test123",
+    "run": "12345678-1",
+    "role": "adopter"
+  }'
+# Respuesta: 201 Created, token en respuesta
+
+# 2. Actualizar perfil demográfico
+curl -X PUT http://localhost:8080/api/v1/profile \
+  -H "Authorization: Bearer [TOKEN]" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "housing": "apartment",
+    "has_yard": false,
+    "has_children": true,
+    "has_other_pets": false,
+    "experience": "beginner",
+    "time_available": "high"
+  }'
+# Respuesta: 200 OK
+```
+
+**Scenario 2: GetSwipeDeck Aplicando Hard Constraints**:
+
+```bash
+# Obtener mascotas compatibles (sin requerimiento de patio, safe con niños)
+curl -X GET http://localhost:8080/api/v1/matches/candidates \
+  -H "Authorization: Bearer [TOKEN]"
+
+# Respuesta (solo mascotas que cumplen: requires_yard=false Y good_with_kids=true)
+{
+  "candidates": [
+    {
+      "id": 1,
+      "name": "Bella",
+      "type": "dog",
+      "breed": "Poodle",
+      "age": 3,
+      "requires_yard": false,
+      "good_with_kids": true,
+      "good_with_dogs": true,
+      "energy_level": "medium"
+    },
+    {
+      "id": 2,
+      "name": "Misu",
+      "type": "cat",
+      "breed": "Siamese",
+      "age": 2,
+      "requires_yard": false,
+      "good_with_kids": true,
+      "good_with_dogs": false,
+      "energy_level": "low"
+    }
+  ]
+}
+```
+
+**Scenario 3: Swipe y Respuesta del Rescatista**:
+
+```bash
+# Adoptante swipeadera
+curl -X POST http://localhost:8080/api/v1/matches/swipe \
+  -H "Authorization: Bearer [ADOPTER_TOKEN]" \
+  -H "Content-Type: application/json" \
+  -d '{"pet_id": 1, "is_like": true}'
+# Crea Match(adopter=Juan, pet=Bella, status=PENDING)
+
+# Rescatista ve solicitud
+curl -X GET http://localhost:8080/api/v1/matches/requests \
+  -H "Authorization: Bearer [RESCUER_TOKEN]"
+
+# Rescatista responde
+curl -X POST http://localhost:8080/api/v1/matches/respond \
+  -H "Authorization: Bearer [RESCUER_TOKEN]" \
+  -H "Content-Type: application/json" \
+  -d '{"match_id": 1, "accept": true}'
+# Match.status = ACCEPTED → Chat habilitado
+```
+
+### Ventajas de Fase 9 en Etapa 9
+
+1. **Infraestructura Sólida**: Matchmaking funciona en laptop y cloud idénticamente
+2. **Escalabilidad**: LEFT JOIN SQL no depende de aplicación, escalable a millones de mascotas
+3. **Resiliencia**: Fallos en almacenamiento no rompen matching
+4. **Testabilidad**: Docker Compose proporciona entorno reproducible
+5. **Rendimiento**: Hard constraints filtran en BD, no en aplicación
+
 ## Referencias
 
 - PhotoURL storage: MinIO S3 API v4

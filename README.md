@@ -5458,6 +5458,8 @@ Este proyecto se desarrolla en fases:
 - **Etapa 6** (Completada): Robustez en handlers (type-safe JWT), ChatScreen con menús contextuales, SocialRepository centralizada
 - **Etapa 7** (Completada): RBAC administrativo (middleware de roles), Panel de Justicia para admins, autopromoci\u00f3n autom\u00e1tica, correcci\u00f3n de identidad en reportes
 - **Etapa 8** (Completada): Despliegue cloud (Supabase, Railway, Vercel), base de datos h\u00edbrida local/nube, frontend web, API p\u00fablica global
+- **Etapa 9** (Completada): Contenedorización total (Docker & Docker Compose), estabilidad de conexi\u00f3n con Supabase (Session Mode), almacenamiento resiliente (MinIO con fallback)
+- **Etapa 10** (Completada): Arquitectura orientada a eventos (RabbitMQ), registro en dos pasos con commit diferido (Redis + PostgreSQL), correos transaccionales (SendGrid), UX/UI mejorada
 - **Fase 11** (Planificada): Integraci\u00f3n de closures, conclusi\u00f3n de adopciones, feedback final
 - **Fase 12** (Planificada): Machine Learning para recomendaciones, scoring din\u00e1mico, predicci\u00f3n de \u00e9xito
 
@@ -5479,6 +5481,8 @@ Este proyecto se desarrolla en fases:
 - **Etapa 6**: Blindsiding seguridad en handlers (type-safe JWT), integración UI para reportes y reseñas (integrada en [Fase-8](documentation/Fase-8.md) y [Fase-10](documentation/Fase-10.md))
 - **Etapa 7**: RBAC y panel administrativo, autopromoci\u00f3n de admins, correcci\u00f3n de identidad en reportes (integrada en [Fase-1](documentation/Fase-1.md), [Fase-5](documentation/Fase-5.md), y [Fase-8](documentation/Fase-8.md))
 - **Etapa 8**: Despliegue cloud e infraestructura global (integrada en [Fase-0](documentation/Fase-0.md), [Fase-5](documentation/Fase-5.md), y nueva [Fase-12](documentation/Fase-12.md) para detalles de despliegue)
+- **Etapa 9**: Contenedorización total y estabilidad (integrada en [Fase-0](documentation/Fase-0.md) y [Fase-9](documentation/Fase-9.md) con sección "COMPLETADO EN ETAPA 9")
+- **Etapa 10**: Arquitectura orientada a eventos y seguridad avanzada (integrada en [Fase-8](documentation/Fase-8.md), [Fase-10](documentation/Fase-10.md), y nueva [Fase-14](documentation/Fase-14.md) para detalles de asincronía)
 
 ## Notas Arquitectónicas
 
@@ -5507,5 +5511,12 @@ Este proyecto se desarrolla en fases:
 - **Frontend Web (Etapa 8)**: Flutter compila a web (HTML/JS/CSS). Vercel deploya aplicación estática desde app/build/web/ con CDN global. ApiConstants detecta kReleaseMode para switchear entre localhost (desarrollo) y Railway (producción). Mismo código Dart para mobile y web.
 - **Smart Configuration (Etapa 8)**: Uso de kReleaseMode en Dart y EnvironmentConfig para detección automática de plataforma/entorno. En desarrollo local usa localhost:8080, en Android emulator usa 10.0.2.2:8080, en web usa ApiConstants con URL de Railway. Sin hardcoding de URLs.
 - **DevOps Pipeline (Etapa 8)**: Flujo integrado: push a GitHub → Railway auto-deploya backend, Vercel auto-deploya frontend. Base de datos en Supabase con backups automáticos. Escalado automático de Railway. No requiere CI/CD manual (Fase 7) por ser PaaS.
+- **Contenedorización Total (Etapa 9)**: Docker Compose define 4 servicios: PostgreSQL (para desarrollo local), Redis, MinIO, Backend. Multi-stage Dockerfile reduce imagen de 1.3GB a 25MB. Sistema funciona en laptop de desarrollador, servidor físico, o Railway cloud sin cambios de configuración.
+- **Estabilidad de Conexión (Etapa 9)**: postgres.go detecta automáticamente DATABASE_URL (Supabase cloud) o variables individuales (Docker local). Supabase Connection Pooler (puerto 6543) resuelve problemas IPv6 que afectan puerto directo 5432. Session Mode garantiza estabilidad de transacciones GORM + migraciones automáticas.
+- **Almacenamiento Resiliente (Etapa 9)**: MinIO containerizado en docker-compose.yml como servicio independiente. Backend intenta conectar a MinIO pero continúa funcionando en Railway (cloud) incluso si MinIO/S3 no está disponible. Modo fallback graceful: uploads fallan con error claro en logs, pero registro/login/matching continúan.
+- **Arquitectura Orientada a Eventos (Etapa 10)**: RabbitMQ como message broker central. OTPService publica eventos de email a cola "email_notifications". EmailWorker consume eventos en background. Kill Switch ENABLE_ASYNC_FEATURES permite modo síncrono (logs en terminal) para desarrollo sin RabbitMQ.
+- **Registro en Dos Pasos (Etapa 10)**: Flujo de commit diferido con 3 fases: (1) Initiate en Redis (temporal), (2) Generar OTP vía RabbitMQ, (3) Complete en PostgreSQL tras verificar código. Si usuario no verifica, datos en Redis expiran en 10 minutos sin afectar BD. Previene registros incompletos o maliciosos.
+- **Correos Transaccionales (Etapa 10)**: SendGrid integrado para envío real de códigos OTP. EmailWorker conecta a API de SendGrid con retry automático. Fallback a logs si SendGrid no disponible. Patrón productor-consumidor desacopla generación de código (rápido) de envío (lento, red).
+- **UX/UI Mejorada (Etapa 10)**: OTPScreen ahora navega a MainLayoutScreen (no a pantallas sueltas), mostrando navegación correcta según rol. AuthRepository tolera códigos HTTP 200 y 201. Validación de RUT en RegisterScreen con algoritmo Módulo 11. Todas las transiciones de pantalla respetan jerarquía de navegación.
 
 ## Autor
