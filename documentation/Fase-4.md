@@ -1062,6 +1062,532 @@ wscat -c "ws://localhost:8080/api/v1/ws" \
 #   └─ Contiene el mensaje con created_at del servidor
 ```
 
+## COMPLETADO EN ETAPA 12: Push Notifications, Lógica Online/Offline y Agrupación de Mensajes
+
+### Introducción a Etapa 12 en Fase-4
+
+La Etapa 12 complementa el Hub de Etapa 11 con inteligencia de notificaciones. Transforma el Hub genérico en un enrutador de dos vías: si el usuario está online (WebSocket conectado), entrega por socket; si está offline, desviá el mensaje a una cola de RabbitMQ que alimenta un Worker dedicado de Firebase Cloud Messaging (FCM). Esta arquitectura implementa la lógica "WhatsApp": mensajes instantáneos para usuarios presentes, notificaciones push para usuarios ausentes.
+
+### Cambios Arquitectónicos en el Hub
+
+**Problema de Etapa 11**: El Hub envía mensajes solo a usuarios conectados. Si el receptor está offline, el mensaje espera pasivamente en BD. El usuario no recibe notificación.
+
+**Solución en Etapa 12**: El Hub se convierte en un dispatcher inteligente.
+
+```go
+type Hub struct {
+    clients map[uint]*Client
+    chatService *services.ChatService
+
+    // NUEVO en Etapa 12: Cliente RabbitMQ para encolar notificaciones
+    mqClient *messaging.RabbitMQClient
+
+    broadcast  chan *ClientMessageWrapper
+    register   chan *Client
+    unregister chan *Client
+}
+
+func NewHub(chatService *services.ChatService, mq *messaging.RabbitMQClient) *Hub {
+    return &Hub{
+        broadcast:   make(chan *ClientMessageWrapper),
+        register:    make(chan *Client),
+        unregister:  make(chan *Client),
+        clients:     make(map[uint]*Client),
+        chatService: chatService,
+        mqClient:    mq,  // Inyección del broker
+    }
+}
+```
+
+### Método handleMessage Mejorado: Routing Dual
+
+La lógica de handleMessage ahora incluye un condicional crítico que determina el canal de entrega:
+
+```go
+func (h *Hub) handleMessage(sender *Client, msgBytes []byte) {
+    // PASOS 1-3: Parsear, guardar, preparar respuesta (igual que Etapa 11)
+    var input InputMessage
+    if err := json.Unmarshal(msgBytes, &input); err != nil {
+        return
+    }
+
+    savedMsg, receiverID, err := h.chatService.SaveMessage(
+        input.MatchID,
+        sender.userID,
+        input.Content,
+    )
+    if err != nil {
+        sender.sendJSON("error", map[string]string{"message": err.Error()})
+        return
+    }
+
+    response := OutputMessage{
+        Type:    "new_message",
+        Payload: savedMsg,
+    }
+
+    // PASO 4: ENRUTAMIENTO DUAL (NUEVA LÓGICA)
+
+    // A) CONFIRMACIÓN AL REMITENTE (siempre)
+    sender.sendJSON(response.Type, response.Payload)
+
+    // B) ENRUTAMIENTO AL DESTINATARIO: Detectar Online vs Offline
+    if receiver, isOnline := h.clients[receiverID]; isOnline {
+        // CASO 1: Usuario está ONLINE (Socket conectado)
+        // ├─ Envío instantáneo por WebSocket (cero latencia)
+        receiver.sendJSON(response.Type, response.Payload)
+        log.Printf("Mensaje enviado ONLINE a usuario %d", receiverID)
+    } else {
+        // CASO 2: Usuario está OFFLINE (No hay conexión WebSocket)
+        // ├─ Envío diferido por Push Notification vía RabbitMQ
+        h.sendPushNotification(receiverID, sender.userID, input.Content)
+        log.Printf("Usuario %d offline. Notificación encolada para Firebase.", receiverID)
+    }
+}
+```
+
+**Punto Clave**: El condicional `if receiver, isOnline := h.clients[receiverID]` es lo que habilita el enrutamiento dual. Si el usuario NO está en el mapa de clientes, significa que no tiene conexión WebSocket activa.
+
+### Método sendPushNotification: Puente a RabbitMQ
+
+```go
+func (h *Hub) sendPushNotification(receiverID, senderID uint, content string) {
+    // Validación: ¿Hay broker disponible?
+    if h.mqClient == nil {
+        log.Printf("RabbitMQ no disponible. Push no se enviará para usuario %d", receiverID)
+        return
+    }
+
+    // Construir evento de notificación
+    // (En MVP, el título es genérico; podrías agregar nombre del remitente con query a BD)
+    event := services.NotificationEvent{
+        UserID: receiverID,
+        Title:  "Nuevo Mensaje",
+        Body:   content,  // Ej: "¿Cuándo nos vemos?"
+        Type:   "message",
+    }
+
+    // Serializar a JSON
+    body, err := json.Marshal(event)
+    if err != nil {
+        log.Printf("Error serializando evento push: %v", err)
+        return
+    }
+
+    // Publicar a cola RabbitMQ "push_notifications"
+    // Esta cola es escuchada por NotificationConsumer (worker separado)
+    err = h.mqClient.Publish("push_notifications", body)
+    if err != nil {
+        log.Printf("Error encolando notificación: %v", err)
+    } else {
+        log.Printf("Notificación encolada para usuario %d en RabbitMQ", receiverID)
+    }
+}
+```
+
+**Flujo**: Mensaje offline → sendPushNotification() → h.mqClient.Publish() → RabbitMQ cola "push_notifications" → NotificationConsumer despierta y procesa.
+
+### Domain: Nuevo Modelo NotificationEvent
+
+```go
+// internal/core/services/match_service.go (También usado en Chat)
+type NotificationEvent struct {
+    UserID uint   `json:"user_id"`        // A quién
+    Title  string `json:"title"`          // "Nuevo Mensaje"
+    Body   string `json:"body"`           // Contenido del mensaje
+    Type   string `json:"type"`           // "message", "match_accepted", etc
+}
+```
+
+Extensible para futuros tipos de notificaciones (matches aceptados, reviews pendientes, etc).
+
+### Frontend: Captura Transparente de Token FCM
+
+**main.dart**: Inicialización de Firebase
+
+```dart
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+
+// Top-level handler para notificaciones en segundo plano
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+    print("Notificación en Segundo Plano: ${message.messageId}");
+    // Aquí podrías actualizar BD local, sincronizar, etc
+}
+
+void main() async {
+    WidgetsFlutterBinding.ensureInitialized();
+
+    // 1. Inicializar Firebase
+    try {
+        await Firebase.initializeApp();
+        FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+    } catch (e) {
+        print("Error inicializando Firebase: $e");
+    }
+
+    runApp(const PawsApp());
+}
+
+class _PawsAppState extends State<PawsApp> {
+    void _setupFirebaseMessaging() async {
+        FirebaseMessaging messaging = FirebaseMessaging.instance;
+
+        // 2. Pedir permisos
+        NotificationSettings settings = await messaging.requestPermission(
+            alert: true,
+            badge: true,
+            sound: true,
+        );
+
+        if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+            print('Permisos de notificación otorgados');
+        }
+    }
+}
+```
+
+**LoginScreen**: Envío del Token FCM al Backend
+
+```dart
+else if (state is LoginSuccess) {
+    ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('¡Bienvenido!'),
+            backgroundColor: Colors.green,
+        ),
+    );
+
+    // --- NUEVO: Guardar Token FCM (Transparente, sin UI) ---
+    try {
+        // 1. Obtener token de Google
+        String? fcmToken = await FirebaseMessaging.instance.getToken();
+
+        if (fcmToken != null && mounted) {
+            // 2. Enviar al backend
+            await context.read<UserRepository>().saveDeviceToken(fcmToken);
+            print("Token FCM enviado y guardado correctamente.");
+        }
+    } catch (e) {
+        // No detenemos login si falla. Solo log en consola.
+        print("Error configurando notificaciones: $e");
+    }
+
+    // --- Continuar con navegación como siempre ---
+    if (!mounted) return;
+
+    final authRepo = context.read<AuthRepository>();
+    final token = await authRepo.getToken();
+    // ... resto de lógica de navegación ...
+}
+```
+
+Punto clave: El envío de token es asincrónico pero no bloqueante. Si FirebaseMessaging no está disponible, la app continúa funcionando normalmente.
+
+**UserRepository**: Abstracción para Guardar Token
+
+```dart
+Future<void> saveDeviceToken(String fcmToken) async {
+    try {
+        final options = await _getAuthOptions();
+        await _dio.post(
+            '${ApiConstants.baseUrl}/notifications/token',
+            data: {'token': fcmToken},
+            options: options,
+        );
+        print("Token FCM enviado al backend");
+    } catch (e) {
+        print("Error guardando token FCM: $e");
+        // No lanzamos excepción para no bloquear flujo
+    }
+}
+```
+
+### Backend: Endpoint para Actualizar Token
+
+**notification_handler.go**
+
+```go
+type NotificationHandler struct {
+    userService *services.UserService
+}
+
+type TokenRequest struct {
+    Token string `json:"token" binding:"required"`
+}
+
+func (h *NotificationHandler) UpdateToken(c *gin.Context) {
+    // 1. Extraer userID del JWT
+    userIDVal, _ := c.Get("userID")
+    var userID uint
+    switch v := userIDVal.(type) {
+    case float64: userID = uint(v)
+    case uint: userID = v
+    default: userID = 0
+    }
+
+    // 2. Parsear request
+    var req TokenRequest
+    if err := c.ShouldBindJSON(&req); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Token requerido"})
+        return
+    }
+
+    // 3. Guardar en BD
+    err := h.userService.UpdateFCMToken(userID, req.Token)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Error guardando token"})
+        return
+    }
+
+    c.JSON(http.StatusOK, gin.H{"message": "Token FCM actualizado"})
+}
+```
+
+**user_service.go**
+
+```go
+func (s *UserService) UpdateFCMToken(userID uint, token string) error {
+    // UPDATE users SET fcm_token = token WHERE id = userID
+    return s.db.Model(&domain.User{}).
+        Where("id = ?", userID).
+        Update("fcm_token", token).
+        Error
+}
+```
+
+### Worker: NotificationConsumer para Firebase
+
+**internal/core/workers/notification_worker.go**
+
+El NotificationConsumer es un goroutine separado que escucha la cola "push_notifications" de RabbitMQ y envía notificaciones via Firebase Cloud Messaging (FCM).
+
+```go
+func StartNotificationConsumer(mq *rabbit.RabbitMQClient, db *gorm.DB) {
+    // 1. Configurar Firebase
+    projectID := os.Getenv("FIREBASE_PROJECT_ID")
+    conf := &firebase.Config{ProjectID: projectID}
+    opt := option.WithCredentialsFile("firebase-service-account.json")
+
+    app, err := firebase.NewApp(context.Background(), conf, opt)
+    if err != nil {
+        log.Printf("Error inicializando Firebase: %v. Push notifications desactivadas.", err)
+        return
+    }
+
+    fcmClient, err := app.Messaging(context.Background())
+    if err != nil {
+        log.Printf("Error obteniendo cliente FCM: %v", err)
+        return
+    }
+
+    log.Println("Worker de Notificaciones Push iniciado")
+
+    // 2. Escuchar cola
+    ch := mq.GetChannel()
+    msgs, err := ch.Consume(
+        "push_notifications",
+        "", false, false, false, false, nil,
+    )
+    if err != nil {
+        log.Printf("Error consumiendo cola: %v", err)
+        return
+    }
+
+    // 3. Procesar cada evento
+    go func() {
+        for d := range msgs {
+            var event services.NotificationEvent
+            if err := json.Unmarshal(d.Body, &event); err != nil {
+                log.Printf("Error decodificando evento: %v", err)
+                d.Ack(false)
+                continue
+            }
+
+            // 4. Buscar token FCM del usuario en BD
+            var user domain.User
+            if err := db.Select("fcm_token").First(&user, event.UserID).Error; err != nil {
+                log.Printf("Usuario %d no encontrado", event.UserID)
+                d.Ack(false)
+                continue
+            }
+
+            if user.FCMToken == "" {
+                log.Printf("Usuario %d sin token FCM", event.UserID)
+                d.Ack(false)
+                continue
+            }
+
+            // 5. Configurar Android Config con TAG para agrupación
+            var androidConfig *messaging.AndroidConfig
+
+            if event.Type == "message" {
+                androidConfig = &messaging.AndroidConfig{
+                    Priority: "high",
+                    Notification: &messaging.AndroidNotification{
+                        Tag:   "chat_group",         // Agrupa notificaciones de chat
+                        Color: "#E91E63",            // Color rosado PAWS
+                    },
+                }
+            }
+
+            // 6. Enviar a Firebase
+            _, err = fcmClient.Send(context.Background(), &messaging.Message{
+                Token: user.FCMToken,
+                Notification: &messaging.Notification{
+                    Title: event.Title,
+                    Body:  event.Body,
+                },
+                Android: androidConfig,
+                Data: map[string]string{
+                    "type": event.Type,
+                },
+            })
+
+            if err != nil {
+                log.Printf("Error enviando a FCM: %v", err)
+            } else {
+                log.Printf("Notificación enviada a usuario %d", event.UserID)
+            }
+
+            d.Ack(false)  // Confirmar consumo
+        }
+    }()
+}
+```
+
+### Agrupación de Notificaciones: AndroidConfig Tags
+
+El punto clave para implementar UX "WhatsApp" es el AndroidConfig.Notification.Tag:
+
+```go
+androidConfig := &messaging.AndroidConfig{
+    Priority: "high",
+    Notification: &messaging.AndroidNotification{
+        Tag:   "chat_group",  // <--- CLAVE: Agrupa por TAG
+        Color: "#E91E63",     // Color de marca
+    },
+}
+```
+
+Con `Tag: "chat_group"`:
+
+- Si usuario recibe 3 mensajes en rápida sucesión, se muestra como "3 mensajes nuevos" (1 notificación agrupada)
+- Sin Tag, aparecerían 3 notificaciones separadas saturando la barra
+
+Puedes extender con otros Tags:
+
+- `"match_accepted"` para notificaciones de matches
+- `"review_pending"` para notificaciones de reseñas
+- etc.
+
+### Integración en main.go
+
+```go
+func main() {
+    // ... conexión a BD, RabbitMQ ...
+
+    // NUEVO: Iniciar worker de notificaciones push
+    if mqClient != nil {
+        workers.StartEmailConsumer(mqClient, emailClient)    // Etapa 10
+        workers.StartNotificationConsumer(mqClient, database.DB)  // Etapa 12
+    }
+
+    // ... rest of setup ...
+}
+```
+
+Ambos workers escuchan colas diferentes: EmailConsumer → "email_notifications", NotificationConsumer → "push_notifications". Pueden coexistir sin conflicto.
+
+### Flujo Completo: Usuario Offline Recibe Mensaje
+
+```
+T=0: Usuario A envía "Hola" a Usuario B (offline)
+├─ readPump recibe JSON, envía al Hub
+├─ Hub.handleMessage() ejecuta SaveMessage() → persiste en BD
+├─ Busca clients[B] → NO ENCONTRADO (offline)
+├─ Llama sendPushNotification(B, A, "Hola")
+│  └─ Publica {UserID: B, Title: "Nuevo Mensaje", Body: "Hola", Type: "message"}
+│     a cola RabbitMQ "push_notifications"
+└─ Envía confirmación a A
+
+T=5: NotificationConsumer despierta (listening en RabbitMQ)
+├─ Lee evento de la cola
+├─ Consulta BD: SELECT fcm_token FROM users WHERE id = B
+├─ Obtiene token "efgiVWxyz..."
+├─ Prepara AndroidConfig{Tag: "chat_group"}
+└─ fcmClient.Send(token, mensaje)
+
+T=10: Firebase Cloud Messaging procesa
+├─ Conecta con Google Play Services en dispositivo de B
+├─ Muestra notificación con título "Nuevo Mensaje", cuerpo "Hola"
+├─ Agrupa bajo TAG "chat_group"
+└─ Usuario B ve notificación en barra
+
+T=100: Usuario B toca notificación
+├─ App se abre, InitChat dispara
+├─ ChatBloc.getHistory() carga "Hola" de BD
+├─ ChatScreen muestra mensaje con timestamp del servidor
+└─ Experiencia consistente
+```
+
+### Caso: Usuario A Abre App Mientras Recibe Mensaje
+
+Si mientras está online:
+
+- T=0: Envía Mensaje
+- T=5: Usuario abierto chatea normalmente
+- HandleMessage detecta clients[B] (presente)
+- Envía por WebSocket directo (no por push)
+- Usuario ve mensaje instantáneamente
+
+Garantía: El usuario SIEMPRE recibe el mensaje, sin importar su estado.
+
+### Configuración en docker-compose.yml
+
+```yaml
+rabbitmq:
+  image: rabbitmq:3.12-alpine
+  ports:
+    - "5672:5672"
+  environment:
+    RABBITMQ_DEFAULT_USER: guest
+    RABBITMQ_DEFAULT_PASS: guest
+
+# Servicio backend que ejecuta los workers
+api:
+  environment:
+    ENABLE_ASYNC_FEATURES: "true"
+    RABBITMQ_HOST: "rabbitmq"
+    FIREBASE_PROJECT_ID: "paws-app-3187d"
+  depends_on:
+    - rabbitmq
+```
+
+### Configuración en .env (Producción)
+
+```bash
+# Firebase
+FIREBASE_PROJECT_ID=paws-app-3187d
+
+# RabbitMQ
+ENABLE_ASYNC_FEATURES=true
+RABBITMQ_HOST=rabbitmq-service    # En K8s
+RABBITMQ_USER=guest
+RABBITMQ_PASSWORD=guest
+
+# Archivo de credenciales
+# firebase-service-account.json debe copiarse al servidor
+```
+
+### Mejoras Futuras
+
+1. **Incremento de Badge Count**: Mantener contador de notificaciones no leídas en icono de app
+2. **Deep Linking**: Tocar notificación abre chat específico, no solo la app
+3. **Retry Logic**: Si FCM falla, reintentar con backoff exponencial
+4. **Read Receipts**: Informar al remitente cuándo el destinatario leyó mensaje
+5. **Typing Indicator**: Mostrar cuando usuario está escribiendo (nuevo tipo de evento)
+
 ## Referencias
 
 - Gorilla WebSocket: https://github.com/gorilla/websocket

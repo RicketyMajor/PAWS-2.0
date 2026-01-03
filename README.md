@@ -5461,7 +5461,7 @@ Este proyecto se desarrolla en fases:
 - **Etapa 9** (Completada): Contenedorización total (Docker & Docker Compose), estabilidad de conexi\u00f3n con Supabase (Session Mode), almacenamiento resiliente (MinIO con fallback)
 - **Etapa 10** (Completada): Arquitectura orientada a eventos (RabbitMQ), registro en dos pasos con commit diferido (Redis + PostgreSQL), correos transaccionales (SendGrid), UX/UI mejorada
 - **Etapa 11** (Completada): Chat en tiempo real con WebSockets, Hub inteligente con enrutamiento por roles (Adoptante/Rescatista), dual-delivery (recipient + sender confirmation), persistencia garantizada en PostgreSQL, hybrid frontend loading (HTTP historial + WebSocket presente), stream fusion con BLoC, JWT validation en handshake
-- **Fase 12** (Planificada): Machine Learning para recomendaciones, scoring din\u00e1mico, predicci\u00f3n de \u00e9xito
+- **Etapa 12** (Completada): Notificaciones Push con Firebase Cloud Messaging (FCM), sistema h\u00edbrido en tiempo real (WebSocket online + Push offline), l\u00f3gica WhatsApp con detecci\u00f3n Online/Offline en Hub, agrupaci\u00f3n de notificaciones por Tag, registro transparente de tokens FCM, integraci\u00f3n RabbitMQ como broker de push notifications
 
 ## Documentación Adicional
 
@@ -5469,7 +5469,7 @@ Este proyecto se desarrolla en fases:
 - [Fase 1](documentation/Fase-1.md): Autenticación, seguridad, JWT y Bcrypt
 - [Fase 2](documentation/Fase-2.md): Gestión de mascotas, uploads, middleware, OCR
 - [Fase 3](documentation/Fase-3.md): Matchmaking, geolocalización, búsqueda SQL
-- [Fase 4](documentation/Fase-4.md): Chat distribuido, WebSocket, Redis, seguridad real-time, enrutamiento inteligente Etapa 11
+- [Fase 4](documentation/Fase-4.md): Chat distribuido, WebSocket, Redis, seguridad real-time, enrutamiento inteligente Etapa 11, push notifications Etapa 12
 - [Fase 5](documentation/Fase-5.md): Frontend Flutter, Clean Architecture, BLoC, arquitectura híbrida
 - [Fase 6](documentation/Fase-6.md): Dockerización, Kubernetes, orquestación, LoadBalancer, ClusterIP
 - [Fase 7](documentation/Fase-7.md): CI/CD pipeline, testing unitario, linting automático, escaneo de vulnerabilidades, Docker push
@@ -5484,6 +5484,7 @@ Este proyecto se desarrolla en fases:
 - **Etapa 9**: Contenedorización total y estabilidad (integrada en [Fase-0](documentation/Fase-0.md) y [Fase-9](documentation/Fase-9.md) con sección "COMPLETADO EN ETAPA 9")
 - **Etapa 10**: Arquitectura orientada a eventos y seguridad avanzada (integrada en [Fase-8](documentation/Fase-8.md), [Fase-10](documentation/Fase-10.md), y nueva [Fase-14](documentation/Fase-14.md) para detalles de asincronía)
 - **Etapa 11**: Chat en tiempo real, enrutamiento inteligente, persistencia garantizada (integrada en [Fase-4](documentation/Fase-4.md) con sección "COMPLETADO EN ETAPA 11" y nueva [Fase-15](documentation/Fase-15.md) para documentación completa)
+- **Etapa 12**: Notificaciones Push, sistema híbrido tiempo real (integrada en [Fase-4](documentation/Fase-4.md) con sección "COMPLETADO EN ETAPA 12" y nueva [Fase-16](documentation/Fase-16.md) para documentación completa)
 
 ## Notas Arquitectónicas
 
@@ -5523,5 +5524,9 @@ Este proyecto se desarrolla en fases:
 - **Hybrid Frontend Loading (Etapa 11)**: ChatRepository dual-source: getHistory() carga via HTTP GET (historial persistido), connect() establece WebSocket persistente. ChatBloc tres-fases en InitChat: (1) Decodifica JWT para myUserId, (2) HTTP load de mensajes históricos, (3) WS stream.listen() inyecta nuevos mensajes. BLoC fusion en ChatLoaded state asegura deduplicación por message.id y timestamps del servidor.
 - **Persistencia Garantizada (Etapa 11)**: Cada mensaje persiste en PostgreSQL antes de ser enrutado. Si servidor falla durante handleMessage(), mensaje ya está guardado. Si recipient está offline, mensaje espera en BD recuperable por GetHistory() en próxima conexión. Zero message loss architecture.
 - **Protocolo JSON Estructurado (Etapa 11)**: Mensajes de cliente: {"match_id": 1, "content": "..."}. Servidor responde: {"type": "new_message", "payload": {Message object}}. Type permite extensión a "typing", "read_receipt", "error" sin cambiar client code. Payload siempre contiene timestamp del servidor (created_at), evitando clock skew entre clientes.
+- **Detección Online/Offline (Etapa 12)**: Hub mantiene map[uint]\*Client de usuarios conectados. Al enviar mensaje, handleMessage() verifica if receiver, isOnline := h.clients[receiverID]. Si está online, envía por WebSocket directo. Si offline, desvía a cola RabbitMQ para que NotificationConsumer envíe Push Notification mediante Firebase.
+- **Agrupación de Notificaciones (Etapa 12)**: AndroidConfig en Firebase configura Tag="chat_group" para que múltiples notificaciones de chat se agrupen en barra de notificaciones (ej: "3 mensajes nuevos"). Previene saturación y mejora UX. Se puede extender a otros tipos de eventos con Tags diferentes.
+- **Registro Transparente de Token FCM (Etapa 12)**: En LoginScreen, tras autenticación exitosa, obtiene token FCM vía FirebaseMessaging.instance.getToken() y lo envía a endpoint POST /notifications/token. UserService.UpdateFCMToken() guarda en campo fcm_token de tabla users. No requiere interacción del usuario, completamente transparente.
+- **Sistema Híbrido Push+WebSocket (Etapa 12)**: Si usuario recibe mensaje con app abierta (WebSocket conectado), llega por socket instantáneamente. Si cierra app (desconectado), Hub detecta offline y publica evento a RabbitMQ, NotificationConsumer lee token FCM y envía via Firebase. Garantiza entrega en ambos casos sin que usuario pierda mensajes.
 
 ## Autor
