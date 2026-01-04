@@ -2,8 +2,8 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../../../core/constants/api_constants.dart';
+import '../../../../core/utils/image_helper.dart'; // <--- IMPORTANTE
 import '../../../chat/presentation/screens/chat_screen.dart';
-import '../../../../core/presentation/widgets/smart_image.dart';
 
 class AdopterMatchesScreen extends StatefulWidget {
   const AdopterMatchesScreen({super.key});
@@ -30,6 +30,7 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
   }
 
   Future<void> _loadAllData() async {
+    if (!mounted) return;
     setState(() => _isLoading = true);
     try {
       final token = await _storage.read(key: 'jwt_token');
@@ -48,7 +49,6 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
 
       if (mounted) {
         setState(() {
-          // 1. CORRECCIÓN: Agregamos "?? []" para evitar la pantalla morada de error NULL
           _acceptedMatches = responses[0].data ?? [];
           _pendingMatches = responses[1].data ?? [];
           _isLoading = false;
@@ -100,29 +100,27 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
       itemCount: _acceptedMatches.length,
       itemBuilder: (context, index) {
         final match = _acceptedMatches[index];
-        final pet = match['pet'];
+        final pet =
+            match['pet'] ?? match['Pet']; // Robustez mayúsculas/minúsculas
 
-        // 2. CORRECCIÓN ROBUSTA DE LECTURA DE DATOS
-        // Intentamos leer 'User' (Go default) o 'user' (si tienes tags json)
+        // Extraer datos del Rescatista (Dueño de la mascota)
         final rescuerData = pet['User'] ?? pet['user'];
-
         final rescuerName = rescuerData?['name'] ?? 'Rescatista';
-
-        // 3. CORRECCIÓN CRÍTICA DEL ID
-        // GORM envía 'ID' (Mayúscula). Probamos ambas por seguridad.
         final rescuerId = rescuerData?['ID'] ?? rescuerData?['id'] ?? 0;
 
-        // DEBUG: Imprimir en consola para verificar qué está llegando
-        print("DEBUG CHECK: Nombre: $rescuerName, ID detectado: $rescuerId");
+        // --- NUEVO: Extraer Foto del Rescatista ---
+        final rescuerPhoto = rescuerData?['photo_url'];
 
         return Card(
           child: ListTile(
-            leading: SizedBox(
-              width: 60,
-              height: 60,
-              child: SmartImage(
+            leading: ClipRRect(
+              borderRadius: BorderRadius.circular(30),
+              // Usamos ImageHelper para asegurar que la foto de la mascota se vea
+              child: ImageHelper.getImage(
                 pet['photo_url'],
-                borderRadius: BorderRadius.circular(30), // Para hacerlo redondo
+                width: 60,
+                height: 60,
+                fit: BoxFit.cover,
               ),
             ),
             title: Text(
@@ -138,7 +136,8 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
                   builder: (_) => ChatScreen(
                     matchId: match['id'],
                     peerName: rescuerName,
-                    peerId: rescuerId, // Ahora sí enviamos el ID correcto
+                    peerId: rescuerId,
+                    peerPhotoUrl: rescuerPhoto, // <--- Enviamos la foto al chat
                   ),
                 ),
               );
@@ -149,6 +148,7 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
     );
   }
 
+  // --- TAB 2: LIKES ENVIADOS (PENDIENTES) ---
   Widget _buildPendingList() {
     if (_pendingMatches.isEmpty) {
       return _buildEmptyState(
@@ -161,21 +161,31 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
       itemCount: _pendingMatches.length,
       itemBuilder: (context, index) {
         final match = _pendingMatches[index];
-        final pet = match['pet'];
+        final pet =
+            match['pet'] ?? match['Pet']; // Robustez mayúsculas/minúsculas
 
         return Card(
-          color: Colors.grey[50],
+          color: Colors.grey[50], // Color diferente para indicar "Espera"
+          margin: const EdgeInsets.only(bottom: 12),
           child: ListTile(
-            leading: SizedBox(
-              width: 60,
-              height: 60,
-              child: SmartImage(
+            leading: ClipRRect(
+              borderRadius: BorderRadius.circular(30),
+              // Aquí también aplicamos ImageHelper para que se vea la foto
+              child: ImageHelper.getImage(
                 pet['photo_url'],
-                borderRadius: BorderRadius.circular(30), // Para hacerlo redondo
+                width: 60,
+                height: 60,
+                fit: BoxFit.cover,
               ),
             ),
-            title: Text(pet['name']),
-            subtitle: const Text("Esperando respuesta del rescatista..."),
+            title: Text(
+              pet['name'] ?? 'Sin Nombre',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            subtitle: const Text(
+              "Esperando respuesta...",
+              style: TextStyle(color: Colors.orange),
+            ),
             trailing: const Icon(Icons.hourglass_empty, color: Colors.orange),
           ),
         );
@@ -194,13 +204,5 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
         ],
       ),
     );
-  }
-
-  ImageProvider? _getPetImage(String? url) {
-    if (url == null) return null;
-    if (!url.startsWith('http')) {
-      return NetworkImage('${ApiConstants.baseUrl}$url');
-    }
-    return NetworkImage(url);
   }
 }

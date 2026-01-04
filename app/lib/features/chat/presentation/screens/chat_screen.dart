@@ -4,17 +4,20 @@ import '../bloc/chat_bloc.dart';
 import '../../data/chat_repository.dart';
 import '../../domain/message_model.dart';
 import '../../../social/data/social_repository.dart';
+import '../../../../core/utils/image_helper.dart'; // <--- IMPORTANTE
 
 class ChatScreen extends StatelessWidget {
   final int matchId;
   final String peerName; // Nombre de la otra persona
   final int peerId;
+  final String? peerPhotoUrl;
 
   const ChatScreen({
     super.key,
     required this.matchId,
     required this.peerName,
     required this.peerId,
+    this.peerPhotoUrl,
   });
 
   @override
@@ -24,9 +27,20 @@ class ChatScreen extends StatelessWidget {
           ChatBloc(repository: RepositoryProvider.of<ChatRepository>(context))
             ..add(InitChat(matchId)),
       child: Scaffold(
-        backgroundColor: const Color(0xFFECE5DD), // Fondo tipo WhatsApp
+        backgroundColor: const Color(0xFFECE5DD),
         appBar: AppBar(
-          title: Text(peerName),
+          titleSpacing: 0,
+          title: Row(
+            children: [
+              // FOTO EN LA BARRA SUPERIOR (ESTILO WHATSAPP)
+              CircleAvatar(
+                radius: 18,
+                backgroundImage: ImageHelper.getProvider(peerPhotoUrl),
+              ),
+              const SizedBox(width: 10),
+              Expanded(child: Text(peerName, overflow: TextOverflow.ellipsis)),
+            ],
+          ),
           actions: [
             // --- MENÚ DE CONFIANZA ---
             PopupMenuButton<String>(

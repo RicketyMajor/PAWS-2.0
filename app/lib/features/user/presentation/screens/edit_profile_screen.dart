@@ -2,7 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:image_picker/image_picker.dart';
-import '../../../../core/constants/api_constants.dart'; // Para construir URL de foto
+import '../../../../core/utils/image_helper.dart'; // <--- IMPORTA EL HELPER
 import '../../data/user_repository.dart';
 
 class EditProfileScreen extends StatefulWidget {
@@ -14,13 +14,17 @@ class EditProfileScreen extends StatefulWidget {
 
 class _EditProfileScreenState extends State<EditProfileScreen> {
   final _formKey = GlobalKey<FormState>();
+
+  // Controladores
   final _nameCtrl = TextEditingController();
   final _bioCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
 
-  String? _currentPhotoUrl; // URL que viene del backend
-  File? _newPhotoFile; // Foto nueva seleccionada del celular
+  String? _currentPhotoUrl;
+  File? _newPhotoFile;
+
   bool _isLoading = true;
+  bool _isEditing = false; // <--- NUEVO: Controla el modo edición
 
   @override
   void initState() {
@@ -31,26 +35,30 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   Future<void> _loadProfile() async {
     try {
       final repo = context.read<UserRepository>();
-      final data = await repo.getProfile(); // GET /profile
+      final data = await repo.getProfile();
 
-      setState(() {
-        _nameCtrl.text = data['name'] ?? '';
-        _bioCtrl.text = data['bio'] ?? '';
-        _phoneCtrl.text = data['phone'] ?? '';
-        _currentPhotoUrl = data['photo_url'];
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _nameCtrl.text = data['name'] ?? '';
+          _bioCtrl.text = data['bio'] ?? '';
+          _phoneCtrl.text = data['phone'] ?? '';
+          _currentPhotoUrl = data['photo_url'];
+          _isLoading = false;
+        });
+      }
     } catch (e) {
       if (mounted) {
+        setState(() => _isLoading = false);
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text("Error: $e")));
-        setState(() => _isLoading = false);
       }
     }
   }
 
   Future<void> _pickImage() async {
+    if (!_isEditing) return; // Solo permite cambiar foto en modo edición
+
     final picker = ImagePicker();
     final picked = await picker.pickImage(source: ImageSource.gallery);
     if (picked != null) {
@@ -68,12 +76,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       final repo = context.read<UserRepository>();
       String finalPhotoUrl = _currentPhotoUrl ?? "";
 
-      // 1. Si hay foto nueva, la subimos primero
       if (_newPhotoFile != null) {
         finalPhotoUrl = await repo.uploadProfilePicture(_newPhotoFile!);
       }
 
-      // 2. Actualizamos el perfil con los textos y la URL (nueva o vieja)
       await repo.updateProfile(
         name: _nameCtrl.text,
         bio: _bioCtrl.text,
@@ -82,17 +88,25 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       );
 
       if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _isEditing = false; // Volver a modo lectura
+          _currentPhotoUrl = finalPhotoUrl; // Actualizar URL local
+          _newPhotoFile = null;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("¡Perfil actualizado con éxito! 🎉")),
+          const SnackBar(
+            content: Text("¡Perfil actualizado!"),
+            backgroundColor: Colors.green,
+          ),
         );
-        Navigator.pop(context, true); // Volvemos atrás indicando éxito
       }
     } catch (e) {
       if (mounted) {
+        setState(() => _isLoading = false);
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text("Error: $e")));
-        setState(() => _isLoading = false);
       }
     }
   }
@@ -101,11 +115,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Editar Perfil"),
+        title: const Text("Mi Perfil"),
         actions: [
+          // Botón Cambiante: Lápiz (Editar) o Check (Guardar)
           IconButton(
-            icon: const Icon(Icons.check),
-            onPressed: _isLoading ? null : _save,
+            icon: Icon(_isEditing ? Icons.check : Icons.edit),
+            onPressed: _isLoading
+                ? null
+                : (_isEditing
+                      ? _save
+                      : () => setState(() => _isEditing = true)),
           ),
         ],
       ),
@@ -126,54 +145,41 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           CircleAvatar(
                             radius: 60,
                             backgroundColor: Colors.grey[300],
-                            backgroundImage: _getAvatarImage(),
-                            child: _getAvatarChild(),
+                            // Usamos el Helper para la imagen
+                            backgroundImage: _newPhotoFile != null
+                                ? FileImage(_newPhotoFile!)
+                                : ImageHelper.getProvider(_currentPhotoUrl),
                           ),
-                          const CircleAvatar(
-                            backgroundColor: Colors.blue,
-                            radius: 18,
-                            child: Icon(
-                              Icons.camera_alt,
-                              color: Colors.white,
-                              size: 18,
+                          if (_isEditing) // Solo muestra la camarita en modo edición
+                            const CircleAvatar(
+                              backgroundColor: Color(0xFFE91E63),
+                              radius: 18,
+                              child: Icon(
+                                Icons.camera_alt,
+                                color: Colors.white,
+                                size: 18,
+                              ),
                             ),
-                          ),
                         ],
                       ),
                     ),
                     const SizedBox(height: 24),
 
-                    // --- CAMPOS DE TEXTO ---
-                    TextFormField(
-                      controller: _nameCtrl,
-                      decoration: const InputDecoration(
-                        labelText: "Nombre Completo",
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.person),
-                      ),
-                      validator: (v) => v!.isEmpty ? "Campo requerido" : null,
-                    ),
+                    // --- CAMPOS (Solo lectura si !_isEditing) ---
+                    _buildTextField(_nameCtrl, "Nombre Completo", Icons.person),
                     const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _bioCtrl,
-                      decoration: const InputDecoration(
-                        labelText: "Biografía (Cuéntanos de ti)",
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.description),
-                        hintText:
-                            "Ej: Tengo patio grande y amo salir a correr...",
-                      ),
+                    _buildTextField(
+                      _bioCtrl,
+                      "Biografía",
+                      Icons.description,
                       maxLines: 3,
                     ),
                     const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _phoneCtrl,
-                      decoration: const InputDecoration(
-                        labelText: "Teléfono / WhatsApp",
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.phone),
-                      ),
-                      keyboardType: TextInputType.phone,
+                    _buildTextField(
+                      _phoneCtrl,
+                      "Teléfono",
+                      Icons.phone,
+                      isPhone: true,
                     ),
                   ],
                 ),
@@ -182,26 +188,33 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     );
   }
 
-  ImageProvider? _getAvatarImage() {
-    if (_newPhotoFile != null) {
-      return FileImage(_newPhotoFile!);
-    }
-    if (_currentPhotoUrl != null && _currentPhotoUrl!.isNotEmpty) {
-      // Manejar URL completa o relativa
-      String url = _currentPhotoUrl!;
-      if (!url.startsWith('http')) {
-        url = '${ApiConstants.baseUrl}$url';
-      }
-      return NetworkImage(url);
-    }
-    return null;
-  }
-
-  Widget _getAvatarChild() {
-    if (_newPhotoFile == null &&
-        (_currentPhotoUrl == null || _currentPhotoUrl!.isEmpty)) {
-      return const Icon(Icons.person, size: 60, color: Colors.grey);
-    }
-    return const SizedBox();
+  Widget _buildTextField(
+    TextEditingController ctrl,
+    String label,
+    IconData icon, {
+    int maxLines = 1,
+    bool isPhone = false,
+  }) {
+    return TextFormField(
+      controller: ctrl,
+      enabled: _isEditing, // <--- MAGIA: Se bloquea si no editamos
+      decoration: InputDecoration(
+        labelText: label,
+        prefixIcon: Icon(
+          icon,
+          color: _isEditing ? const Color(0xFFE91E63) : Colors.grey,
+        ),
+        border: const OutlineInputBorder(),
+        disabledBorder: OutlineInputBorder(
+          // Borde más sutil en modo lectura
+          borderSide: BorderSide(color: Colors.grey.shade300),
+        ),
+        filled: !_isEditing,
+        fillColor: Colors.grey.shade50,
+      ),
+      maxLines: maxLines,
+      keyboardType: isPhone ? TextInputType.phone : TextInputType.text,
+      validator: (v) => v!.isEmpty ? "Requerido" : null,
+    );
   }
 }

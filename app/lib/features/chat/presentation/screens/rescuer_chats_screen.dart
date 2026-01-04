@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../../../core/utils/image_helper.dart'; // <--- IMPORTANTE
 import '../../../pets/data/matches_repository.dart';
 import 'chat_screen.dart';
 
@@ -36,7 +37,6 @@ class _RescuerChatsScreenState extends State<RescuerChatsScreen> {
           if (snapshot.hasError) {
             return Center(child: Text("Error: ${snapshot.error}"));
           }
-          // Protección contra null
           final chats = snapshot.data ?? [];
 
           if (chats.isEmpty) {
@@ -48,47 +48,37 @@ class _RescuerChatsScreenState extends State<RescuerChatsScreen> {
             itemBuilder: (context, index) {
               final match = chats[index];
 
-              // 1. BLINDAJE DE DATOS (Probar mayúsculas y minúsculas)
+              // Datos del Adoptante
               final adopter = match['Adopter'] ?? match['adopter'];
               final pet = match['Pet'] ?? match['pet'];
 
               final adopterName = adopter?['name'] ?? 'Adoptante';
               final petName = pet?['name'] ?? 'Mascota';
-
-              // 2. EXTRACCIÓN ROBUSTA DE ID
               final adopterId = adopter?['ID'] ?? adopter?['id'] ?? 0;
 
-              // 3. DEBUG: ¡Mira esto en tu consola de Flutter!
-              print(
-                "RESCUER_DEBUG: Chat con $adopterName. ID detectado: $adopterId",
-              );
+              // --- NUEVO: Foto del Adoptante ---
+              final adopterPhoto = adopter?['photo_url'];
 
               return Card(
                 margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 child: ListTile(
                   leading: CircleAvatar(
                     backgroundColor: Colors.purple[100],
-                    child: Text(
-                      adopterName.isNotEmpty
-                          ? adopterName[0].toUpperCase()
-                          : '?',
-                    ),
+                    // Usamos ImageHelper para mostrar la foto real si existe
+                    backgroundImage: ImageHelper.getProvider(adopterPhoto),
+                    child: (adopterPhoto == null || adopterPhoto.isEmpty)
+                        ? Text(
+                            adopterName.isNotEmpty
+                                ? adopterName[0].toUpperCase()
+                                : '?',
+                          )
+                        : null,
                   ),
                   title: Text(adopterName),
                   subtitle: Text("Interesado en $petName"),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () {
-                    // Si el ID es 0, mostramos alerta para no crashear el backend
-                    if (adopterId == 0) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            "Error: No se pudo identificar al usuario",
-                          ),
-                        ),
-                      );
-                      return;
-                    }
+                    if (adopterId == 0) return;
 
                     Navigator.push(
                       context,
@@ -97,6 +87,7 @@ class _RescuerChatsScreenState extends State<RescuerChatsScreen> {
                           matchId: match['id'],
                           peerName: adopterName,
                           peerId: adopterId,
+                          peerPhotoUrl: adopterPhoto, // <--- Enviamos la foto
                         ),
                       ),
                     );

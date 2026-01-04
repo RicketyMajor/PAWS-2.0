@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../../../core/utils/image_helper.dart'; // <--- IMPORTANTE
 import '../../../auth/presentation/screens/login_screen.dart';
 import '../../data/pets_repository.dart';
 import '../../domain/pet_model.dart';
 import 'create_pet_screen.dart';
-import 'pet_detail_screen.dart'; // <--- IMPORTANTE: Importamos el detalle
+import 'pet_detail_screen.dart';
 import 'package:provider/provider.dart';
 
 class RescuerHomeScreen extends StatefulWidget {
@@ -52,7 +53,6 @@ class _RescuerHomeScreenState extends State<RescuerHomeScreen> {
       appBar: AppBar(
         title: const Text("Mis Mascotas"),
         actions: [
-          // Logout
           IconButton(
             icon: const Icon(Icons.exit_to_app),
             tooltip: "Cerrar Sesión",
@@ -77,7 +77,7 @@ class _RescuerHomeScreenState extends State<RescuerHomeScreen> {
             context,
             MaterialPageRoute(builder: (context) => const CreatePetScreen()),
           );
-          _loadMyPets(); // Recargar al volver de crear
+          _loadMyPets();
         },
         label: const Text("Publicar Mascota"),
         icon: const Icon(Icons.add),
@@ -100,48 +100,43 @@ class _RescuerHomeScreenState extends State<RescuerHomeScreen> {
   }
 
   Widget _buildPetsList() {
-    // URL base para arreglar imágenes relativas en el listado
-    const String baseUrl = 'http://10.0.2.2:8080';
-
     return ListView.builder(
       padding: const EdgeInsets.all(16),
       itemCount: _myPets.length,
       itemBuilder: (context, index) {
         final pet = _myPets[index];
 
-        // Lógica de imagen segura
-        String? imageUrl = pet.imageUrl;
-        if (imageUrl != null && !imageUrl.startsWith('http')) {
-          imageUrl = '$baseUrl$imageUrl';
-        }
-
         return Card(
           margin: const EdgeInsets.only(bottom: 16),
-          // Usamos InkWell para detectar el toque y dar efecto visual
           child: InkWell(
             borderRadius: BorderRadius.circular(12),
             onTap: () async {
-              // 1. Navegar al detalle
               final result = await Navigator.push(
                 context,
                 MaterialPageRoute(
                   builder: (context) => PetDetailScreen(pet: pet),
                 ),
               );
-
-              // 2. Si result es true (significa que se borró), recargamos la lista
               if (result == true && mounted) {
                 _loadMyPets();
               }
             },
             child: ListTile(
               contentPadding: const EdgeInsets.all(12),
-              leading: CircleAvatar(
-                radius: 30,
-                backgroundImage: imageUrl != null
-                    ? NetworkImage(imageUrl)
-                    : null,
-                child: imageUrl == null ? const Icon(Icons.pets) : null,
+              leading: SizedBox(
+                width: 60,
+                height: 60,
+                // --- CORRECCIÓN ROBUSTA ---
+                // En lugar de usar backgroundImage (que falla silenciosamente),
+                // usamos ClipOval + ImageHelper.getImage para ver errores o placeholders.
+                child: ClipOval(
+                  child: ImageHelper.getImage(
+                    pet.imageUrl,
+                    width: 60,
+                    height: 60,
+                    fit: BoxFit.cover,
+                  ),
+                ),
               ),
               title: Text(
                 pet.name,
@@ -155,7 +150,6 @@ class _RescuerHomeScreenState extends State<RescuerHomeScreen> {
                 children: [
                   Text("${pet.breed} • ${pet.age} años"),
                   const SizedBox(height: 4),
-                  // Chip pequeño para ver el estado en la lista
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 8,

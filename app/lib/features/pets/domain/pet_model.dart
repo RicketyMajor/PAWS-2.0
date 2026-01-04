@@ -47,7 +47,13 @@ class Pet {
       breed: json['breed'] ?? 'Mestizo',
       age: parseInt(json['age']),
       description: json['description'] ?? '',
-      imageUrl: json['image_url'],
+
+      // --- CORRECCIÓN CRÍTICA AQUÍ ---
+      // Antes: json['image_url']  <-- ERROR
+      // Ahora: json['photo_url']  <-- CORRECTO (Coincide con pet.go)
+      imageUrl: json['photo_url'],
+
+      // -------------------------------
       goodWithKids: parseBool(json['good_with_kids']),
       goodWithDogs: parseBool(json['good_with_dogs']),
       requiresYard: parseBool(json['requires_yard']),

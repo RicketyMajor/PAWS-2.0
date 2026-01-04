@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../../../core/utils/image_helper.dart'; // <--- IMPORTANTE
 import '../../data/pets_repository.dart';
 import '../../domain/pet_model.dart';
 
@@ -30,14 +31,11 @@ class PetDetailScreen extends StatelessWidget {
 
     if (confirm == true && context.mounted) {
       try {
-        // Llamamos al repositorio directamente para borrar
         await context.read<PetsRepository>().deletePet(pet.id);
-
         if (context.mounted) {
           ScaffoldMessenger.of(
             context,
           ).showSnackBar(const SnackBar(content: Text("Mascota eliminada")));
-          // Volvemos atrás y avisamos que hay que recargar
           Navigator.pop(context, true);
         }
       } catch (e) {
@@ -52,17 +50,12 @@ class PetDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // URL Hack para emulador (igual que en MatchScreen)
-    const String baseUrl = 'http://10.0.2.2:8080';
-    String? imageUrl = pet.imageUrl;
-    if (imageUrl != null && !imageUrl.startsWith('http')) {
-      imageUrl = '$baseUrl$imageUrl';
-    }
-
     return Scaffold(
       appBar: AppBar(
         title: Text(pet.name),
         actions: [
+          // Solo mostramos borrar si es "mi" mascota (podríamos validar ownerId,
+          // pero asumimos que si llegamos aquí como rescatista es mía o tengo permisos)
           IconButton(
             icon: const Icon(Icons.delete),
             onPressed: () => _deletePet(context),
@@ -73,20 +66,17 @@ class PetDetailScreen extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Imagen Gigante
+            // --- IMAGEN CORREGIDA CON IMAGEHELPER ---
             SizedBox(
               height: 300,
-              child: imageUrl != null
-                  ? Image.network(imageUrl, fit: BoxFit.cover)
-                  : Container(
-                      color: Colors.grey[300],
-                      child: const Icon(
-                        Icons.pets,
-                        size: 100,
-                        color: Colors.grey,
-                      ),
-                    ),
+              child: ImageHelper.getImage(
+                pet.imageUrl,
+                width: double.infinity,
+                height: 300,
+                fit: BoxFit.cover,
+              ),
             ),
+            // ----------------------------------------
             Padding(
               padding: const EdgeInsets.all(16.0),
               child: Column(
