@@ -2228,6 +2228,318 @@ Etapa 5 se considera **Etapa Post-MVP**:
 - Flujo de confianza construido por historial
 - Preparado para NLP y IA en futuras fases
 
+## Etapa 13: Refinamiento Frontend - Estabilidad Visual y Corrección de Flujo de Datos (Completada)
+
+La Etapa 13 representa una fase crítica de refinamiento enfocada en la estabilidad visual del frontend y la corrección de discrepancias entre el mapeo de datos del backend y la interfaz de usuario. Aunque sin cambios de funcionalidad nueva, esta etapa consolidó la experiencia de usuario resolviendo fallos silenciosos en la carga de imágenes, unificando la terminología de campos de datos, y mejorando la presentación de información entre pantallas de chat, solicitudes y listas de adopción.
+
+### Problemas Solucionados en Etapa 13
+
+**1. Arquitectura de Imágenes Robusta (ImageHelper)**
+
+Problema identificado: Las imágenes de mascotas y usuarios fallaban silenciosamente en ciertos contextos (emulador Android, dispositivos reales, web), dejando espacios en blanco o iconos rotos sin feedback visual útil.
+
+Solución implementada: Creación de un utilitario centralizado `ImageHelper` en `app/lib/core/utils/image_helper.dart` que:
+
+- Detecta el entorno (emulador Android vs dispositivo real vs web)
+- Corrige automáticamente URLs de localhost a 10.0.2.2 en emulador
+- Diferencia entre URLs absolutas (http/https) y relativas (/uploads/...)
+- Maneja correctamente la base URL cuando termina en /api/v1 pero la imagen es estática
+- Proporciona placeholders visuales cuando la imagen falla o no existe
+- Implementa loading progress indicator durante descarga
+- Ofrece métodos para uso en diferentes contextos (getImage para Widget, getProvider para ImageProvider)
+
+**Código Clave**:
+
+```dart
+class ImageHelper {
+  static String fixUrl(String url) {
+    if (url.isEmpty) return '';
+
+    // URLs absolutas: detectar emulador
+    if (url.startsWith('http')) {
+      if (!kIsWeb && Platform.isAndroid && url.contains('localhost')) {
+        return url.replaceFirst('localhost', '10.0.2.2');
+      }
+      return url;
+    }
+
+    // URLs relativas: construir URL completa
+    String baseUrl = ApiConstants.baseUrl;
+    if (url.startsWith('/uploads') && baseUrl.endsWith('/api/v1')) {
+      baseUrl = baseUrl.replaceAll('/api/v1', '');
+    }
+
+    return '$baseUrl$url';
+  }
+
+  static Widget getImage(String? url, {double? width, double? height, BoxFit fit = BoxFit.cover}) {
+    if (url == null || url.isEmpty) {
+      return Container(
+        width: width,
+        height: height,
+        color: Colors.grey[300],
+        child: Icon(Icons.pets, color: Colors.grey[500]),
+      );
+    }
+
+    return Image.network(
+      fixUrl(url),
+      width: width,
+      height: height,
+      fit: fit,
+      errorBuilder: (context, error, stackTrace) {
+        return Container(
+          width: width,
+          height: height,
+          color: Colors.grey[200],
+          child: Icon(Icons.broken_image, color: Colors.grey[400]),
+        );
+      },
+      loadingBuilder: (context, child, loadingProgress) {
+        if (loadingProgress == null) return child;
+        return Container(
+          width: width,
+          height: height,
+          color: Colors.grey[100],
+          child: Center(child: CircularProgressIndicator()),
+        );
+      },
+    );
+  }
+
+  static ImageProvider getProvider(String? url) {
+    if (url == null || url.isEmpty) {
+      return const AssetImage('assets/images/placeholder.png');
+    }
+    return NetworkImage(fixUrl(url));
+  }
+}
+```
+
+**Impacto**: Todas las pantallas que muestran imágenes (PetCard, RescuerHomeScreen, ChatScreen, AdopterMatchesScreen, RescuerChatsScreen) ahora usan ImageHelper. Las imágenes se cargan correctamente sin fallos silenciosos.
+
+**2. Corrección de Mapeo de Datos: photo_url vs image_url**
+
+Problema identificado: Discrepancia entre la terminología usada en el backend Go (campo `photo_url` en mascotas) y el frontend Flutter (que esperaba `image_url` en el modelo Pet).
+
+Raíz del problema: En `internal/core/domain/pet.go` (backend), el campo es:
+
+```go
+PhotoURL string `json:"photo_url"`
+```
+
+Pero en `app/lib/features/pets/domain/pet_model.dart` (frontend), el fromJson esperaba:
+
+```dart
+imageUrl: json['image_url'],  // INCORRECTO
+```
+
+Solución implementada: Actualización del modelo Pet en el frontend para mapear correctamente:
+
+```dart
+class Pet {
+  final String? imageUrl;
+
+  factory Pet.fromJson(Map<String, dynamic> json) {
+    return Pet(
+      // ... otros campos ...
+      // CORREGIDO: Ahora usa photo_url como lo envía el backend
+      imageUrl: json['photo_url'],
+      // ...
+    );
+  }
+}
+```
+
+**Impacto**: Las fotos de nuevas mascotas aparecen instantáneamente en las listas sin necesidad de recargar. El flujo de "crear mascota" → "ver en lista" ahora funciona sin brechas visuales.
+
+**3. Mejora en RescuerHomeScreen: Reemplazo de BackgroundImage por ClipOval + ImageHelper**
+
+Problema identificado: El widget BackgroundImage en CircleAvatar fallaba silenciosamente cuando no podía cargar la imagen, dejando un círculo gris sin feedback. Además, no mostraba loading indicator.
+
+Solución implementada: Reemplazo de la implementación antigua:
+
+```dart
+// ANTES (fallos silenciosos)
+CircleAvatar(
+  backgroundImage: NetworkImage(pet.imageUrl),
+)
+
+// DESPUÉS (robusto con feedback)
+ClipOval(
+  child: ImageHelper.getImage(
+    pet.imageUrl,
+    width: 60,
+    height: 60,
+    fit: BoxFit.cover,
+  ),
+)
+```
+
+**Beneficio**: El usuario ve claramente si la imagen está cargando, si falló, o si existe placeholder. La UX es más transparente y profesional.
+
+**4. Chat y Listas: Mostrar Foto de la Persona, No Solo de la Mascota**
+
+Problema identificado: En ChatScreen, solo se mostraba la foto de la mascota en la barra superior. Adoptantes y Rescatistas no veían la foto de la persona con la que estaban chateando.
+
+Solución implementada: Modificación de múltiples pantallas para extraer y mostrar la foto del usuario contrario:
+
+En `ChatScreen`:
+
+```dart
+class ChatScreen extends StatelessWidget {
+  final String? peerPhotoUrl;  // Nueva propiedad
+
+  @override
+  Widget build(BuildContext context) {
+    return AppBar(
+      title: Row(
+        children: [
+          CircleAvatar(
+            backgroundImage: ImageHelper.getProvider(peerPhotoUrl),
+          ),
+          SizedBox(width: 10),
+          Expanded(child: Text(peerName)),
+        ],
+      ),
+    );
+  }
+}
+```
+
+En `RescuerChatsScreen` (listas de chats activos):
+
+```dart
+final adopterPhoto = adopter?['photo_url'];
+
+ListTile(
+  leading: CircleAvatar(
+    backgroundImage: ImageHelper.getProvider(adopterPhoto),
+    child: (adopterPhoto == null || adopterPhoto.isEmpty)
+        ? Text(adopterName[0].toUpperCase())
+        : null,
+  ),
+  title: Text(adopterName),
+  subtitle: Text("Interesado en $petName"),
+)
+```
+
+En `AdopterMatchesScreen` (listas de chats activos para adoptantes):
+
+```dart
+final rescuerPhoto = rescuerData?['photo_url'];
+
+ListTile(
+  leading: ClipRRect(
+    borderRadius: BorderRadius.circular(30),
+    child: ImageHelper.getImage(
+      pet['photo_url'],
+      width: 60,
+      height: 60,
+      fit: BoxFit.cover,
+    ),
+  ),
+  onTap: () {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ChatScreen(
+          peerPhotoUrl: rescuerPhoto,  // Pasar foto del rescatista
+        ),
+      ),
+    );
+  },
+)
+```
+
+**Impacto**: El usuario ahora ve la cara de la persona con la que va a chatear, mejorando significativamente la confianza y reconocimiento. Coincide con patrones de apps exitosas como WhatsApp, Tinder, etc.
+
+**5. Corrección del Crash en EditProfileScreen**
+
+Problema identificado: Al guardar cambios en el perfil, ocasionalmente ocurría un crash sin mensaje claro.
+
+Raíz: Tipo casting incorrecto o manejo de null en la respuesta de PUT /profile.
+
+Solución implementada: Mejora en el manejo de errores y validación en UserRepository y EditProfileScreen con try-catch mejorados, validación de respuesta HTTP, y feedback claro al usuario.
+
+### Cambios Técnicos en Etapa 13
+
+**Archivos Modificados**:
+
+- `app/lib/core/utils/image_helper.dart`: Creado nuevo archivo con la clase ImageHelper
+- `app/lib/features/pets/domain/pet_model.dart`: Actualizado fromJson para usar photo_url
+- `app/lib/features/pets/presentation/screens/rescuer_home_screen.dart`: Reemplazo de BackgroundImage
+- `app/lib/features/chat/presentation/screens/chat_screen.dart`: Agregado peerPhotoUrl, mostrar foto en AppBar
+- `app/lib/features/chat/presentation/screens/rescuer_chats_screen.dart`: Mostrar foto del adoptante en lista
+- `app/lib/features/pets/presentation/screens/adopter_matches_screen.dart`: Mostrar foto del rescatista, pasar a ChatScreen
+- `app/lib/features/chat/presentation/screens/match_requests_screen.dart`: Mejorado manejo de fotos
+- `app/lib/features/user/presentation/screens/edit_profile_screen.dart`: Mejorado manejo de errores
+
+**Patrón de Uso de ImageHelper en Todo el Frontend**:
+
+Todas las pantallas que muestran imágenes ahora siguen el patrón:
+
+```dart
+import '../../../../core/utils/image_helper.dart';
+
+// En build():
+ImageHelper.getImage(
+  imageUrl,
+  width: 60,
+  height: 60,
+  fit: BoxFit.cover,
+)
+
+// Para CircleAvatar:
+CircleAvatar(
+  backgroundImage: ImageHelper.getProvider(photoUrl),
+)
+```
+
+### Beneficios Consolidados de Etapa 13
+
+1. **Estabilidad Visual**: Todas las imágenes se cargan de forma predecible sin fallos silenciosos
+2. **Consistencia de Datos**: Mapeo correcto entre backend (photo_url) y frontend (imageUrl)
+3. **Humanización**: Ver la foto de la persona en chats y listas aumenta confianza dramáticamente
+4. **UX Profesional**: Loading indicators y placeholders brindan feedback claro
+5. **Debugging Simplificado**: Errores de imagen son visibles (icono roto) en lugar de silenciosos
+6. **Compatibilidad Multiambiente**: ImageHelper maneja emulador, dispositivo real, y web sin código duplicado
+7. **Mantenimiento**: Un único punto de control (ImageHelper) para toda la lógica de imágenes
+
+### Arquitectura de Imágenes Post-Etapa 13
+
+```
+Backend (Go):
+  Photo Upload → MinIO → Returns /uploads/uuid.jpg
+  User.photo_url = "/uploads/uuid.jpg"
+  Pet.photo_url = "/uploads/uuid.jpg"
+
+Frontend (Flutter):
+  Fetch User/Pet JSON → Contains photo_url
+  ImageHelper.fixUrl(photo_url) → Correct URL for environment
+  ImageHelper.getImage() → Display with loading/error handling
+
+Resultado:
+  Web: localhost:3000 → http://localhost:8080/uploads/uuid.jpg
+  Android Emulator: 10.0.2.2 → http://10.0.2.2:8080/uploads/uuid.jpg
+  Android Device: 192.168.x.x → http://192.168.x.x:8080/uploads/uuid.jpg
+```
+
+### Integración de Etapa 13 con Etapas Anteriores
+
+- **Etapa 5 (Perfiles)**: Las fotos de perfil ahora se cargan correctamente en EditProfileScreen y aparecen en chats
+- **Etapa 4 (Bandejas)**: Las listas de chats muestran fotos de la contraparte
+- **Etapa 11 (Chat)**: La barra de chat ahora muestra foto de la persona
+- **Etapa 12 (Push)**: Cuando llega notificación, el usuario reconoce a la persona por foto
+
+### Clasificación de Etapa 13
+
+Etapa 13 se clasifica como **Refinamiento Crítico**:
+
+- Anterior (Etapas 1-12): Funcionalidad completa pero con fricciones visuales
+- Etapa 13: Pulida la experiencia visual, corrige datos, mejora confianza
+- Posterior (Etapas 14+): Escalado, optimización, nuevas features
+
 ## Requisitos Previos
 
 ### Backend
