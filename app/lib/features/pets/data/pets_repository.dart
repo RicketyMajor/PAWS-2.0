@@ -1,4 +1,4 @@
-import 'dart:io'; // <--- IMPORTANTE: Necesario para manejar File
+import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../../core/constants/api_constants.dart';
@@ -13,7 +13,6 @@ class PetsRepository {
   );
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
 
-  // Helper para headers con token
   Future<Options> _getAuthOptions() async {
     final token = await _storage.read(key: 'jwt_token');
     return Options(headers: {'Authorization': 'Bearer $token'});
@@ -69,69 +68,68 @@ class PetsRepository {
     }
   }
 
-  // ===============================================================
-  //  ESCRITURA (RESCATISTA)
-  // ===============================================================
-
-  // 3. Subir Imagen (Para crear mascota)
-  Future<String> uploadImage(File file) async {
-    try {
-      final options = await _getAuthOptions();
-      String fileName = file.path.split('/').last;
-
-      // Creamos el FormData para simular un formulario HTML multipart
-      FormData formData = FormData.fromMap({
-        "file": await MultipartFile.fromFile(file.path, filename: fileName),
-      });
-
-      final response = await _dio.post(
-        '${ApiConstants.baseUrl}/files/upload',
-        data: formData,
-        options: options,
-      );
-
-      if (response.statusCode == 200) {
-        // El backend retorna { "url": "/uploads/uuid.jpg", ... }
-        return response.data['url'];
-      } else {
-        throw Exception('Error al subir imagen');
-      }
-    } on DioException catch (e) {
-      _handleError(e);
-      return '';
-    }
-  }
-
-  // 4. Crear Mascota
+  // --- NUEVO CREATE PET (Multipart) ---
   Future<void> createPet({
     required String name,
     required String type,
     required String breed,
     required int age,
     required String description,
-    required String imageUrl,
     required double latitude,
     required double longitude,
+    required List<File> images, // <--- LISTA DE FOTOS
+    // Salud
+    bool isVaccinated = false,
+    bool isSterilized = false,
+    bool isDewormed = false,
+    String specialNeeds = '',
+
+    // Preferencias
+    bool requiresYard = false,
+    bool goodWithKids = false,
+    bool goodWithDogs = false,
+    String energyLevel = 'medium',
   }) async {
     try {
       final options = await _getAuthOptions();
 
-      // Enviamos el JSON al backend
+      // Construimos el FormData
+      final formData = FormData.fromMap({
+        "name": name,
+        "type": type,
+        "breed": breed,
+        "age": age,
+        "description": description,
+        "latitude": latitude,
+        "longitude": longitude,
+
+        // Booleans como strings para form-data
+        "is_vaccinated": isVaccinated,
+        "is_sterilized": isSterilized,
+        "is_dewormed": isDewormed,
+        "special_needs": specialNeeds,
+
+        "requires_yard": requiresYard,
+        "good_with_kids": goodWithKids,
+        "good_with_dogs": goodWithDogs,
+        "energy_level": energyLevel,
+      });
+
+      // Adjuntar imágenes
+      for (var file in images) {
+        String fileName = file.path.split('/').last;
+        formData.files.add(
+          MapEntry(
+            "images", // Debe coincidir con formMultipart.File["images"] en Go
+            await MultipartFile.fromFile(file.path, filename: fileName),
+          ),
+        );
+      }
+
       await _dio.post(
         '${ApiConstants.baseUrl}/pets',
+        data: formData,
         options: options,
-        data: {
-          "name": name,
-          "type": type,
-          "breed": breed,
-          "age": age,
-          "description": description,
-          // IMPORTANTE: Asegúrate que tu backend Go mapee este campo correctamente
-          // Si tu struct Go es `PhotoURL string`, Gin suele esperar `photo_url` o `PhotoURL`
-          "photo_url": imageUrl,
-          "latitude": latitude,
-          "longitude": longitude,
-        },
       );
     } on DioException catch (e) {
       _handleError(e);

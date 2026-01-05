@@ -4,7 +4,8 @@ import 'package:flutter_card_swiper/flutter_card_swiper.dart';
 import '../bloc/pets_bloc.dart';
 import '../../data/pets_repository.dart';
 import '../../domain/pet_model.dart';
-import '../widgets/pet_card.dart'; // <--- Importamos nuestra nueva carta
+import '../widgets/pet_card.dart';
+import 'pet_detail_screen.dart'; // <--- Necesario para navegar
 
 class MatchScreen extends StatelessWidget {
   const MatchScreen({super.key});
@@ -17,13 +18,12 @@ class MatchScreen extends StatelessWidget {
             ..add(LoadSwipeDeck()),
       child: Scaffold(
         appBar: AppBar(
-          title: const Text("Descubrir"), // Título más descriptivo
+          title: const Text("Descubrir"),
           backgroundColor: Colors.white,
           elevation: 0,
           foregroundColor: const Color(0xFFE91E63),
           centerTitle: true,
           actions: [
-            // Botón de recarga manual por si acaso
             IconButton(
               icon: const Icon(Icons.refresh),
               onPressed: () => context.read<PetsBloc>().add(LoadSwipeDeck()),
@@ -89,11 +89,6 @@ class MatchView extends StatelessWidget {
             "¡No hay más mascotas por aquí!",
             style: TextStyle(fontSize: 18, color: Colors.grey),
           ),
-          const Text(
-            "Vuelve más tarde para ver nuevos amigos.",
-            style: TextStyle(color: Colors.grey),
-          ),
-          const SizedBox(height: 20),
           OutlinedButton(
             onPressed: () => context.read<PetsBloc>().add(LoadSwipeDeck()),
             child: const Text("Buscar de nuevo"),
@@ -105,8 +100,6 @@ class MatchView extends StatelessWidget {
 
   Widget _buildSwiper(BuildContext context, List<Pet> pets) {
     final CardSwiperController controller = CardSwiperController();
-
-    // Evita crash si hay pocas cartas
     final int stackCount = pets.length < 3 ? pets.length : 3;
 
     return Column(
@@ -116,8 +109,7 @@ class MatchView extends StatelessWidget {
             controller: controller,
             cardsCount: pets.length,
             numberOfCardsDisplayed: stackCount,
-            isLoop: false, // Importante: No repetir cartas infinitamente
-            // Acciones al deslizar
+            isLoop: false,
             onSwipe: (previousIndex, currentIndex, direction) {
               final pet = pets[previousIndex];
               if (direction == CardSwiperDirection.right) {
@@ -132,19 +124,29 @@ class MatchView extends StatelessWidget {
               return true;
             },
             onEnd: () {
-              // Cuando se acaban, intentamos cargar más
               context.read<PetsBloc>().add(LoadSwipeDeck());
             },
-
-            // Constructor de la carta usando nuestro nuevo Widget
             cardBuilder:
                 (context, index, percentThresholdX, percentThresholdY) {
-                  return PetCard(pet: pets[index]);
+                  final pet = pets[index];
+
+                  // --- EL TRUCO: Detectar Tap para expandir ---
+                  return GestureDetector(
+                    onTap: () {
+                      // Navegamos al detalle "Estilo Instagram"
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => PetDetailScreen(pet: pet),
+                        ),
+                      );
+                    },
+                    child: PetCard(pet: pet),
+                  );
+                  // ---------------------------------------------
                 },
           ),
         ),
-
-        // Botones de acción inferior
         Padding(
           padding: const EdgeInsets.fromLTRB(0, 0, 0, 30),
           child: Row(
@@ -157,7 +159,7 @@ class MatchView extends StatelessWidget {
               ),
               _ActionButton(
                 icon: Icons.favorite,
-                color: const Color(0xFFE91E63), // Pink PAWS
+                color: const Color(0xFFE91E63),
                 onPressed: () => controller.swipe(CardSwiperDirection.right),
               ),
             ],
@@ -168,7 +170,6 @@ class MatchView extends StatelessWidget {
   }
 }
 
-// Botón circular bonito
 class _ActionButton extends StatelessWidget {
   final IconData icon;
   final Color color;
