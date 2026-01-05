@@ -762,6 +762,7 @@ database.DB.Where("status = ?", domain.StatusAvailable)
 **Alternativa**: Enum nativo PostgreSQL (más restrictivo)
 
 ## Implementación de Reglas de Seguridad
+
 ## Etapa 2: Sistema de Identidad y Perfiles de Adopción (Actualización)
 
 ### Descripción General
@@ -814,6 +815,7 @@ type UserProfile struct {
 **Relación**: One-to-One con User table, enforced by `uniqueIndex` en `user_id`. Rescatistas no tienen UserProfile.
 
 **Campos Clave**:
+
 - **Housing**: Tipo de vivienda (casa con patio, apartamento, parcela)
 - **HasYard**: Indicador para filtrar mascotas que requieren espacio exterior
 - **HasChildren**: Filtro para mascotas "buenas con niños"
@@ -858,7 +860,7 @@ func NewUserService(db *gorm.DB) *UserService {
 // CreateOrUpdateProfile implementa patrón UPSERT
 func (s *UserService) CreateOrUpdateProfile(userID uint, profile UserProfile) error {
     var existing UserProfile
-    
+
     // Buscar si existe perfil para este usuario
     if err := s.db.Where("user_id = ?", userID).First(&existing).Error; err != nil {
         if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -868,7 +870,7 @@ func (s *UserService) CreateOrUpdateProfile(userID uint, profile UserProfile) er
         }
         return err
     }
-    
+
     // Existe: actualizar campos
     return s.db.Model(&existing).Updates(profile).Error
 }
@@ -886,6 +888,7 @@ func (s *UserService) GetProfile(userID uint) (*UserProfile, error) {
 ```
 
 **Patrones Implementados**:
+
 - **UPSERT Pattern**: Verifica existencia antes de crear/actualizar, garantiza 1-a-1
 - **Nil Check**: GetProfile devuelve nil si no existe (fallback en MatchService)
 - **Error Handling**: Diferencia entre "no encontrado" y errores de BD
@@ -908,7 +911,7 @@ func (s *MatchService) GetSwipeDeck(userID uint) ([]Pet, error) {
     if err != nil {
         return nil, err
     }
-    
+
     // Paso 2: Si no hay perfil, devolver todas las mascotas disponibles
     // (fallback para usuarios nuevos, mejora UX)
     if profile == nil {
@@ -918,56 +921,56 @@ func (s *MatchService) GetSwipeDeck(userID uint) ([]Pet, error) {
             Find(&pets)
         return pets, nil
     }
-    
+
     // Paso 3-6: Construir query con filtros AND
     query := s.db.Where("status = ?", "available")
-    
+
     // Excluir mascotas ya vistas (swiped)
     query = query.Not("id IN (?)", s.db.Select("pet_id").
         From("matches").
         Where("adopter_id = ?", userID))
-    
+
     // FILTRO 1: Vivienda + Patio
     if profile.Housing == "apartment" {
         query = query.Where("requires_yard = ?", false)
     }
-    
+
     // FILTRO 2: Niños
     if profile.HasChildren {
         query = query.Where("good_with_kids = ?", true)
     }
-    
+
     // FILTRO 3: Mascotas Existentes
     if profile.HasOtherPets {
         query = query.Where("good_with_dogs = ?", true)
     }
-    
+
     var pets []Pet
     if err := query.Find(&pets).Error; err != nil {
         return nil, err
     }
-    
+
     return pets, nil
 }
 
 // Registrar swipe (like o dislike)
 func (s *MatchService) Swipe(adopterID, petID uint, isLike bool) error {
     var match Match
-    
+
     // Verificar si ya existe interacción
     exists := s.db.Where("adopter_id = ? AND pet_id = ?", adopterID, petID).
         First(&match).Error == nil
-    
+
     status := "REJECTED"
     if isLike {
         status = "PENDING"
     }
-    
+
     if exists {
         // Actualizar (idempotente)
         return s.db.Model(&match).Update("status", status).Error
     }
-    
+
     // Crear nuevo
     newMatch := Match{
         AdopterID: adopterID,
@@ -999,6 +1002,7 @@ func (s *MatchService) GetPendingRequests(userID uint) ([]Match, error) {
 6. **Exclusión de Historial**: Mascota ya swiped no vuelve a aparecer
 
 **Optimización**: Utiliza WHERE IN subquery en lugar de N+1 queries:
+
 ```go
 NOT IN (SELECT pet_id FROM matches WHERE adopter_id = ?)
 ```
@@ -1023,18 +1027,18 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
         c.JSON(401, gin.H{"error": "No autorizado"})
         return
     }
-    
+
     var profile domain.UserProfile
     if err := c.ShouldBindJSON(&profile); err != nil {
         c.JSON(400, gin.H{"error": err.Error()})
         return
     }
-    
+
     if err := h.userService.CreateOrUpdateProfile(userID.(uint), profile); err != nil {
         c.JSON(500, gin.H{"error": "Error al actualizar perfil"})
         return
     }
-    
+
     c.JSON(200, gin.H{"message": "Perfil actualizado correctamente"})
 }
 
@@ -1046,13 +1050,13 @@ func (h *UserHandler) GetSwipeDeck(c *gin.Context) {
         c.JSON(401, gin.H{"error": "No autorizado"})
         return
     }
-    
+
     pets, err := h.matchService.GetSwipeDeck(userID.(uint))
     if err != nil {
         c.JSON(500, gin.H{"error": "Error al obtener candidatos"})
         return
     }
-    
+
     c.JSON(200, pets)
 }
 ```
@@ -1070,22 +1074,22 @@ type MatchHandler struct {
 // Registrar like o dislike en mascota
 func (h *MatchHandler) Swipe(c *gin.Context) {
     userID, _ := c.Get("user_id")
-    
+
     var req struct {
         PetID  uint `json:"pet_id"`
         IsLike bool `json:"is_like"`
     }
-    
+
     if err := c.ShouldBindJSON(&req); err != nil {
         c.JSON(400, gin.H{"error": err.Error()})
         return
     }
-    
+
     if err := h.service.Swipe(userID.(uint), req.PetID, req.IsLike); err != nil {
         c.JSON(500, gin.H{"error": "Error al registrar acción"})
         return
     }
-    
+
     c.JSON(200, gin.H{"message": "Acción registrada"})
 }
 
@@ -1093,13 +1097,13 @@ func (h *MatchHandler) Swipe(c *gin.Context) {
 // Obtener solicitudes pendientes para mascotas de rescatista
 func (h *MatchHandler) GetPending(c *gin.Context) {
     userID, _ := c.Get("user_id")
-    
+
     matches, err := h.service.GetPendingRequests(userID.(uint))
     if err != nil {
         c.JSON(500, gin.H{"error": "Error al obtener solicitudes"})
         return
     }
-    
+
     c.JSON(200, matches)
 }
 
@@ -1107,27 +1111,27 @@ func (h *MatchHandler) GetPending(c *gin.Context) {
 // Rescatista acepta o rechaza solicitud de adopción
 func (h *MatchHandler) Respond(c *gin.Context) {
     userID, _ := c.Get("user_id")
-    
+
     var req struct {
         MatchID uint   `json:"match_id"`
         Accept  bool   `json:"accept"`
     }
-    
+
     if err := c.ShouldBindJSON(&req); err != nil {
         c.JSON(400, gin.H{"error": err.Error()})
         return
     }
-    
+
     status := "REJECTED"
     if req.Accept {
         status = "ACCEPTED"
     }
-    
+
     if err := h.service.UpdateMatch(req.MatchID, userID.(uint), status); err != nil {
         c.JSON(500, gin.H{"error": "Error al responder solicitud"})
         return
     }
-    
+
     c.JSON(200, gin.H{"message": "Solicitud respondida"})
 }
 ```
@@ -1149,7 +1153,7 @@ protected := router.Group("/api/v1").Use(middleware.AuthMiddleware())
     // Perfil
     protected.PUT("/profile", userHandler.UpdateProfile)
     protected.GET("/matches/candidates", userHandler.GetSwipeDeck)
-    
+
     // Swiping
     protected.POST("/matches/swipe", matchHandler.Swipe)
     protected.GET("/matches/requests", matchHandler.GetPending)
@@ -1219,7 +1223,7 @@ CREATE INDEX idx_matches_status ON matches(status);
 
 ```
 1. Login (Etapa 1) → Token JWT
-   
+
 2. PUT /api/v1/profile
    {
      "housing": "apartment",
@@ -1230,7 +1234,7 @@ CREATE INDEX idx_matches_status ON matches(status);
      "time_available": "high"
    }
    → UserProfile creado con restricciones
-   
+
 3. GET /api/v1/matches/candidates
    → GetSwipeDeck filtra:
      * Status = 'available'
@@ -1238,11 +1242,11 @@ CREATE INDEX idx_matches_status ON matches(status);
      * NOT requires_yard (porque apartment)
      * good_with_kids = true (porque has_children)
    → Recibe lista de mascotas compatibles
-   
+
 4. POST /api/v1/matches/swipe
    {"pet_id": 5, "is_like": true}
    → Match(adopter=user, pet=5, status=PENDING) creado
-   
+
 5. Rescatista responde:
    POST /api/v1/matches/respond
    {"match_id": 1, "accept": true}
@@ -1260,14 +1264,14 @@ CREATE INDEX idx_matches_status ON matches(status);
      "good_with_dogs": true,
      "energy_level": "medium"
    }
-   
+
 2. Adoptar espera...
    → Adoptantes hacen swipes (PENDING matches creados)
-   
+
 3. GET /api/v1/matches/requests
    → Obtiene todos los Match con status=PENDING para sus mascotas
    → Ve quién está interesado en adoptar
-   
+
 4. POST /api/v1/matches/respond
    → Acepta mejores candidatos (status=ACCEPTED)
    → Rechaza otros (status=REJECTED)
@@ -1343,7 +1347,8 @@ query.Where("requires_yard = ?", false).
       Where("good_with_kids = ?", true)
 ```
 
-**Ventaja**: 
+**Ventaja**:
+
 - Solo datos relevantes viajan red
 - Base de datos optimiza índices
 - Escalable con millones de mascotas
@@ -1360,6 +1365,7 @@ else → no compatible
 ```
 
 **Ventaja**:
+
 - Simple, predecible, rápido
 - Garantiza satisfacción requisitos básicos
 - Fácil de debugg y testear
@@ -1377,6 +1383,7 @@ if profile == nil {
 ```
 
 **Ventaja**:
+
 - UX fluida: usuarios pueden empezar a explorar inmediatamente
 - Incentiva crear perfil (matches futuros más relevantes)
 
@@ -1414,17 +1421,16 @@ query.Where("user_id = ?", userID)
 
 ### Comparación: Etapa 1 vs Etapa 2
 
-| Aspecto | Etapa 1 | Etapa 2 |
-|---------|---------|---------|
-| **Búsqueda** | Lista todas mascotas | Filtra por compatibilidad |
-| **Perfil Usuario** | Solo auth (email/pass) | Incluye datos demográficos |
-| **Interacción** | Solo ver mascotas | Like/Dislike + solicitudes |
-| **Algoritmo** | N/A | 3 filtros AND |
-| **Modelo Pet** | Básico (nombre, tipo) | Extendido + compatibilidad |
-| **Rescatista** | Sube mascotas | Ve solicitudes, acepta/rechaza |
-| **Base de Datos** | 4 tablas | 5 tablas (+user_profiles) |
-| **Endpoints** | 5 públicos/protegidos | +5 new endpoints |
-
+| Aspecto            | Etapa 1                | Etapa 2                        |
+| ------------------ | ---------------------- | ------------------------------ |
+| **Búsqueda**       | Lista todas mascotas   | Filtra por compatibilidad      |
+| **Perfil Usuario** | Solo auth (email/pass) | Incluye datos demográficos     |
+| **Interacción**    | Solo ver mascotas      | Like/Dislike + solicitudes     |
+| **Algoritmo**      | N/A                    | 3 filtros AND                  |
+| **Modelo Pet**     | Básico (nombre, tipo)  | Extendido + compatibilidad     |
+| **Rescatista**     | Sube mascotas          | Ve solicitudes, acepta/rechaza |
+| **Base de Datos**  | 4 tablas               | 5 tablas (+user_profiles)      |
+| **Endpoints**      | 5 públicos/protegidos  | +5 new endpoints               |
 
 ### R-SEC-01: Verificación de Identidad
 
@@ -1447,6 +1453,596 @@ if user.Role == "rescuer" && !user.IsVerified {
 ### R-SEC-03: Blacklist y Baneo
 
 **Status Fase 2**: Funcional desde Fase 1, sin cambios
+
+## Etapa 14: Refinamiento Backend - Galería Ilimitada y Ficha Médica Completa
+
+### Introducción a Etapa 14 (Backend)
+
+La Etapa 14 representa una evolución arquitectónica del modelo Pet, transformándolo de un registro simple con una foto única hacia un sistema robusto de "Expediente de Adopción" con galería ilimitada de imágenes y campos completos de información médica y comportamental. Esta etapa abordó un problema crítico identificado en etapas anteriores: **las imágenes no se cargaban junto con los datos de mascotas** (problema N+1 de queries) y **faltaba información médica esencial** para tomar decisiones de adopción.
+
+### Tabla PetImage: Normalización de la Galería
+
+**Cambio Estructural**
+
+Antes de Etapa 14, el modelo Pet contenía un único campo `PhotoURL` de tipo string. Esto limitaba severamente la capacidad de representar múltiples ángulos, entornos, o detalles visuales de una mascota.
+
+```go
+// ANTES (Fase 2-13)
+type Pet struct {
+    gorm.Model
+    Name     string
+    PhotoURL string  // Una sola foto
+    UserID   uint
+    // ... otros campos ...
+}
+```
+
+En Etapa 14, se introduce una nueva tabla `PetImage` que establece una relación 1-a-N con Pet, permitiendo un número ilimitado de imágenes catalogadas por mascota.
+
+```go
+// DESPUÉS (Etapa 14+)
+
+type PetImage struct {
+    ID      uint   `gorm:"primaryKey" json:"id"`
+    PetID   uint   `gorm:"index;not null" json:"pet_id"`
+    URL     string `json:"url"`
+    IsCover bool   `json:"is_cover"`  // Identifica la imagen de portada
+}
+
+type Pet struct {
+    gorm.Model
+
+    // Información Básica
+    Name        string
+    Type        string
+    Breed       string
+    Age         int
+    Description string
+    Status      PetStatus
+
+    // Geolocalización
+    Latitude   float64
+    Longitude  float64
+    Address    string
+
+    // Backward Compatibility
+    PhotoURL string      `json:"photo_url"`  // Mantenido para migraciones antiguas
+    Images   []PetImage  `json:"images" gorm:"foreignKey:PetID;constraint:OnDelete:CASCADE;"`
+
+    // Información Médica (NUEVO)
+    IsVaccinated  bool   `json:"is_vaccinated"`
+    IsSterilized  bool   `json:"is_sterilized"`
+    IsDewormed    bool   `json:"is_dewormed"`
+    SpecialNeeds  string `json:"special_needs"`
+
+    // Compatibilidad Comportamental (NUEVO)
+    RequiresYard  bool   `json:"requires_yard"`
+    GoodWithKids  bool   `json:"good_with_kids"`
+    GoodWithDogs  bool   `json:"good_with_dogs"`
+    GoodWithCats  bool   `json:"good_with_cats"`
+    EnergyLevel   string `json:"energy_level"`  // "low", "medium", "high"
+
+    // Foreign Key
+    UserID uint
+    User   User  `json:"user" gorm:"foreignKey:UserID"`
+}
+```
+
+**Cambios en la Migración**
+
+El archivo `internal/platform/database/postgres.go` debe incluir `PetImage` en el `AutoMigrate()`:
+
+```go
+func (p *PostgresDB) Migrate() error {
+    return p.DB.AutoMigrate(
+        &domain.User{},
+        &domain.Pet{},
+        &domain.PetImage{},      // NUEVO: Tabla de imágenes
+        &domain.Match{},
+        &domain.UserProfile{},
+        // ... otras tablas ...
+    )
+}
+```
+
+**Impacto en el Schema**
+
+Antes:
+
+```
+pets table:
+├── id (uint, PK)
+├── name (string)
+├── photo_url (string)
+└── ... (otros campos)
+```
+
+Después:
+
+```
+pets table:
+├── id (uint, PK)
+├── name (string)
+├── photo_url (string, LEGACY)
+└── ... (otros campos)
+
+pet_images table (NUEVA):
+├── id (uint, PK)
+├── pet_id (uint, FK indexado)
+├── url (string)
+└── is_cover (bool)
+```
+
+### Eager Loading: Solución al Problema N+1
+
+**El Problema**
+
+Después de implementar PetImage, surgió un problema crítico: cuando el backend consultaba mascotas, la relación Images no se cargaba automáticamente. Esto significaba que:
+
+```go
+// PROBLEMA: Query devuelve mascotas, pero Images está vacío
+var pets []Pet
+db.Find(&pets)  // SELECT * FROM pets;
+// pets[0].Images = []  <-- Vacío, aunque hay registros en pet_images
+```
+
+Esto causaba que las galerías de imágenes estuviesen vacías en el frontend, aunque las fotos existieran en la base de datos. Además, si el cliente necesitaba las imágenes, requería consultas adicionales por cada mascota (patrón N+1).
+
+**La Solución: Eager Loading con .Preload()**
+
+GORM proporciona el método `.Preload()` para cargar relaciones explícitamente en una sola query. La solución fue aplicar sistemáticamente este patrón en todos los servicios que devuelven Pet.
+
+```go
+// backend/internal/services/pet_service.go
+
+func (s *PetService) GetAll() ([]domain.Pet, error) {
+    var pets []domain.Pet
+    err := s.db.Preload("User").Preload("Images").
+        Where("status = ?", domain.StatusAvailable).
+        Find(&pets).Error
+    return pets, err
+}
+
+func (s *PetService) GetByID(id uint) (*domain.Pet, error) {
+    var pet domain.Pet
+    err := s.db.Preload("User").Preload("Images").
+        First(&pet, id).Error
+    return &pet, err
+}
+
+func (s *PetService) SearchNearby(lat, lon float64, radiusKm float64) ([]domain.Pet, error) {
+    var pets []domain.Pet
+    query := s.db.Where(
+        "6371 * acos(cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude))) <= ?",
+        lat, lon, lat, radiusKm,
+    ).Preload("User").Preload("Images")
+
+    err := query.Find(&pets).Error
+    return pets, err
+}
+```
+
+**Patrón en MatchService**
+
+El servicio de matching es crítico porque carga múltiples mascotas para el swipe deck. El eager loading aquí es esencial para rendimiento.
+
+```go
+// backend/internal/services/match_service.go
+
+func (s *MatchService) GetSwipeDeck(userID uint, lat, lon float64) ([]domain.Pet, error) {
+    var pets []domain.Pet
+
+    query := s.db.Preload("Images").Preload("User").
+        Where("status = ?", domain.StatusAvailable).
+        Where("user_id != ?", userID)
+
+    // Filtros de búsqueda geográfica y demográfica...
+
+    err := query.Find(&pets).Error
+    return pets, err
+}
+
+func (s *MatchService) GetAcceptedMatches(adopterID uint) ([]domain.Match, error) {
+    var matches []domain.Match
+    err := s.db.Preload("Pet.User").
+        Preload("Pet.Images").  // CRÍTICO: Sin esto, la galería está vacía
+        Where("adopter_id = ? AND status = ?", adopterID, domain.MatchAccepted).
+        Find(&matches).Error
+    return matches, err
+}
+
+func (s *MatchService) GetAdopterPendingMatches(adopterID uint) ([]domain.Match, error) {
+    var matches []domain.Match
+    err := s.db.Preload("Pet.Images").
+        Preload("Pet").
+        Where("adopter_id = ? AND status = ?", adopterID, domain.MatchPending).
+        Find(&matches).Error
+    return matches, err
+}
+
+func (s *MatchService) GetPendingRequests(rescuerID uint) ([]domain.Match, error) {
+    var matches []domain.Match
+    err := s.db.Joins("JOIN pets ON matches.pet_id = pets.id").
+        Preload("Pet.Images").
+        Preload("Pet.User").
+        Where("pets.user_id = ? AND matches.status = ?", rescuerID, domain.MatchPending).
+        Find(&matches).Error
+    return matches, err
+}
+
+func (s *MatchService) GetRescuerMatches(rescuerID uint) ([]domain.Match, error) {
+    var matches []domain.Match
+    err := s.db.Joins("JOIN pets ON matches.pet_id = pets.id").
+        Preload("Pet.Images").
+        Where("pets.user_id = ? AND matches.status = ?", rescuerID, domain.MatchAccepted).
+        Find(&matches).Error
+    return matches, err
+}
+```
+
+**Impacto en Rendimiento**
+
+- **Antes**: 1 query GET /pets + 50 queries GET /pets/{id}/images = 51 queries totales
+- **Después**: 1 query GET /pets con .Preload("Images") = 2 queries (1 JOIN)
+- **Mejora**: ~96% reducción en queries para swipe deck de 50 mascotas
+
+### Manejo de Multipart Form Data
+
+**CreatePetForm DTO**
+
+El endpoint POST /pets ahora recibe un formulario multipart/form-data que incluye archivos y campos de texto.
+
+```go
+// backend/internal/transport/http/pet_handler.go
+
+type CreatePetForm struct {
+    Name         string  `form:"name" binding:"required"`
+    Type         string  `form:"type" binding:"required"`
+    Breed        string  `form:"breed"`
+    Age          int     `form:"age"`
+    Description  string  `form:"description"`
+    Latitude     float64 `form:"latitude"`
+    Longitude    float64 `form:"longitude"`
+    Address      string  `form:"address"`
+
+    // Información médica
+    IsVaccinated bool   `form:"is_vaccinated"`
+    IsSterilized bool   `form:"is_sterilized"`
+    IsDewormed   bool   `form:"is_dewormed"`
+    SpecialNeeds string `form:"special_needs"`
+
+    // Compatibilidad
+    RequiresYard bool   `form:"requires_yard"`
+    GoodWithKids bool   `form:"good_with_kids"`
+    GoodWithDogs bool   `form:"good_with_dogs"`
+    EnergyLevel  string `form:"energy_level"`
+}
+
+func (h *PetHandler) Create(c *gin.Context) {
+    var form CreatePetForm
+
+    // Bind del formulario (campos de texto)
+    if err := c.ShouldBind(&form); err != nil {
+        c.JSON(400, gin.H{"error": err.Error()})
+        return
+    }
+
+    // Extracción de archivos
+    formMultipart, err := c.MultipartForm()
+    if err != nil {
+        c.JSON(400, gin.H{"error": "Error procesando multipart"})
+        return
+    }
+
+    files := formMultipart.File["images"]  // Array de archivos
+
+    // Validación de cantidad
+    if len(files) > 10 {
+        c.JSON(400, gin.H{"error": "Máximo 10 fotos permitidas"})
+        return
+    }
+
+    if len(files) == 0 {
+        c.JSON(400, gin.H{"error": "Se requiere al menos 1 foto"})
+        return
+    }
+
+    // Procesamiento de archivos
+    uploadedURLs, err := h.fileService.SaveMultipleImages(c.Request.Context(), files)
+    if err != nil {
+        c.JSON(500, gin.H{"error": "Error al guardar imágenes"})
+        return
+    }
+
+    // Obtener usuario autenticado
+    userID, exists := c.Get("userID")
+    if !exists {
+        c.JSON(401, gin.H{"error": "No autenticado"})
+        return
+    }
+
+    // Llamar al servicio
+    newPet, err := h.service.Create(services.CreatePetInput{
+        UserID:       userID.(uint),
+        Name:         form.Name,
+        Type:         form.Type,
+        Breed:        form.Breed,
+        Age:          form.Age,
+        Description:  form.Description,
+        Latitude:     form.Latitude,
+        Longitude:    form.Longitude,
+        Address:      form.Address,
+        ImageURLs:    uploadedURLs,
+        IsVaccinated: form.IsVaccinated,
+        IsSterilized: form.IsSterilized,
+        IsDewormed:   form.IsDewormed,
+        SpecialNeeds: form.SpecialNeeds,
+        RequiresYard: form.RequiresYard,
+        GoodWithKids: form.GoodWithKids,
+        GoodWithDogs: form.GoodWithDogs,
+        EnergyLevel:  form.EnergyLevel,
+    })
+
+    if err != nil {
+        c.JSON(500, gin.H{"error": err.Error()})
+        return
+    }
+
+    c.JSON(201, newPet)
+}
+```
+
+### PetService.Create() con Transacción
+
+El servicio debe crear tanto el registro Pet como los registros PetImage en una transacción atómica. Si alguno falla, ambos se revierten.
+
+```go
+// backend/internal/services/pet_service.go
+
+type CreatePetInput struct {
+    UserID       uint
+    Name         string
+    Type         string
+    Breed        string
+    Age          int
+    Description  string
+    Latitude     float64
+    Longitude    float64
+    Address      string
+    ImageURLs    []string
+    IsVaccinated bool
+    IsSterilized bool
+    IsDewormed   bool
+    SpecialNeeds string
+    RequiresYard bool
+    GoodWithKids bool
+    GoodWithDogs bool
+    EnergyLevel  string
+}
+
+func (s *PetService) Create(input CreatePetInput) (*domain.Pet, error) {
+    // Determinar foto de portada (primera imagen)
+    mainPhoto := ""
+    if len(input.ImageURLs) > 0 {
+        mainPhoto = input.ImageURLs[0]
+    }
+
+    // Construir objeto Pet
+    newPet := domain.Pet{
+        UserID:       input.UserID,
+        Name:         input.Name,
+        Type:         input.Type,
+        Breed:        input.Breed,
+        Age:          input.Age,
+        Description:  input.Description,
+        Status:       domain.StatusAvailable,
+        Latitude:     input.Latitude,
+        Longitude:    input.Longitude,
+        Address:      input.Address,
+        PhotoURL:     mainPhoto,  // Backward compatibility
+        IsVaccinated: input.IsVaccinated,
+        IsSterilized: input.IsSterilized,
+        IsDewormed:   input.IsDewormed,
+        SpecialNeeds: input.SpecialNeeds,
+        RequiresYard: input.RequiresYard,
+        GoodWithKids: input.GoodWithKids,
+        GoodWithDogs: input.GoodWithDogs,
+        EnergyLevel:  input.EnergyLevel,
+    }
+
+    // Transacción atómica
+    err := s.db.Transaction(func(tx *gorm.DB) error {
+        // Paso 1: Crear registro Pet
+        if err := tx.Create(&newPet).Error; err != nil {
+            return fmt.Errorf("error al crear mascota: %w", err)
+        }
+
+        // Paso 2: Crear registros PetImage
+        if len(input.ImageURLs) > 0 {
+            var images []domain.PetImage
+            for i, url := range input.ImageURLs {
+                images = append(images, domain.PetImage{
+                    PetID:   newPet.ID,
+                    URL:     url,
+                    IsCover: (i == 0),  // Primera imagen es portada
+                })
+            }
+            if err := tx.Create(&images).Error; err != nil {
+                return fmt.Errorf("error al guardar imágenes: %w", err)
+            }
+        }
+
+        return nil
+    })
+
+    if err != nil {
+        return nil, err
+    }
+
+    // Recargar con relaciones
+    s.db.Preload("User").Preload("Images").First(&newPet, newPet.ID)
+
+    return &newPet, nil
+}
+```
+
+### Patrones de Consulta Mejorados
+
+**GetAll con Paginación**
+
+```go
+func (s *PetService) GetAllPaginated(page, pageSize int) ([]domain.Pet, int64, error) {
+    var pets []domain.Pet
+    var total int64
+
+    offset := (page - 1) * pageSize
+
+    err := s.db.Model(&domain.Pet{}).
+        Count(&total).
+        Offset(offset).
+        Limit(pageSize).
+        Preload("User").
+        Preload("Images").
+        Where("status = ?", domain.StatusAvailable).
+        Find(&pets).Error
+
+    return pets, total, err
+}
+```
+
+**Búsqueda Filtrada por Compatibilidad**
+
+```go
+func (s *PetService) SearchByCompatibility(filters FilterInput) ([]domain.Pet, error) {
+    var pets []domain.Pet
+
+    query := s.db.Preload("User").Preload("Images")
+
+    // Filtros opcionales
+    if filters.GoodWithKids {
+        query = query.Where("good_with_kids = ?", true)
+    }
+    if filters.GoodWithDogs {
+        query = query.Where("good_with_dogs = ?", true)
+    }
+    if filters.VaccinatedOnly {
+        query = query.Where("is_vaccinated = ?", true)
+    }
+    if filters.EnergyLevel != "" {
+        query = query.Where("energy_level = ?", filters.EnergyLevel)
+    }
+
+    err := query.Where("status = ?", domain.StatusAvailable).Find(&pets).Error
+    return pets, err
+}
+```
+
+### Impacto en la Arquitectura Global
+
+**Cambios en Endpoints**
+
+- **POST /pets**: Ahora recibe multipart/form-data en lugar de JSON puro
+- **GET /pets**: Devuelve array de Pets con Images preloaded
+- **GET /pets/{id}**: Devuelve Pet completo con Images y User
+- **GET /matches/candidates**: Devuelve Pets con Images para swipe deck
+
+**Cambios en el Flujo de Datos**
+
+```
+Rescatista en CreatePetScreen:
+  ↓
+  Selecciona 10 fotos + llena formulario con información médica
+  ↓
+  Envía FormData multipart a POST /pets
+  ↓
+PetHandler.Create():
+  - Extrae archivos de multipart
+  - Llama FileService.SaveMultipleImages()
+  - Recibe URLs de MinIO/S3
+  - Pasa ImageURLs[] a PetService.Create()
+  ↓
+PetService.Create():
+  - Crea transacción
+  - Inserta Pet (con primer ImageURL en PhotoURL)
+  - Inserta array de PetImage (uno por URL)
+  - Preload("Images") y devuelve
+  ↓
+Response: Pet con Images[] lleno
+  ↓
+Frontend:
+  - Pet.fromJson() parsea array de imágenes
+  - PetDetailScreen construye galería con PageView
+  - ImageHelper renderiza cada imagen con error handling
+```
+
+### Consideraciones de Seguridad
+
+**Validación de Archivos**
+
+```go
+func ValidateImageFile(file *multipart.FileHeader) error {
+    // Validar tamaño
+    if file.Size > 10*1024*1024 {  // 10 MB máximo
+        return errors.New("archivo demasiado grande")
+    }
+
+    // Validar tipo MIME
+    src, _ := file.Open()
+    defer src.Close()
+
+    buffer := make([]byte, 512)
+    src.Read(buffer)
+
+    contentType := http.DetectContentType(buffer)
+    if !strings.Contains(contentType, "image") {
+        return errors.New("archivo no es imagen")
+    }
+
+    return nil
+}
+```
+
+**Prevención de Traversal Attacks**
+
+```go
+// INSEGURO: No usar nombres de archivo del usuario directamente
+// filename := file.Filename  // ¡Peligro!
+
+// SEGURO: Generar nombre único
+filename := uuid.New().String() + filepath.Ext(file.Filename)
+```
+
+### Testing
+
+**Mock PetService**
+
+```go
+type MockPetService struct {
+    mock.Mock
+}
+
+func (m *MockPetService) Create(input CreatePetInput) (*domain.Pet, error) {
+    args := m.Called(input)
+    return args.Get(0).(*domain.Pet), args.Error(1)
+}
+
+// En tests:
+func TestPetHandler_Create(t *testing.T) {
+    mockService := new(MockPetService)
+    mockService.On("Create", mock.Anything).Return(&domain.Pet{ID: 1}, nil)
+
+    handler := &PetHandler{service: mockService}
+    // ... assertions ...
+}
+```
+
+### Notas Arquitectónicas
+
+- **Backward Compatibility**: Campo PhotoURL mantenido. Si Images está vacío, sistemas anteriores todavía pueden usar PhotoURL.
+- **Eager Loading Crítico**: Todos los servicios que devuelven Pet **deben** usar .Preload("Images"). Sin esto, la galería está vacía.
+- **Transacciones Atómicas**: PetService.Create() usa transacción para garantizar consistencia: si PetImage falla, Pet se revierte.
+- **Identificación de Portada**: IsCover flag en PetImage identifica la foto de portada. Frontend usa primera imagen por convención.
+- **Límite de Imágenes**: 10 máximo por mascota. Evita uploads masivos. Limitación implementada en PetHandler.Create().
 
 ## Stack de Dependencias Completo
 

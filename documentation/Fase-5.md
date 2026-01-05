@@ -2680,6 +2680,371 @@ Etapa 13 se clasifica como **Refinamiento Crítico Post-MVP**:
 - **Etapa 13**: Pulida la experiencia visual, corrige discrepancias de datos, mejora confianza interpersonal
 - **Futuras Etapas** (14+): Escalado, optimización de performance, nuevas features
 
+## Etapa 14: Refinamiento Frontend - Formulario Profesional y Galería Interactiva
+
+### Introducción a Etapa 14 (Frontend)
+
+La Etapa 14 en el frontend se enfoca en dos transformaciones principales: (1) crear un formulario profesional para que rescatistas registren mascotas con información médica y comportamental completa, incluyendo geolocalización automática vía GPS, y (2) implementar un visor de galería tipo Instagram en PetDetailScreen que permita a los adoptantes explorar múltiples fotos de las mascotas con navegación intuitiva.
+
+### Mejora 1: Model Enhancement - Pet con Galería Ilimitada
+
+**Cambio en pet_model.dart**
+
+Antes de Etapa 14, el modelo Pet tenía un único campo `imageUrl` para la foto de portada. Con la tabla PetImage en el backend, ahora el modelo debe poder parsear un array de imágenes.
+
+```dart
+// frontend/app/lib/features/pets/domain/pet_model.dart
+
+class Pet {
+    final uint id;
+    final String name;
+    final String type;
+    final String breed;
+    final int age;
+    final String description;
+
+    // Galería (NUEVO)
+    final List<String> images;  // Array de URLs de imágenes
+    final String? imageUrl;     // Backward compatibility: foto de portada/cover
+
+    // Información Médica (NUEVO)
+    final bool isVaccinated;
+    final bool isSterilized;
+    final bool isDewormed;
+    final String specialNeeds;
+
+    // Compatibilidad (NUEVO)
+    final bool goodWithKids;
+    final bool goodWithDogs;
+    final bool requiresYard;
+    final String energyLevel;  // "low", "medium", "high"
+
+    // Ubicación
+    final double latitude;
+    final double longitude;
+    final String address;
+
+    final User user;
+
+    Pet({
+        required this.id,
+        required this.name,
+        required this.type,
+        required this.breed,
+        required this.age,
+        required this.description,
+        this.images = const [],
+        this.imageUrl,
+        this.isVaccinated = false,
+        this.isSterilized = false,
+        this.isDewormed = false,
+        this.specialNeeds = '',
+        this.goodWithKids = false,
+        this.goodWithDogs = false,
+        this.requiresYard = false,
+        this.energyLevel = 'medium',
+        required this.latitude,
+        required this.longitude,
+        this.address = '',
+        required this.user,
+    });
+
+    factory Pet.fromJson(Map<String, dynamic> json) {
+        // Parsear imágenes desde el array del backend
+        List<String> parsedImages = [];
+        if (json['images'] != null && json['images'] is List) {
+            parsedImages = (json['images'] as List).map((img) {
+                // Cada item puede ser un objeto con 'url' o un string directo
+                if (img is Map && img['url'] != null) {
+                    return img['url'].toString();
+                }
+                return img.toString();
+            }).toList();
+        }
+
+        // Fallback: si no hay imágenes pero existe photo_url (backward compatibility)
+        String? mainPhoto = json['photo_url'];
+        if (parsedImages.isEmpty && mainPhoto != null && mainPhoto.isNotEmpty) {
+            parsedImages.add(mainPhoto);
+        }
+
+        return Pet(
+            id: json['id'],
+            name: json['name'] ?? '',
+            type: json['type'] ?? '',
+            breed: json['breed'] ?? '',
+            age: json['age'] ?? 0,
+            description: json['description'] ?? '',
+            images: parsedImages,
+            imageUrl: mainPhoto,
+            isVaccinated: json['is_vaccinated'] == true,
+            isSterilized: json['is_sterilized'] == true,
+            isDewormed: json['is_dewormed'] == true,
+            specialNeeds: json['special_needs'] ?? '',
+            goodWithKids: json['good_with_kids'] == true,
+            goodWithDogs: json['good_with_dogs'] == true,
+            requiresYard: json['requires_yard'] == true,
+            energyLevel: json['energy_level'] ?? 'medium',
+            latitude: json['latitude'] ?? 0.0,
+            longitude: json['longitude'] ?? 0.0,
+            address: json['address'] ?? '',
+            user: User.fromJson(json['user']),
+        );
+    }
+}
+```
+
+**Impacto**: El modelo ahora puede representar correctamente mascotas con múltiples fotos y información médica completa, como se envía desde el backend en Etapa 14.
+
+### Mejora 2: CreatePetScreen - Formulario Profesional
+
+**Requerimientos Previos**
+
+```yaml
+# pubspec.yaml - Paquetes necesarios para CreatePetScreen
+image_picker: ^1.0.0 # Para seleccionar múltiples fotos
+geolocator: ^10.0.0 # Para GPS automático
+```
+
+**Características Principales del Formulario**
+
+CreatePetScreen es un formulario completo que captura:
+
+1. **Selección de Múltiples Fotos**: ImagePicker.pickMultiImage() permitiendo hasta 10 fotos. Cada foto tiene preview con etiqueta "PORTADA" en la primera y botón de eliminar.
+
+2. **Información Básica**: Nombre (requerido), Tipo/Especie (requerido), Raza (opcional), Edad (numérico), Descripción (campo de texto largo).
+
+3. **Ubicación**: Campo de dirección opcional + ubicación automática vía GPS (con fallback a Santiago si falla).
+
+4. **Información Médica**: Tres switches para vacunado/esterilizado/desparasitado + campo de texto para necesidades especiales.
+
+5. **Comportamiento**: SegmentedButton para nivel energético (bajo/medio/alto) + dos checkboxes para compatibilidad (requiere patio, bueno con niños, bueno con otros perros).
+
+6. **Envío Multipart**: Construye FormData con todos los campos + archivos, envía a POST /pets.
+
+**Flujo de CreatePetScreen**
+
+```
+1. Rescatista toca "Registrar Mascota"
+   ↓
+2. CreatePetScreen abre
+   ↓
+3. Selecciona fotos (ImagePicker)
+   ↓
+4. Llena campos de texto (nombre, raza, edad, descripción)
+   ↓
+5. Togglea switches de salud
+   ↓
+6. Selecciona nivel energético
+   ↓
+7. Marca checkboxes de compatibilidad
+   ↓
+8. Toca botón "Registrar Mascota"
+   ↓
+9. _determinePosition() obtiene GPS (con fallback)
+   ↓
+10. FormData.fromMap() construye multipart con todos los campos
+   ↓
+11. POST /pets con multipart form-data
+   ↓
+12. Backend: PetHandler → FileService → PetService → DB
+   ↓
+13. Response con Pet completo (images[] cargadas)
+   ↓
+14. SnackBar "¡Mascota registrada exitosamente!"
+   ↓
+15. Navigator.pop() vuelve a pantalla anterior
+```
+
+**Impacto de CreatePetScreen**:
+
+- Los rescatistas ahora tienen un formulario profesional que guía el registro completo
+- GPS automático reduce entrada manual
+- Switches intuitivos para información médica
+- SegmentedButton para nivel energético (mejor UX que dropdowns)
+- Checkboxes para compatibilidad
+- Preview de fotos con etiqueta PORTADA en la primera
+- Validación en tiempo real y feedback de errores
+- Formulario completo tarda 2-3 minutos en completarse
+
+### Mejora 3: PetDetailScreen - Galería Interactiva tipo Instagram
+
+**Características de la Galería**
+
+PetDetailScreen ahora contiene un visor de galería que:
+
+1. **PageView Carousel**: Deslizamiento suave lateral entre fotos usando PageController.
+
+2. **Contador Numérico**: Chip en top-right mostrando "1/4" para indicar posición actual en galería.
+
+3. **Navegación con Flechas**: Botones izquierda/derecha que aparecen **solo cuando hay múltiples imágenes**:
+
+   - Flecha izquierda solo visible si no estamos en primera imagen
+   - Flecha derecha solo visible si no estamos en última imagen
+   - Smart visibility reduce clutter visual
+
+4. **Indicadores de Puntos**: Círculos al fondo del carousel:
+
+   - Blanco sólido (100%) para imagen activa
+   - Blanco semi-transparente (50%) para inactivas
+   - Permite saltar entre fotos tocando dots (en versiones avanzadas)
+
+5. **Fallback Logic**: Si `pet.images` está vacío, usa `pet.imageUrl` (backward compatibility).
+
+6. **ImageHelper Integration**: Usa ImageHelper.getImage() para error handling, loading progress, placeholders.
+
+**Flujo de Interacción en Galería**
+
+```
+Usuario abre PetDetailScreen
+   ↓
+Se construye galería desde pet.images (o pet.imageUrl si vacío)
+   ↓
+Si 1+ imágenes:
+   ├─ PageView render imagen [0]
+   ├─ Contador muestra "1/N"
+   ├─ Si N > 1:
+   │  ├─ Mostrar flecha derecha
+   │  └─ Mostrar dots indicadores
+   │
+Usuario desliza o toca flecha derecha
+   ├─ PageController.nextPage() anima a imagen [1]
+   ├─ Contador actualiza a "2/N"
+   ├─ Mostrar flecha izquierda
+   └─ Mostrar flecha derecha (si no es última)
+   ↓
+Usuario leyendo descripción, información médica, compatibilidad
+   ↓
+Usuario toca botón "Me encanta" → like registrado
+```
+
+**Impacto de PetDetailScreen**:
+
+- Adoptantes pueden explorar múltiples fotos con deslizamiento suave
+- Contador "1/4" proporciona contexto de cuántas fotos existen
+- Flechas aparecen solo cuando hay múltiples imágenes (smart visibility)
+- Dots indicadores al fondo permiten ver distribución de fotos
+- Información médica y compatibilidad claramente presentada
+- ImageHelper maneja fallos de carga gracefully
+
+### Mejora 4: PetsRepository - Soporte Multipart
+
+**Actualización de createPet()**
+
+```dart
+// frontend/app/lib/features/pets/data/pets_repository.dart
+
+Future<void> createPet({
+    required String name,
+    required String type,
+    required String breed,
+    required int age,
+    required String description,
+    required double latitude,
+    required double longitude,
+    required String address,
+    required List<File> images,
+    bool isVaccinated = false,
+    bool isSterilized = false,
+    bool isDewormed = false,
+    required String specialNeeds,
+    bool goodWithKids = false,
+    bool goodWithDogs = false,
+    bool requiresYard = false,
+    required String energyLevel,
+}) async {
+    try {
+        final options = await _getAuthOptions();
+
+        // Construir FormData con campos y archivos
+        final formData = FormData.fromMap({
+            "name": name,
+            "type": type,
+            "breed": breed,
+            "age": age,
+            "description": description,
+            "latitude": latitude,
+            "longitude": longitude,
+            "address": address,
+            "is_vaccinated": isVaccinated,
+            "is_sterilized": isSterilized,
+            "is_dewormed": isDewormed,
+            "special_needs": specialNeeds,
+            "good_with_kids": goodWithKids,
+            "good_with_dogs": goodWithDogs,
+            "requires_yard": requiresYard,
+            "energy_level": energyLevel,
+        });
+
+        // Agregar cada imagen como archivo
+        for (var file in images) {
+            String fileName = file.path.split('/').last;
+            formData.files.add(
+                MapEntry(
+                    "images",
+                    await MultipartFile.fromFile(
+                        file.path,
+                        filename: fileName,
+                    ),
+                ),
+            );
+        }
+
+        // Enviar POST con multipart
+        await _dio.post(
+            '${ApiConstants.baseUrl}/pets',
+            data: formData,
+            options: options,
+        );
+    } on DioException catch (e) {
+        _handleDioException(e);
+    }
+}
+```
+
+**Notas Arquitectónicas de Etapa 14 (Frontend)**
+
+- **Backward Compatibility**: Si `pet.images` está vacío, usa `pet.imageUrl` como fallback
+- **ImageHelper Integration**: PetDetailScreen usa ImageHelper.getImage() para error handling consistente
+- **GPS Fallback**: Si GPS falla, usa coordenadas por defecto (Santiago)
+- **Validación Local**: CreatePetScreen valida mínimo 1 foto, máximo 10, tipos de campo requeridos
+- **UX Pattern Familiar**: Galería tipo Instagram (swipe, arrows, dots, counter) es patrón establecido
+- **Responsividad**: Layouts adaptados a diferentes tamaños de pantalla
+
+### Archivos Modificados/Creados en Etapa 14
+
+| Archivo                                                             | Cambio      | Tipo        |
+| ------------------------------------------------------------------- | ----------- | ----------- |
+| `app/lib/features/pets/domain/pet_model.dart`                       | Extensión   | Actualizado |
+| `app/lib/features/pets/presentation/screens/create_pet_screen.dart` | Creado      | Nuevo       |
+| `app/lib/features/pets/presentation/screens/pet_detail_screen.dart` | Actualizado | Actualizado |
+| `app/lib/features/pets/data/pets_repository.dart`                   | Actualizado | Actualizado |
+
+### Beneficios Consolidados de Etapa 14
+
+**Para Rescatistas**:
+
+- Formulario profesional guiado que completa registro en 2-3 minutos
+- GPS automático reduce entrada manual
+- Información médica y comportamental completa desde el inicio
+- Preview de fotos con PORTADA label identifica cover image
+
+**Para Adoptantes**:
+
+- Exploración visual profunda de mascotas (múltiples ángulos)
+- Información clara sobre compatibilidad antes de adoptar
+- Galería interactiva familiar (tipo Instagram)
+- Confianza aumentada con información médica visible
+- Navegación intuitiva (swipe, arrows, dots, counter)
+
+**Para el Sistema**:
+
+- Datos estructurados en lugar de entrada libre
+- Validación en formulario previene datos inconsistentes
+- Múltiples fotos navegables sin cambio de estructura
+- Integración fluida con backend (multipart handling)
+- Eager loading en backend garantiza que imágenes siempre se cargan
+
 ## Referencias y Recursos
 
 - **Flutter Bloc Pattern**: https://bloclibrary.dev/
