@@ -112,3 +112,48 @@ func (s *FileService) SaveImage(ctx context.Context, file *multipart.FileHeader)
 	fullURL := fmt.Sprintf("%s/%s/%s", s.publicURL, s.bucketName, objectName)
 	return fullURL, nil
 }
+
+// --- NUEVO: Subir Múltiples Imágenes ---
+func (s *FileService) SaveMultipleImages(ctx context.Context, files []*multipart.FileHeader) ([]string, error) {
+	var urls []string
+	
+	for _, file := range files {
+		url, err := s.uploadFile(ctx, file) // Usamos un helper interno para no repetir código
+		if err != nil {
+			log.Printf("Error subiendo una de las imágenes: %v", err)
+			continue // Seguimos con las otras, o podrías hacer return nil, err para ser estricto
+		}
+		urls = append(urls, url)
+	}
+	return urls, nil
+}
+
+// Helper privado para reutilizar lógica de subida
+func (s *FileService) uploadFile(ctx context.Context, file *multipart.FileHeader) (string, error) {
+	if !s.isEnabled || s.minioClient == nil {
+		return "", fmt.Errorf("servicio no disponible")
+	}
+
+	ext := strings.ToLower(filepath.Ext(file.Filename))
+	if ext != ".jpg" && ext != ".jpeg" && ext != ".png" {
+		return "", fmt.Errorf("formato inválido")
+	}
+
+	objectName := uuid.New().String() + ext
+	contentType := file.Header.Get("Content-Type")
+
+	src, err := file.Open()
+	if err != nil {
+		return "", err
+	}
+	defer src.Close()
+
+	_, err = s.minioClient.PutObject(ctx, s.bucketName, objectName, src, file.Size, minio.PutObjectOptions{
+		ContentType: contentType,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("%s/%s/%s", s.publicURL, s.bucketName, objectName), nil
+}

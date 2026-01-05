@@ -15,6 +15,14 @@ const (
 	PetPending      PetStatus = "pending"
 )
 
+// --- NUEVA TABLA: IMÁGENES DE MASCOTA (Galería) ---
+type PetImage struct {
+	ID      uint   `gorm:"primaryKey" json:"id"`
+	PetID   uint   `gorm:"index;not null" json:"pet_id"` // Clave foránea
+	URL     string `json:"url"`
+	IsCover bool   `json:"is_cover"` // Define si es la foto principal
+}
+
 type Pet struct {
 	ID          uint      `gorm:"primaryKey" json:"id"`
 	
@@ -26,24 +34,34 @@ type Pet struct {
 	Gender      string    `json:"gender"` // male, female
 	Description string    `json:"description"`
 	
-	// CORRECCIÓN 1: Campo para la URL de la foto (Faltaba)
+	// --- OBSOLETO (Mantenemos por compatibilidad temporal, pero usaremos Images) ---
 	PhotoURL    string    `json:"photo_url"` 
+
+	// --- NUEVA GALERÍA ---
+	Images      []PetImage `json:"images" gorm:"foreignKey:PetID;constraint:OnDelete:CASCADE;"`
 
 	// Geolocalización
 	Latitude    float64   `json:"latitude"`
-	Longitude   float64   `json:"longitude"`
-	
+	Longitude   float64   `json: "longitude"`
+	Address     string    `json:"address"` // Ej: "Refugio Esperanza, Santiago"
+
 	// Estado
 	Status      PetStatus `json:"status" gorm:"default:'available'"`
 
-	// Matchmaking (Preferencias)
+	// --- NUEVO: INFORMACIÓN VETERINARIA & SALUD ---
+	IsVaccinated   bool   `json:"is_vaccinated"`
+	IsSterilized   bool   `json:"is_sterilized"`
+	IsDewormed     bool   `json:"is_dewormed"`
+	SpecialNeeds   string `json:"special_needs"` // Ej: "Ciego", "Diabético", o vacío
+
+	// Matchmaking (Preferencias / Estilo de Vida)
 	RequiresYard    bool   `json:"requires_yard"`
 	GoodWithKids    bool   `json:"good_with_kids"`
 	GoodWithDogs    bool   `json:"good_with_dogs"`
 	GoodWithCats    bool   `json:"good_with_cats"`
 	EnergyLevel     string `json:"energy_level"` // low, medium, high
 
-	// CORRECCIÓN 2: Relaciones (El error 'unsupported relations' era por esto)
+	// Relaciones
 	UserID      uint      `json:"user_id"`
 	User        User      `json:"user,omitempty" gorm:"foreignKey:UserID"`
 	

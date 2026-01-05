@@ -1,8 +1,7 @@
 package services
 
 import (
-	"errors" // <--- FALTABA ESTA IMPORTACIÓN
-
+	"errors"
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/domain"
 	"gorm.io/gorm"
 )
@@ -12,48 +11,102 @@ type PetService struct {
 }
 
 func NewPetService(db *gorm.DB) *PetService {
-	return &PetService{
-		db: db,
-	}
+	return &PetService{db: db}
 }
 
-// Create guarda una nueva mascota en la BD
-func (s *PetService) Create(name, petType, breed, description string, age int, lat, long float64, userID uint, photoURL string) (*domain.Pet, error) {
+// Create actualizada (Mantenemos la versión con Input DTO que hicimos antes)
+// Si no tienes este struct definido en tu archivo actual, asegúrate de mantener tu versión de Create
+// o usar la que definimos en el paso anterior.
+type CreatePetInput struct {
+	Name        string
+	Type        string
+	Breed       string
+	Age         int
+	Description string
+	Latitude    float64
+	Longitude   float64
+	Address     string
+	UserID      uint
+	IsVaccinated bool
+	IsSterilized bool
+	IsDewormed   bool
+	SpecialNeeds string
+	RequiresYard bool
+	GoodWithKids bool
+	GoodWithDogs bool
+	EnergyLevel  string
+    ImageURLs    []string 
+}
+
+func (s *PetService) Create(input CreatePetInput) (*domain.Pet, error) {
+    mainPhoto := ""
+    if len(input.ImageURLs) > 0 {
+        mainPhoto = input.ImageURLs[0]
+    }
+
 	newPet := domain.Pet{
-		Name:        name,
-		Type:        petType,
-		Breed:       breed,
-		Description: description,
-		Age:         age,
-		Latitude:    lat,
-		Longitude:   long,
-		PhotoURL:    photoURL, 
-		Status:      domain.StatusAvailable,
-		UserID:      userID,
+		Name:          input.Name,
+		Type:          input.Type,
+		Breed:         input.Breed,
+		Description:   input.Description,
+		Age:           input.Age,
+		Latitude:      input.Latitude,
+		Longitude:     input.Longitude,
+		Address:       input.Address,
+		PhotoURL:      mainPhoto,
+		Status:        domain.StatusAvailable,
+		UserID:        input.UserID,
+		IsVaccinated:  input.IsVaccinated,
+		IsSterilized:  input.IsSterilized,
+		IsDewormed:    input.IsDewormed,
+		SpecialNeeds:  input.SpecialNeeds,
+        RequiresYard:  input.RequiresYard,
+        GoodWithKids:  input.GoodWithKids,
+        GoodWithDogs:  input.GoodWithDogs,
+        EnergyLevel:   input.EnergyLevel,
 	}
 
-	if err := s.db.Create(&newPet).Error; err != nil {
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&newPet).Error; err != nil {
+			return err
+		}
+        if len(input.ImageURLs) > 0 {
+            var images []domain.PetImage
+            for i, url := range input.ImageURLs {
+                images = append(images, domain.PetImage{
+                    PetID:   newPet.ID,
+                    URL:     url,
+                    IsCover: (i == 0),
+                })
+            }
+            if err := tx.Create(&images).Error; err != nil {
+                return err
+            }
+        }
+		return nil
+	})
+
+	if err != nil {
 		return nil, err
 	}
 
-	// Preload para devolver el objeto completo con el usuario
-	s.db.Preload("User").First(&newPet, newPet.ID)
-
+    // Preload al devolver la creada
+	s.db.Preload("User").Preload("Images").First(&newPet, newPet.ID)
 	return &newPet, nil
 }
 
 // GetAll devuelve todas las mascotas disponibles
 func (s *PetService) GetAll() ([]domain.Pet, error) {
 	var pets []domain.Pet
-	err := s.db.Preload("User").Where("status = ?", domain.StatusAvailable).Find(&pets).Error
+	// CORRECCIÓN: Agregamos .Preload("Images")
+	err := s.db.Preload("User").Preload("Images").Where("status = ?", domain.StatusAvailable).Find(&pets).Error
 	return pets, err
 }
 
-// SearchNearby busca mascotas en un radio de 'distanceKM'
+// SearchNearby busca mascotas en un radio
 func (s *PetService) SearchNearby(lat, lng float64, distanceKM float64) ([]domain.Pet, error) {
 	var pets []domain.Pet
 	
-	// Query geoespacial (Haversine simple)
 	query := `
 		SELECT *, (
 			6371 * acos(
@@ -66,36 +119,31 @@ func (s *PetService) SearchNearby(lat, lng float64, distanceKM float64) ([]domai
 		ORDER BY distance ASC
 	`
 	
+	// Scan NO hace Preload automáticamente porque es SQL crudo
 	err := s.db.Raw(query, lat, lng, lat, domain.PetAvailable).Scan(&pets).Error
 	if err != nil {
 		return nil, err
 	}
 	
-	// Filtro manual de distancia si SQL no filtra estrictamente
-	var filtered []domain.Pet
-	for _, p := range pets {
-		filtered = append(filtered, p)
+	// CORRECCIÓN MANUAL: Cargar relaciones para cada resultado
+	for i := range pets {
+		s.db.Model(&pets[i]).Association("Images").Find(&pets[i].Images)
+		s.db.Model(&pets[i]).Association("User").Find(&pets[i].User)
 	}
-
-	return filtered, nil
+	
+	return pets, nil
 }
 
 func (s *PetService) GetByID(id uint) (*domain.Pet, error) {
 	var pet domain.Pet
-	err := s.db.Preload("User").First(&pet, id).Error
+	// CORRECCIÓN: Agregamos .Preload("Images")
+	err := s.db.Preload("User").Preload("Images").First(&pet, id).Error
 	return &pet, err
 }
 
-// Delete elimina una mascota solo si pertenece al usuario que lo solicita
 func (s *PetService) Delete(id uint, ownerID uint) error {
-	// Verificamos que el ID y el UserID coincidan
 	result := s.db.Where("id = ? AND user_id = ?", id, ownerID).Delete(&domain.Pet{})
-	
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return errors.New("mascota no encontrada o no tienes permiso para borrarla")
-	}
+	if result.Error != nil { return result.Error }
+	if result.RowsAffected == 0 { return errors.New("mascota no encontrada o sin permiso") }
 	return nil
 }

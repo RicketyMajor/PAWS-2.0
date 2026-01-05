@@ -8,64 +8,123 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// --- ESTRUCTURAS DE DATOS ---
+
+// 1. DTO para Búsqueda (Restaurado)
 type SearchPetFilters struct {
-	Type   string  `form:"type"`   // Ej: Dog, Cat
-	Breed  string  `form:"breed"`  // Ej: Golden Retriever
-	Lat    float64 `form:"lat"`    // Latitud del usuario
-	Long   float64 `form:"long"`   // Longitud del usuario
-	Radius float64 `form:"radius"` // Radio de búsqueda en KM
+	Type   string  `form:"type"`
+	Breed  string  `form:"breed"`
+	Lat    float64 `form:"lat"`
+	Long   float64 `form:"long"`
+	Radius float64 `form:"radius"`
 	MaxAge int     `form:"max_age"`
 }
 
-type CreatePetRequest struct {
-	Name        string  `json:"name" binding:"required"`
-	Type        string  `json:"type" binding:"required"`
-	Breed       string  `json:"breed"`
-	Age         int     `json:"age"`
-	Description string  `json:"description"`
-	Latitude    float64 `json:"latitude"`
-	Longitude   float64 `json:"longitude"`
-	PhotoURL    string  `json:"photo_url"` 
+// 2. DTO para Crear Mascota (Multipart Form)
+type CreatePetForm struct {
+	Name         string  `form:"name" binding:"required"`
+	Type         string  `form:"type" binding:"required"`
+	Breed        string  `form:"breed"`
+	Age          int     `form:"age"`
+	Description  string  `form:"description"`
+	Latitude     float64 `form:"latitude"`
+	Longitude    float64 `form:"longitude"`
+	Address      string  `form:"address"`
+
+	// Veterinarios
+	IsVaccinated bool   `form:"is_vaccinated"`
+	IsSterilized bool   `form:"is_sterilized"`
+	IsDewormed   bool   `form:"is_dewormed"`
+	SpecialNeeds string `form:"special_needs"`
+
+	// Preferencias
+	RequiresYard bool   `form:"requires_yard"`
+	GoodWithKids bool   `form:"good_with_kids"`
+	GoodWithDogs bool   `form:"good_with_dogs"`
+	EnergyLevel  string `form:"energy_level"`
 }
+
+// --- HANDLER ---
 
 type PetHandler struct {
-	service *services.PetService
+	service     *services.PetService
+	fileService *services.FileService
 }
 
-func NewPetHandler(service *services.PetService) *PetHandler {
-	return &PetHandler{service: service}
+func NewPetHandler(service *services.PetService, fileService *services.FileService) *PetHandler {
+	return &PetHandler{
+		service:     service,
+		fileService: fileService,
+	}
 }
 
+// Create maneja la creación con imágenes múltiples
 func (h *PetHandler) Create(c *gin.Context) {
-	// 1. Obtener UserID del contexto
+	// 1. Auth
 	userIDFloat, exists := c.Get("userID")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "usuario no autenticado"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "no auth"})
 		return
 	}
 	userID := uint(userIDFloat.(float64))
 
-	var req CreatePetRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	// 2. Bind de campos de texto
+	var form CreatePetForm
+	if err := c.ShouldBind(&form); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Datos inválidos: " + err.Error()})
 		return
 	}
 
-	// 2. Llamar al servicio
-	newPet, err := h.service.Create(
-		req.Name, 
-		req.Type, 
-		req.Breed, 
-		req.Description, 
-		req.Age, 
-		req.Latitude, 
-		req.Longitude, 
-		userID,
-		req.PhotoURL, 
-	)
+	// 3. Procesar Archivos (Imágenes)
+	formMultipart, err := c.MultipartForm()
+	var imageURLs []string
+
+	if err == nil {
+		files := formMultipart.File["images"] // Array de archivos
+
+		if len(files) > 0 {
+			if len(files) > 10 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Máximo 10 fotos permitidas"})
+				return
+			}
+
+			// Subir usando FileService
+			uploadedURLs, err := h.fileService.SaveMultipleImages(c.Request.Context(), files)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Error subiendo fotos: " + err.Error()})
+				return
+			}
+			imageURLs = uploadedURLs
+		}
+	}
+
+	// 4. Llamar al servicio
+	newPet, err := h.service.Create(services.CreatePetInput{
+		Name:        form.Name,
+		Type:        form.Type,
+		Breed:       form.Breed,
+		Age:         form.Age,
+		Description: form.Description,
+		Latitude:    form.Latitude,
+		Longitude:   form.Longitude,
+		Address:     form.Address,
+		UserID:      userID,
+
+		IsVaccinated: form.IsVaccinated,
+		IsSterilized: form.IsSterilized,
+		IsDewormed:   form.IsDewormed,
+		SpecialNeeds: form.SpecialNeeds,
+
+		RequiresYard: form.RequiresYard,
+		GoodWithKids: form.GoodWithKids,
+		GoodWithDogs: form.GoodWithDogs,
+		EnergyLevel:  form.EnergyLevel,
+
+		ImageURLs: imageURLs,
+	})
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error guardando mascota: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -82,30 +141,21 @@ func (h *PetHandler) GetAll(c *gin.Context) {
 }
 
 func (h *PetHandler) Search(c *gin.Context) {
-	// Mapeo manual de query params a mapa de filtros
 	filters := SearchPetFilters{}
 	if err := c.BindQuery(&filters); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Filtros inválidos"})
 		return
 	}
 
-	// CORRECCIÓN: Eliminamos 'filterMap' porque no se estaba usando en la llamada siguiente.
-	// Cuando implementes la búsqueda avanzada en PetService, volveremos a activarlo.
-
-	// Fallback a GetAll por ahora
-	pets, err := h.service.GetAll() 
+	// Por ahora usamos GetAll, luego conectaremos los filtros al servicio
+	pets, err := h.service.GetAll()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	
-	// Aquí podrías filtrar la lista 'pets' en memoria usando los datos de 'filters'
-	// si quisieras, pero para compilar, esto es suficiente.
-
 	c.JSON(http.StatusOK, pets)
 }
 
-// GetNearby (GET /pets/nearby?lat=-33.4&lng=-70.6&dist=10)
 func (h *PetHandler) GetNearby(c *gin.Context) {
 	latStr := c.Query("lat")
 	lngStr := c.Query("lng")
@@ -119,7 +169,7 @@ func (h *PetHandler) GetNearby(c *gin.Context) {
 	lat, _ := strconv.ParseFloat(latStr, 64)
 	lng, _ := strconv.ParseFloat(lngStr, 64)
 	dist, _ := strconv.ParseFloat(distStr, 64)
-	
+
 	if dist == 0 {
 		dist = 10.0
 	}
@@ -158,9 +208,7 @@ func (h *PetHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	// Obtener UserID de forma segura (como hicimos en match_handler)
 	userIDVal, _ := c.Get("userID")
-	// Asumimos float64 que es lo estándar de JWT
 	var userID uint
 	if val, ok := userIDVal.(float64); ok {
 		userID = uint(val)

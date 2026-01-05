@@ -55,6 +55,7 @@ func main() {
 		&domain.User{}, 
 		&domain.UserProfile{},
 		&domain.Pet{},
+		&domain.PetImage{},
 		&domain.Match{},
 		&domain.Message{}, 
 		&domain.Review{},
@@ -155,7 +156,7 @@ func main() {
 	// =========================================================================
 
 	authHandler     := httpTransport.NewAuthHandler(authService, otpService)
-	petHandler      := httpTransport.NewPetHandler(petService)
+	petHandler 		:= httpTransport.NewPetHandler(petService, fileService)
 	userHandler     := httpTransport.NewUserHandler(userService, matchService)
 	matchHandler    := httpTransport.NewMatchHandler(matchService)
 	socialHandler   := httpTransport.NewSocialHandler(chatService, reviewService)
