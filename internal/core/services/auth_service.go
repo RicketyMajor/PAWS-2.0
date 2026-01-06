@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-	"github.com/redis/go-redis/v9" // Necesitamos Redis aquí también
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 	"github.com/golang-jwt/jwt/v5"
 
@@ -18,13 +18,11 @@ import (
 	"github.com/RicketyMajor/PAWS-2.0/internal/platform/database"
 )
 
-// --- AGREGAR ESTA ESTRUCTURA AL INICIO ---
-// Usamos esta estructura auxiliar para asegurarnos de que la contraseña
-// SÍ se guarde en Redis, independientemente de las etiquetas JSON de domain.User
+// Estructura auxiliar para registro temporal
 type registrationCache struct {
 	Name     string `json:"name"`
 	Email    string `json:"email"`
-	Password string `json:"password"` // Aquí forzamos que se guarde
+	Password string `json:"password"`
 	Run      string `json:"run"`
 	Role     string `json:"role"`
 }
@@ -35,7 +33,6 @@ type AuthService struct {
 }
 
 func NewAuthService(dbOrNil *gorm.DB) *AuthService {
-	// 1. Configurar conexión a Redis
 	redisHost := os.Getenv("REDIS_HOST")
 	redisPort := os.Getenv("REDIS_PORT")
 	if redisHost == "" { redisHost = "localhost" }
@@ -51,7 +48,30 @@ func NewAuthService(dbOrNil *gorm.DB) *AuthService {
 	return &AuthService{db: dbOrNil, redisClient: rdb}
 }
 
-// InitiateRegistration: Guarda datos en Redis usando registrationCache
+// --- NUEVO: Actualizar Contraseña (Reset Password Flow) ---
+func (s *AuthService) UpdatePassword(email, newPassword string) error {
+	// 1. Buscar usuario
+	var user domain.User
+	if err := s.db.Where("email = ?", email).First(&user).Error; err != nil {
+		return errors.New("usuario no encontrado")
+	}
+
+	// 2. Hashear nueva contraseña
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+
+	// 3. Actualizar en BD
+	user.Password = string(hashedPassword)
+	if err := s.db.Save(&user).Error; err != nil {
+		return fmt.Errorf("error actualizando contraseña: %v", err)
+	}
+
+	return nil
+}
+
+// InitiateRegistration: Guarda datos en Redis
 func (s *AuthService) InitiateRegistration(name, email, password, run, role string) error {
 	isBanned, err := s.CheckBlacklist(run)
 	if err != nil { return err }
@@ -68,11 +88,10 @@ func (s *AuthService) InitiateRegistration(name, email, password, run, role stri
 	roleNormalized := strings.ToLower(role)
 	if roleNormalized == "" { roleNormalized = "adopter" }
 
-	// --- CAMBIO AQUÍ: Usamos la estructura cache en lugar de domain.User ---
 	tempData := registrationCache{
 		Name:     name,
 		Email:    email,
-		Password: string(hashedPassword), // Guardamos el Hash explícitamente
+		Password: string(hashedPassword),
 		Run:      run,
 		Role:     roleNormalized,
 	}
@@ -103,17 +122,15 @@ func (s *AuthService) CompleteRegistration(email string) (*domain.User, error) {
 		return nil, err
 	}
 
-	// --- CAMBIO AQUÍ: Deserializamos en la estructura cache ---
 	var tempData registrationCache
 	if err := json.Unmarshal([]byte(val), &tempData); err != nil {
 		return nil, err
 	}
 
-	// Convertimos la cache al modelo de dominio real
 	user := domain.User{
 		Name:     tempData.Name,
 		Email:    tempData.Email,
-		Password: tempData.Password, // ¡Ahora sí viene el password!
+		Password: tempData.Password,
 		Run:      tempData.Run,
 		Role:     tempData.Role,
 	}
@@ -127,7 +144,6 @@ func (s *AuthService) CompleteRegistration(email string) (*domain.User, error) {
 	return &user, nil
 }
 
-// --- Métodos Login, CheckBlacklist, etc. se mantienen igual ---
 func (s *AuthService) Login(email, password string) (string, error) {
 	var user domain.User
 	if err := s.db.Where("email = ?", email).First(&user).Error; err != nil {
@@ -151,7 +167,6 @@ func (s *AuthService) CheckBlacklist(run string) (bool, error) {
 	return true, nil
 }
 
-// Helper para generar token desde Objeto User
 func (s *AuthService) GenerateTokenForUser(user *domain.User) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"sub":     user.ID,
@@ -164,8 +179,6 @@ func (s *AuthService) GenerateTokenForUser(user *domain.User) (string, error) {
 	return token.SignedString([]byte(secret))
 }
 
-// Mantener por compatibilidad si se usa en otros lados, 
-// pero ahora VerifyOTP usará CompleteRegistration preferentemente.
 func (s *AuthService) GenerateTokenForEmail(email string) (string, error) {
 	var user domain.User
 	if err := s.db.Where("email = ?", email).First(&user).Error; err != nil {
