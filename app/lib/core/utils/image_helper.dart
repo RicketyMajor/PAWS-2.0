@@ -8,39 +8,38 @@ class ImageHelper {
   static String fixUrl(String url) {
     if (url.isEmpty) return '';
 
-    // 1. Manejo de URLs Absolutas (MinIO, S3, http...)
-    if (url.startsWith('http')) {
-      // Si estamos en Android Emulador, cambiamos localhost por 10.0.2.2
-      if (!kIsWeb && Platform.isAndroid && url.contains('localhost')) {
-        return url.replaceFirst('localhost', '10.0.2.2');
+    String finalUrl = url;
+
+    // 1. Si la URL es relativa (ej: /paws-bucket/...), le falta el dominio.
+    // Asumimos que es MinIO (puerto 9000) en el host del emulador.
+    if (!url.startsWith('http')) {
+      // Asegurar slash inicial
+      if (!url.startsWith('/')) {
+        finalUrl = '/$url';
       }
-      return url;
+
+      // Si estamos en Android Emulador, forzamos la dirección de MinIO
+      if (!kIsWeb && Platform.isAndroid) {
+        finalUrl = 'http://10.0.2.2:9000$finalUrl';
+      } else {
+        // Fallback para iOS u otros (Localhost)
+        finalUrl = 'http://localhost:9000$finalUrl';
+      }
     }
 
-    // 2. Manejo de URLs Relativas (/uploads/...)
-    // TRUCO: Si la baseUrl termina en /api/v1 y la imagen es estática (/uploads),
-    // debemos quitar el /api/v1 para que la URL sea válida.
-    String baseUrl = ApiConstants.baseUrl;
-
-    // Si la imagen está en /uploads, asumimos que está en la raíz del servidor, no en la API
-    if (url.startsWith('/uploads') && baseUrl.endsWith('/api/v1')) {
-      baseUrl = baseUrl.replaceAll('/api/v1', '');
+    // 2. Manejo de URLs Absolutas con localhost
+    if (finalUrl.contains('localhost')) {
+      if (!kIsWeb && Platform.isAndroid) {
+        finalUrl = finalUrl.replaceFirst('localhost', '10.0.2.2');
+      }
     }
 
-    // Quitar slash final si existe para evitar doble slash
-    if (baseUrl.endsWith('/')) {
-      baseUrl = baseUrl.substring(0, baseUrl.length - 1);
-    }
-
-    // Asegurar que url tenga slash inicial
-    if (!url.startsWith('/')) {
-      url = '/$url';
-    }
-
-    return '$baseUrl$url';
+    // Debug Log (Para que veas en consola qué URL final se está pidiendo)
+    // print("IMAGE HELPER: $url -> $finalUrl");
+    return finalUrl;
   }
 
-  /// Devuelve el Widget de Imagen inteligente (Red o Asset por defecto)
+  /// Devuelve el Widget de Imagen inteligente
   static Widget getImage(
     String? url, {
     double? width,
@@ -48,16 +47,7 @@ class ImageHelper {
     BoxFit fit = BoxFit.cover,
   }) {
     if (url == null || url.isEmpty) {
-      return Container(
-        width: width,
-        height: height,
-        color: Colors.grey[300],
-        child: Icon(
-          Icons.pets,
-          color: Colors.grey[500],
-          size: (width ?? 50) * 0.5,
-        ),
-      );
+      return _buildPlaceholder(width, height);
     }
 
     return Image.network(
@@ -65,22 +55,10 @@ class ImageHelper {
       width: width,
       height: height,
       fit: fit,
-      // IMPORTANTE: Manejo de errores visual
       errorBuilder: (context, error, stackTrace) {
-        // Descomenta esto para ver en consola por qué falla exactamente
-        // print("DEBUG IMAGE ERROR ($url): $error");
-        return Container(
-          width: width,
-          height: height,
-          color: Colors.grey[200],
-          child: Icon(
-            Icons.broken_image,
-            color: Colors.grey[400],
-            size: (width ?? 30) * 0.5,
-          ),
-        );
+        print("ERROR CARGANDO IMAGEN (${fixUrl(url)}): $error");
+        return _buildErrorPlaceholder(width, height);
       },
-      // Cacheo y Loading
       loadingBuilder: (context, child, loadingProgress) {
         if (loadingProgress == null) return child;
         return Container(
@@ -101,12 +79,30 @@ class ImageHelper {
     );
   }
 
-  /// Devuelve un ImageProvider (para usar en CircleAvatar, etc)
-  /// NOTA: Usar con cuidado, si falla no hay fallback visual automático en CircleAvatar.
   static ImageProvider getProvider(String? url) {
     if (url == null || url.isEmpty) {
-      return const AssetImage('assets/images/placeholder.png');
+      return const AssetImage(
+        'assets/images/placeholder.png',
+      ); // Asegúrate de tener este asset o usa un NetworkImage placeholder
     }
     return NetworkImage(fixUrl(url));
+  }
+
+  static Widget _buildPlaceholder(double? width, double? height) {
+    return Container(
+      width: width,
+      height: height,
+      color: Colors.grey[300],
+      child: Icon(Icons.pets, color: Colors.grey[500], size: 40),
+    );
+  }
+
+  static Widget _buildErrorPlaceholder(double? width, double? height) {
+    return Container(
+      width: width,
+      height: height,
+      color: Colors.grey[200],
+      child: Icon(Icons.broken_image, color: Colors.grey[400], size: 40),
+    );
   }
 }

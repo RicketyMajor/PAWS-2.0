@@ -4,10 +4,11 @@ import 'package:jwt_decoder/jwt_decoder.dart';
 import '../../data/auth_repository.dart';
 import '../bloc/login_bloc.dart';
 import 'register_screen.dart';
+import 'password_recovery_screen.dart'; // <--- IMPORTAR NUEVA PANTALLA
 import '../../../../core/presentation/main_layout_screen.dart';
 import '../../../admin/presentation/screens/admin_dashboard_screen.dart';
-import 'package:firebase_messaging/firebase_messaging.dart'; // Importante
-import '../../../../features/user/data/user_repository.dart'; // Importante
+import 'package:firebase_messaging/firebase_messaging.dart';
+import '../../../../features/user/data/user_repository.dart';
 
 class LoginScreen extends StatelessWidget {
   const LoginScreen({super.key});
@@ -33,6 +34,7 @@ class _LoginFormState extends State<_LoginForm> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isPasswordVisible = false;
+  bool _rememberMe = false; // <--- ESTADO DEL CHECKBOX
 
   @override
   Widget build(BuildContext context) {
@@ -50,27 +52,16 @@ class _LoginFormState extends State<_LoginForm> {
             ),
           );
 
-          // ---------------------------------------------------------
-          // 🔔 NUEVA LÓGICA DE NOTIFICACIONES (Etapa 12)
-          // Justo aquí, antes de navegar, guardamos el token FCM.
-          // ---------------------------------------------------------
           try {
-            // 1. Pedimos el token a Google
             String? fcmToken = await FirebaseMessaging.instance.getToken();
-
             if (fcmToken != null && mounted) {
-              // 2. Lo enviamos a nuestro Backend
               await context.read<UserRepository>().saveDeviceToken(fcmToken);
-              print("Token FCM enviado y guardado correctamente.");
             }
           } catch (e) {
-            // Si falla esto, NO detenemos el login, solo avisamos en consola.
             print("Error configurando notificaciones: $e");
           }
-          // ---------------------------------------------------------
 
-          if (!mounted)
-            return; // Seguridad por si el usuario cerró la app rápido
+          if (!mounted) return;
 
           final authRepo = context.read<AuthRepository>();
           final token = await authRepo.getToken();
@@ -79,7 +70,6 @@ class _LoginFormState extends State<_LoginForm> {
             Map<String, dynamic> decodedToken = JwtDecoder.decode(token);
             String role = decodedToken['role'] ?? 'adopter';
 
-            // --- LÓGICA DE RUTAS ---
             if (role == 'admin') {
               if (mounted) {
                 Navigator.pushAndRemoveUntil(
@@ -101,7 +91,6 @@ class _LoginFormState extends State<_LoginForm> {
                 );
               }
             }
-            // -----------------------
           }
         }
       },
@@ -157,7 +146,22 @@ class _LoginFormState extends State<_LoginForm> {
                         ),
                       ),
                     ),
+
+                    // --- CORRECCIÓN UI: Checkbox solo, sin el botón al lado ---
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Checkbox(
+                          value: _rememberMe,
+                          onChanged: (v) => setState(() => _rememberMe = v!),
+                          activeColor: const Color(0xFFE91E63),
+                        ),
+                        const Text("Recordar usuario"),
+                      ],
+                    ),
                     const SizedBox(height: 24),
+
+                    // Botón Login
                     BlocBuilder<LoginBloc, LoginState>(
                       builder: (context, state) {
                         if (state is LoginLoading) {
@@ -165,7 +169,6 @@ class _LoginFormState extends State<_LoginForm> {
                             child: CircularProgressIndicator(),
                           );
                         }
-
                         return FilledButton(
                           onPressed: () {
                             context.read<LoginBloc>().add(
@@ -189,6 +192,8 @@ class _LoginFormState extends State<_LoginForm> {
                         );
                       },
                     ),
+
+                    // Botón Registro
                     TextButton(
                       onPressed: () {
                         Navigator.push(
@@ -199,6 +204,21 @@ class _LoginFormState extends State<_LoginForm> {
                         );
                       },
                       child: const Text('¿No tienes cuenta? Regístrate aquí'),
+                    ),
+
+                    // --- CORRECCIÓN UI: Botón Recuperar AQUÍ ABAJO ---
+                    const SizedBox(height: 10),
+                    TextButton(
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const PasswordRecoveryScreen(),
+                          ),
+                        );
+                      },
+                      style: TextButton.styleFrom(foregroundColor: Colors.grey),
+                      child: const Text("¿Olvidaste tu contraseña?"),
                     ),
                   ],
                 ),

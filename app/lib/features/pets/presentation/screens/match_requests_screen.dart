@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../data/matches_repository.dart';
+import '../../../../core/utils/image_helper.dart';
+import '../../../user/domain/user_model.dart'; // <--- Importamos el modelo
+import '../../../user/presentation/screens/public_profile_screen.dart'; // <--- Importamos la pantalla
 
 class MatchRequestsScreen extends StatefulWidget {
   const MatchRequestsScreen({super.key});
@@ -33,7 +36,7 @@ class _MatchRequestsScreenState extends State<MatchRequestsScreen> {
           backgroundColor: accept ? Colors.green : Colors.grey,
         ),
       );
-      _loadRequests(); // Recargar lista
+      _loadRequests();
     } catch (e) {
       ScaffoldMessenger.of(
         context,
@@ -66,21 +69,58 @@ class _MatchRequestsScreenState extends State<MatchRequestsScreen> {
             itemCount: requests.length,
             itemBuilder: (context, index) {
               final req = requests[index];
-              // El JSON debe traer 'adopter' y 'pet'
-              final adopterName = req['adopter']?['name'] ?? 'Usuario';
+              // Extraer datos crudos
+              final adopterMap = req['adopter'];
               final petName = req['pet']?['name'] ?? 'Mascota';
               final matchId = req['id'];
+
+              // Crear objeto User seguro
+              User? adopter;
+              if (adopterMap != null) {
+                adopter = User.fromJson(adopterMap);
+              }
 
               return Card(
                 margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 child: Column(
                   children: [
                     ListTile(
-                      leading: const CircleAvatar(child: Icon(Icons.person)),
-                      title: Text("$adopterName quiere adoptar a $petName"),
-                      subtitle: const Text("Toca para ver perfil completo"),
+                      leading: CircleAvatar(
+                        backgroundImage: ImageHelper.getProvider(
+                          adopter?.photoUrl,
+                        ),
+                        child:
+                            adopter?.photoUrl == null ||
+                                adopter!.photoUrl.isEmpty
+                            ? const Icon(Icons.person)
+                            : null,
+                      ),
+                      title: Text(
+                        "${adopter?.name ?? 'Usuario'} quiere adoptar a $petName",
+                      ),
+                      subtitle: const Text(
+                        "Toca para ver perfil completo",
+                        style: TextStyle(color: Colors.blue),
+                      ),
                       onTap: () {
-                        // AQUÍ iríamos al perfil del usuario (Fase siguiente)
+                        // --- AQUÍ LA MAGIA: Navegar al perfil ---
+                        if (adopter != null) {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  PublicProfileScreen(user: adopter!),
+                            ),
+                          );
+                        } else {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                "Error: Datos del usuario incompletos",
+                              ),
+                            ),
+                          );
+                        }
                       },
                     ),
                     ButtonBar(

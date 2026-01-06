@@ -12,12 +12,12 @@ class UserRepository {
     return Options(headers: {'Authorization': 'Bearer $token'});
   }
 
-  // 1. OBTENER PERFIL ACTUAL
+  // 1. OBTENER PERFIL
   Future<Map<String, dynamic>> getProfile() async {
     try {
       final options = await _getAuthOptions();
       final response = await _dio.get(
-        '${ApiConstants.baseUrl}/profile', // Ruta GET creada en el paso anterior
+        '${ApiConstants.baseUrl}/profile',
         options: options,
       );
       return response.data;
@@ -26,26 +26,51 @@ class UserRepository {
     }
   }
 
-  // 2. ACTUALIZAR DATOS (Texto)
+  // 2. ACTUALIZAR PERFIL (Expandido)
   Future<void> updateProfile({
     required String name,
     required String bio,
     required String phone,
     required String photoUrl,
+
+    // --- NUEVOS CAMPOS (Vivienda & Estilo de Vida) ---
+    String housingType = 'House',
+    String housingOwnership = 'Owned',
+    bool hasYard = false,
+    bool hasFence = false,
+    String familyComposition = 'Single',
+    String otherPets = 'None',
+    String timeAvailability = 'Medium',
+    String experience = 'Beginner',
   }) async {
     try {
       final options = await _getAuthOptions();
       await _dio.put(
-        '${ApiConstants.baseUrl}/profile', // Ruta PUT
+        '${ApiConstants.baseUrl}/profile',
         options: options,
-        data: {"name": name, "bio": bio, "phone": phone, "photo_url": photoUrl},
+        data: {
+          "name": name,
+          "bio": bio,
+          "phone": phone,
+          "photo_url": photoUrl,
+
+          // Mapeo exacto a los JSON tags de Go
+          "housing_type": housingType,
+          "housing_ownership": housingOwnership,
+          "has_yard": hasYard,
+          "has_fence": hasFence,
+          "family_composition": familyComposition,
+          "other_pets": otherPets,
+          "time_availability": timeAvailability,
+          "experience": experience,
+        },
       );
     } catch (e) {
       throw Exception('Error actualizando perfil: $e');
     }
   }
 
-  // 3. SUBIR FOTO DE PERFIL
+  // 3. SUBIR FOTO
   Future<String> uploadProfilePicture(File file) async {
     try {
       final options = await _getAuthOptions();
@@ -61,26 +86,23 @@ class UserRepository {
         options: options,
       );
 
-      return response.data['url']; // Retorna la URL relativa (/uploads/...)
+      return response.data['url'];
     } catch (e) {
       throw Exception('Error subiendo imagen: $e');
     }
   }
 
-  // --- NUEVO: Enviar Token FCM al Backend ---
+  // 4. GUARDAR TOKEN FCM
   Future<void> saveDeviceToken(String fcmToken) async {
     try {
       final options = await _getAuthOptions();
-      // Asumiremos que crearás este endpoint en Go
       await _dio.post(
         '${ApiConstants.baseUrl}/notifications/token',
         data: {'token': fcmToken},
         options: options,
       );
-      print("Token FCM enviado al backend");
     } catch (e) {
       print("Error guardando token FCM: $e");
-      // No lanzamos excepción para no bloquear el flujo de la app
     }
   }
 }

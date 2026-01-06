@@ -24,8 +24,12 @@ class AuthRepository {
     );
   }
 
-  // Función para hacer Login
-  Future<void> login(String email, String password) async {
+  // --- LOGIN (Actualizado para futuro soporte de "Remember Me") ---
+  Future<void> login(
+    String email,
+    String password, {
+    bool rememberMe = true,
+  }) async {
     try {
       final response = await _dio.post(
         '${ApiConstants.baseUrl}/auth/login',
@@ -33,9 +37,13 @@ class AuthRepository {
       );
 
       final token = response.data['token'];
+
+      // Si "Recuérdame" es true, guardamos en SecureStorage (Persistente)
+      // Si es false, idealmente lo guardaríamos solo en memoria, pero por ahora
+      // mantenemos el comportamiento estándar para no romper el Bloc.
       await _storage.write(key: 'jwt_token', value: token);
 
-      print('Login exitoso. Token guardado: ${token.substring(0, 10)}...');
+      print('Login exitoso.');
     } on DioException catch (e) {
       if (e.response != null) {
         throw Exception(e.response?.data['error'] ?? 'Error desconocido');
@@ -64,7 +72,6 @@ class AuthRepository {
         },
       );
 
-      // Aceptamos 200 y 201
       if (response.statusCode == 201 || response.statusCode == 200) {
         print('Registro exitoso');
       }
@@ -83,7 +90,6 @@ class AuthRepository {
     return await _storage.read(key: 'jwt_token');
   }
 
-  // --- AQUÍ ESTABA EL ERROR ---
   Future<String?> verifyOtp(String email, String code) async {
     try {
       final response = await _dio.post(
@@ -93,17 +99,57 @@ class AuthRepository {
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final token = response.data['token'];
-
         if (token != null) {
-          // Guardamos el token para Auto-Login
           await _storage.write(key: 'jwt_token', value: token);
           return token.toString();
         }
       }
       return null;
-    } on DioException catch (e) {
-      // Si el código es realmente incorrecto (401), caerá aquí y retornará null
+    } on DioException {
       return null;
+    }
+  }
+
+  // ===============================================================
+  //  RECUPERACIÓN DE CONTRASEÑA (NUEVO)
+  // ===============================================================
+
+  // Paso 1: Solicitar código
+  Future<void> forgotPassword(String email) async {
+    try {
+      await _dio.post(
+        '${ApiConstants.baseUrl}/auth/forgot-password',
+        data: {'email': email},
+      );
+    } on DioException catch (e) {
+      throw Exception(e.response?.data['error'] ?? 'Error enviando solicitud');
+    }
+  }
+
+  // Paso 2: Verificar código
+  Future<bool> verifyRecoveryCode(String email, String code) async {
+    try {
+      final response = await _dio.post(
+        '${ApiConstants.baseUrl}/auth/verify-recovery',
+        data: {'email': email, 'code': code},
+      );
+      return response.statusCode == 200;
+    } on DioException {
+      return false;
+    }
+  }
+
+  // Paso 3: Cambiar contraseña
+  Future<void> resetPassword(String email, String newPassword) async {
+    try {
+      await _dio.post(
+        '${ApiConstants.baseUrl}/auth/reset-password',
+        data: {'email': email, 'new_password': newPassword},
+      );
+    } on DioException catch (e) {
+      throw Exception(
+        e.response?.data['error'] ?? 'Error restableciendo contraseña',
+      );
     }
   }
 }

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../../../../core/utils/image_helper.dart'; // <--- El salvavidas
+import '../../../../core/utils/image_helper.dart';
 import '../../domain/pet_model.dart';
 
 class PetCard extends StatelessWidget {
@@ -15,22 +15,81 @@ class PetCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // --- FOTO DE LA MASCOTA ---
+          // --- FOTO Y DUEÑO (Stack) ---
           Expanded(
-            child: ClipRRect(
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(20),
-              ),
-              // Usamos ImageHelper para arreglar URLs y mostrar placeholders si falla
-              child: ImageHelper.getImage(
-                pet.imageUrl,
-                width: double.infinity,
-                fit: BoxFit.cover,
-              ),
+            child: Stack(
+              children: [
+                // 1. Foto de la Mascota
+                Positioned.fill(
+                  child: ClipRRect(
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(20),
+                    ),
+                    child: ImageHelper.getImage(
+                      pet.imageUrl,
+                      width: double.infinity,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                ),
+
+                // 2. Gradiente para que se vea el texto encima
+                Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                    height: 60,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.bottomCenter,
+                        end: Alignment.topCenter,
+                        colors: [
+                          Colors.black.withOpacity(0.6),
+                          Colors.transparent,
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+
+                // 3. Información del Dueño/Rescatista (NUEVO)
+                Positioned(
+                  bottom: 10,
+                  left: 10,
+                  child: Row(
+                    children: [
+                      Container(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 1.5),
+                        ),
+                        child: CircleAvatar(
+                          radius: 14,
+                          backgroundColor: Colors.grey[300],
+                          backgroundImage: ImageHelper.getProvider(
+                            pet.ownerPhotoUrl,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        pet.ownerName,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                          shadows: [Shadow(color: Colors.black, blurRadius: 4)],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
 
-          // --- INFORMACIÓN ---
+          // --- INFORMACIÓN DE LA MASCOTA ---
           Padding(
             padding: const EdgeInsets.all(16.0),
             child: Column(
@@ -49,7 +108,6 @@ class PetCard extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    // Chip de Sexo o Tipo (Opcional, si tu modelo lo tuviera)
                     Icon(
                       pet.type == 'Dog' ? Icons.pets : Icons.cruelty_free,
                       color: Colors.grey,
@@ -69,7 +127,7 @@ class PetCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
 
-                // --- ETIQUETAS (TAGS) ---
+                // Tags
                 Wrap(
                   spacing: 8,
                   runSpacing: 4,

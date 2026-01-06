@@ -5,8 +5,14 @@ class Pet {
   final String breed;
   final int age;
   final String description;
-  final String? imageUrl; // Mantenemos por compatibilidad (Portada)
-  final List<String> images; // <--- NUEVA GALERÍA
+  final String? imageUrl; // Foto Principal
+  final List<String> images; // Galería
+
+  // --- NUEVOS CAMPOS: DUEÑO / RESCATISTA ---
+  final int ownerId;
+  final String ownerName;
+  final String? ownerPhotoUrl;
+  // -----------------------------------------
 
   // Ubicación
   final double latitude;
@@ -19,11 +25,11 @@ class Pet {
   final bool isDewormed;
   final String specialNeeds;
 
-  // Compatibilidad / Estilo de Vida
+  // Compatibilidad
   final bool goodWithKids;
   final bool goodWithDogs;
   final bool requiresYard;
-  final String energyLevel; // low, medium, high
+  final String energyLevel;
 
   final String status;
 
@@ -36,6 +42,12 @@ class Pet {
     required this.description,
     this.imageUrl,
     this.images = const [],
+
+    // Inicializar Dueño
+    this.ownerId = 0,
+    this.ownerName = 'Usuario',
+    this.ownerPhotoUrl,
+
     this.latitude = 0.0,
     this.longitude = 0.0,
     this.address = '',
@@ -51,14 +63,6 @@ class Pet {
   });
 
   factory Pet.fromJson(Map<String, dynamic> json) {
-    // --- DEBUG LOGS (Espías) ---
-    // Esto imprimirá en consola qué imágenes llegan realmente del backend
-    print("PET_DEBUG [ID: ${json['id']}]: Parseando mascota '${json['name']}'");
-    print(
-      "PET_DEBUG [ID: ${json['id']}]: Campo 'images' crudo: ${json['images']}",
-    );
-    // ---------------------------
-
     // Helpers
     int parseInt(dynamic v) {
       if (v is int) return v;
@@ -68,7 +72,7 @@ class Pet {
 
     bool parseBool(dynamic v) {
       if (v is bool) return v;
-      if (v is String) return v.toLowerCase() == 'true';
+      if (v is String) return v.toString().toLowerCase() == 'true';
       return false;
     }
 
@@ -79,26 +83,34 @@ class Pet {
       return 0.0;
     }
 
-    // Procesar Galería
+    // 1. Procesar Galería
     List<String> parsedImages = [];
     if (json['images'] != null && json['images'] is List) {
       parsedImages = (json['images'] as List).map((img) {
-        // El backend devuelve objetos PetImage { "url": "..." }
         if (img is Map && img['url'] != null) return img['url'].toString();
-        // Si por alguna razón llega como string directo
         return img.toString();
       }).toList();
     }
-
-    // Fallback: Si no hay galería pero sí photo_url, la agregamos
+    // Fallback Portada
     String? mainPhoto = json['photo_url'];
     if (parsedImages.isEmpty && mainPhoto != null && mainPhoto.isNotEmpty) {
       parsedImages.add(mainPhoto);
     }
 
-    print(
-      "PET_DEBUG [ID: ${json['id']}]: Galería final procesada (Length: ${parsedImages.length}): $parsedImages",
-    );
+    // 2. PROCESAR DUEÑO (USER) - AQUÍ ESTABA EL PROBLEMA
+    int oId = 0;
+    String oName = 'Desconocido';
+    String? oPhoto;
+
+    if (json['user'] != null && json['user'] is Map) {
+      final userJson = json['user'];
+      oId = parseInt(userJson['id'] ?? userJson['ID']);
+      oName = userJson['name'] ?? 'Usuario';
+      oPhoto = userJson['photo_url']; // Backend envía "photo_url" en User
+    } else {
+      // Fallback si el preload falló
+      oId = parseInt(json['user_id']);
+    }
 
     return Pet(
       id: parseInt(json['id']),
@@ -109,6 +121,11 @@ class Pet {
       description: json['description'] ?? '',
       imageUrl: mainPhoto,
       images: parsedImages,
+
+      // Asignar Dueño
+      ownerId: oId,
+      ownerName: oName,
+      ownerPhotoUrl: oPhoto,
 
       latitude: parseDouble(json['latitude']),
       longitude: parseDouble(json['longitude']),
