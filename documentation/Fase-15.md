@@ -1290,6 +1290,525 @@ LIMIT 20;
 | Message Model  | isMe field calculado en BLoC                 | Rendering correcto               |
 | Protocol       | JSON estructurado (type + payload)           | Extensible a nuevos tipos        |
 
+## COMPLETADO EN ETAPA 15: Chat Exit, Bloqueo y Ciclo de Vida (PARCIALMENTE)
+
+### Problema: Chats Infinitos y Abandonados
+
+En Etapa 11, cada chat con status='accepted' permanecía activo indefinidamente. Problemas:
+
+1. **Adopción Completada**: Juan adopta a Luna. Meses después, el chat sigue en su lista "Chats Activos". Nunca se elimina.
+2. **Rescatista Elimina Mascota**: Rescatista cambia de idea, elimina mascota de la BD. Pero Juan sigue viendo chat con mensajes sobre "Luna", que ya no existe.
+3. **Usuario Quiere Salir**: Adoptante o rescatista quiere abandonar conversación. No hay forma clara de hacerlo.
+
+Resultado: Listas de chats se saturan de "fantasmas", experiencia confusa.
+
+### Solución 1: User Exit (PARCIALMENTE COMPLETADA)
+
+Cuando usuario desea abandonar chat, puede hacer click en menú PopupButton → "Salir del Chat" en ChatScreen.
+
+**Frontend (ChatScreen)**:
+
+```dart
+class ChatScreen extends StatelessWidget {
+  final int matchId;
+  final String peerName;
+  final int peerId;
+  final String? peerPhotoUrl;
+
+  // Nuevos: estados de bloqueo
+  final bool isPetDeleted;
+  final bool isPeerLeft;
+
+  const ChatScreen({
+    super.key,
+    required this.matchId,
+    required this.peerName,
+    required this.peerId,
+    this.peerPhotoUrl,
+    this.isPetDeleted = false,
+    this.isPeerLeft = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isChatBlocked = isPetDeleted || isPeerLeft;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(peerName),
+            if (isPetDeleted)
+              const Text("Mascota eliminada", style: TextStyle(fontSize: 10, color: Colors.red)),
+            if (isPeerLeft)
+              const Text("Usuario abandonó el chat", style: TextStyle(fontSize: 10, color: Colors.red)),
+          ],
+        ),
+        actions: [
+          PopupMenuButton<String>(
+            onSelected: (value) {
+              if (value == 'leave') {
+                _confirmLeaveChat(context);
+              } else if (value == 'report') {
+                _showReportDialog(context);
+              } else if (value == 'review') {
+                _showReviewDialog(context);
+              }
+            },
+            itemBuilder: (BuildContext context) {
+              return [
+                const PopupMenuItem(
+                  value: 'leave',
+                  child: Row(
+                    children: [
+                      Icon(Icons.exit_to_app, color: Colors.red),
+                      SizedBox(width: 8),
+                      Text('Salir del Chat', style: TextStyle(color: Colors.red)),
+                    ],
+                  ),
+                ),
+                const PopupMenuItem(
+                  value: 'report',
+                  child: Row(
+                    children: [
+                      Icon(Icons.flag),
+                      SizedBox(width: 8),
+                      Text('Reportar Usuario'),
+                    ],
+                  ),
+                ),
+                const PopupMenuItem(
+                  value: 'review',
+                  child: Row(
+                    children: [
+                      Icon(Icons.star),
+                      SizedBox(width: 8),
+                      Text('Dejar Reseña'),
+                    ],
+                  ),
+                ),
+              ];
+            },
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          // Mensajes
+          Expanded(
+            child: BlocBuilder<ChatBloc, ChatState>(
+              builder: (context, state) {
+                if (state is ChatLoading) {
+                  return const Center(child: CircularProgressIndicator());
+                } else if (state is ChatLoaded) {
+                  return ListView.builder(
+                    reverse: true,
+                    itemCount: state.messages.length,
+                    itemBuilder: (context, index) {
+                      final msg = state.messages[index];
+                      return _buildMessageBubble(msg, state.myUserId);
+                    },
+                  );
+                }
+                return const Center(child: Text("Error cargando chat"));
+              },
+            ),
+          ),
+
+          // Input (deshabilitado si bloqueado)
+          if (!isChatBlocked)
+            const _ChatInput()
+          else
+            Container(
+              color: Colors.grey[200],
+              padding: const EdgeInsets.all(16),
+              child: Center(
+                child: Text(
+                  isPetDeleted
+                      ? "La mascota fue eliminada. No puedes escribir."
+                      : "El usuario ha abandonado el chat. No puedes escribir.",
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.grey, fontSize: 14),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmLeaveChat(BuildContext context) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("¿Salir del chat?"),
+        content: const Text(
+          "La conversación se cerrará y no podrás volver a escribir. "
+          "El otro usuario recibirá un aviso.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text("Cancelar"),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text("Salir"),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true && context.mounted) {
+      try {
+        await context.read<MatchesRepository>().unmatch(matchId);
+        if (context.mounted) {
+          Navigator.pop(context);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Has salido del chat")),
+          );
+        }
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Error: $e")),
+          );
+        }
+      }
+    }
+  }
+
+  Widget _buildMessageBubble(ChatMessage msg, int myUserId) {
+    // ... renderizar mensaje con timestamp y checkmarks ...
+    return Container(); // stub
+  }
+
+  void _showReportDialog(BuildContext context) {
+    // ... lógica de reportar usuario ...
+  }
+
+  void _showReviewDialog(BuildContext context) {
+    // ... lógica de dejar reseña ...
+  }
+}
+```
+
+**Backend (MatchService.Unmatch)**:
+
+```go
+// internal/core/services/match_service.go
+
+func (s *MatchService) Unmatch(userID, matchID uint) error {
+  var match domain.Match
+  if err := s.db.Preload("Pet").First(&match, matchID).Error; err != nil {
+    return errors.New("match no encontrado")
+  }
+
+  // Determinar quién se está yendo
+  newStatus := ""
+  if match.AdopterID == userID {
+    newStatus = "adopter_left"  // ← Adoptante se fue
+  } else if match.Pet.UserID == userID {
+    newStatus = "rescuer_left"  // ← Rescatista se fue
+  } else {
+    return errors.New("no tienes permiso para salir de este chat")
+  }
+
+  // Actualizar estado del match
+  match.Status = domain.MatchStatus(newStatus)
+  if err := s.db.Save(&match).Error; err != nil {
+    return err
+  }
+
+  // FUTURO: Notificar al otro usuario que el chat está cerrado
+  // Por ahora, ambos usuarios ven chat pero con aviso rojo
+
+  return nil
+}
+```
+
+**MatchHandler.Unmatch**:
+
+```go
+// internal/transport/http/match_handler.go
+
+func (h *MatchHandler) Unmatch(c *gin.Context) {
+  userID, ok := getUserIDFromContext(c)
+  if !ok {
+    c.JSON(http.StatusUnauthorized, gin.H{"error": "Usuario no identificado"})
+    return
+  }
+
+  var req struct {
+    MatchID uint `json:"match_id" binding:"required"`
+  }
+  if err := c.ShouldBindJSON(&req); err != nil {
+    c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+    return
+  }
+
+  if err := h.service.Unmatch(userID, req.MatchID); err != nil {
+    c.JSON(http.StatusInternalServerError, gin.H{"error": "Error saliendo del chat: " + err.Error()})
+    return
+  }
+
+  c.JSON(http.StatusOK, gin.H{"message": "Has salido del chat"})
+}
+```
+
+**Lo que FALTA**:
+
+- [ ] Registrar ruta POST /matches/unmatch en main.go (línea ~217)
+- [ ] Definir constantes MatchAdopterLeft, MatchRescuerLeft en domain.go
+- [ ] Propagar estado "adopter_left"/"rescuer_left" al frontend vía API
+- [ ] ChatScreen mostrar banner rojo cuando isPeerLeft=true
+- [ ] Deshabilitar input cuando isChatBlocked=true
+
+### Solución 2: Pet Deleted → Bloqueo de Chat (EN DESARROLLO)
+
+Cuando rescatista elimina una mascota, los adoptantes que tienen chat activo con esa mascota deben ser notificados.
+
+**Backend (PetService.Delete)**:
+
+```go
+// internal/core/services/pet_service.go
+
+func (s *PetService) Delete(petID uint) error {
+  // 1. Encontrar todos los matches activos de esta mascota
+  var matches []domain.Match
+  if err := s.db.Where("pet_id = ? AND status = ?", petID, domain.MatchAccepted).
+    Find(&matches).Error; err != nil {
+    return err
+  }
+
+  // 2. Marcar todos como "pet_deleted"
+  if len(matches) > 0 {
+    if err := s.db.Model(&domain.Match{}).
+      Where("pet_id = ? AND status = ?", petID, domain.MatchAccepted).
+      Update("status", "pet_deleted").Error; err != nil {
+      return err
+    }
+  }
+
+  // 3. Eliminar la mascota (cascade automático a PetImage)
+  return s.db.Delete(&domain.Pet{}, petID).Error
+}
+```
+
+**Lo que FALTA**:
+
+- [ ] Constante MatchPetDeleted en domain.go
+- [ ] Propagar "pet_deleted" al frontend
+- [ ] ChatScreen renderizar banner rojo "Mascota eliminada"
+- [ ] Notificación push: "La mascota fue eliminada por el rescatista"
+
+### Solución 3: Soft Delete de Matches (EN DESARROLLO)
+
+Usuario puede eliminar chat manualmente desde lista (long-press).
+
+**Frontend (Long-press en chat)**:
+
+```dart
+// RescuerChatsScreen o AdopterMatchesScreen
+
+GestureDetector(
+  onLongPress: () {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Eliminar chat"),
+        content: const Text("¿Deseas eliminar este chat de tu lista?"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancelar")),
+          TextButton(
+            onPressed: () async {
+              try {
+                await matchesRepository.deleteChat(matchId);
+                Navigator.pop(ctx);
+                setState(() => chats.removeWhere((c) => c.id == matchId));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text("Chat eliminado")),
+                );
+              } catch (e) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text("Error: $e")),
+                );
+              }
+            },
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text("Eliminar"),
+          ),
+        ],
+      ),
+    );
+  },
+  child: ChatListTile(chat: chat, name: peerName),
+)
+```
+
+**Backend (MatchHandler.Delete)**:
+
+```go
+// internal/transport/http/match_handler.go
+
+func (h *MatchHandler) Delete(c *gin.Context) {
+  userID, ok := getUserIDFromContext(c)
+  if !ok {
+    c.JSON(http.StatusUnauthorized, gin.H{"error": "No autenticado"})
+    return
+  }
+
+  matchIDStr := c.Param("id")
+  matchID, err := strconv.ParseUint(matchIDStr, 10, 32)
+  if err != nil {
+    c.JSON(http.StatusBadRequest, gin.H{"error": "ID inválido"})
+    return
+  }
+
+  if err := h.service.DeleteChat(userID, uint(matchID)); err != nil {
+    c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+    return
+  }
+
+  c.JSON(http.StatusOK, gin.H{"message": "Chat eliminado"})
+}
+```
+
+**Backend (MatchService.DeleteChat)**:
+
+```go
+func (s *MatchService) DeleteChat(userID, matchID uint) error {
+  var match domain.Match
+  if err := s.db.Preload("Pet").First(&match, matchID).Error; err != nil {
+    return errors.New("chat no encontrado")
+  }
+
+  // Validar que usuario es parte del match
+  if match.AdopterID != userID && match.Pet.UserID != userID {
+    return errors.New("no tienes permiso para eliminar este chat")
+  }
+
+  // Soft delete (GORM)
+  return s.db.Delete(&match).Error  // GORM interpreta como soft delete si hay DeletedAt
+}
+```
+
+**Lo que FALTA**:
+
+- [ ] Agregar DeletedAt a domain.Match (gorm.DeletedAt)
+- [ ] Registrar ruta DELETE /matches/:id en main.go
+- [ ] Actualizar queries para excluir soft-deleted (automático con GORM Unscoped)
+- [ ] Implementar long-press UI en pantallas de chats
+- [ ] Testing de cascada de soft deletes
+
+### Estados de Match en Etapa 15
+
+Extensión de estados anteriores (pending, accepted, rejected):
+
+```go
+// internal/core/domain/match.go
+
+const (
+  MatchPending      MatchStatus = "pending"      // Original: esperando respuesta rescatista
+  MatchAccepted     MatchStatus = "accepted"     // Original: chat activo
+  MatchRejected     MatchStatus = "rejected"     // Original: rechazado
+
+  // NUEVOS EN ETAPA 15:
+  MatchAdopterLeft  MatchStatus = "adopter_left"  // Adoptante se fue del chat
+  MatchRescuerLeft  MatchStatus = "rescuer_left"  // Rescatista se fue del chat
+  MatchPetDeleted   MatchStatus = "pet_deleted"   // Mascota fue eliminada por rescatista
+  // (DeletedAt de GORM maneja soft delete automático)
+)
+```
+
+### Flujos Completos de Etapa 15
+
+**Flujo 1: Adoptante Sale del Chat**
+
+```
+1. Adoptante abre ChatScreen
+2. Toca menú PopupButton → selecciona "Salir del Chat"
+3. Dialog de confirmación
+4. Toca "Salir"
+5. POST /matches/unmatch {match_id: 42}
+6. Backend: MatchService.Unmatch(userID, 42)
+   - Valida que userID es adopter de match 42
+   - match.status = "adopter_left"
+   - save()
+7. Frontend: Navigator.pop(), snackbar "Has salido del chat"
+8. Rescatista ve su ChatScreen con banner rojo "Usuario abandonó el chat"
+9. Input deshabilitado para ambos
+```
+
+**Flujo 2: Rescatista Elimina Mascota**
+
+```
+1. Rescatista abre PetDetailScreen
+2. Toca menú → "Eliminar Mascota"
+3. Confirmación
+4. DELETE /pets/{petID}
+5. Backend: PetService.Delete(petID)
+   - Encuentra todos matches con status=accepted para esa mascota
+   - Actualiza todos: match.status = "pet_deleted"
+   - Elimina pet (cascade a PetImage)
+6. Adoptantes ven ChatScreen con banner rojo "Mascota eliminada"
+7. Input deshabilitado
+8. FUTURO: Push notification notificando
+```
+
+**Flujo 3: Usuario Elimina Chat Manualmente**
+
+```
+1. Rescatista abre RescuerChatsScreen
+2. Long-press (2 segundos) en chat
+3. Dialog "Eliminar chat?"
+4. Toca "Eliminar"
+5. DELETE /matches/{matchID}
+6. Backend: MatchHandler.Delete()
+   - Valida usuario es parte del match
+   - Soft delete (SetDeletedAt)
+7. Chat desaparece de lista instantáneamente
+8. GetRescuerMatches() ya no lo retorna (GORM Unscoped evita)
+```
+
+### Impacto de Etapa 15 en Ciclo de Chat
+
+**Antes**:
+
+- Chats con status=accepted permanecen por siempre
+- Listas se saturan de chats "fantasma"
+- Usuario no puede abandonar conversación limpiamente
+- Si mascota es eliminada, adoptante sigue viendo chat inválido
+
+**Después**:
+
+- Estados claros: pending → accepted → (adopter_left|rescuer_left|pet_deleted|deleted)
+- Usuario puede salir explícitamente
+- Sistema notifica automáticamente cuando otro se va o mascota se elimina
+- Listas pueden limpiarse manualmente (soft delete)
+- Mejor UX: no hay ambigüedad de qué pasó
+
+### Notas Arquitectónicas - Etapa 15 (Chat Lifecycle)
+
+- **Estados Definidos**: En lugar de inferencias, estados explícitos comunican qué ocurrió
+- **Soft Delete**: GORM's DeletedAt permite recuperación futura si es necesario
+- **Bloqueo Defensivo**: Si chat está en estado "inactivo", input completamente deshabilitado
+- **Notificación Inmediata**: Cuando usuario se va, otro usuario lo ve al abrir chat (no necesita refresh manual)
+- **Extensibilidad**: Estados como "adopter_left", "pet_deleted" permiten filtrología futura (ej: mostrar/ocultar chats inactivos en menú)
+
+## Resumen de Estado - Etapa 15 (Chat Lifecycle)
+
+| Funcionalidad       | Estado        | Implementación      | Frontend | Backend |
+| ------------------- | ------------- | ------------------- | -------- | ------- |
+| User Exit UI        | COMPLETADO    | PopupMenu "Salir"   | ✓        |         |
+| User Exit Backend   | PARCIAL       | Unmatch method      |          | ✓       |
+| Pet Deleted Cascade | EN DESARROLLO | PetService.Delete   |          |         |
+| Soft Delete Matches | EN DESARROLLO | Long-press delete   |          |         |
+| Bloqueo de Input    | EN DESARROLLO | isChatBlocked flag  |          |         |
+| Notificaciones      | EN DESARROLLO | Push when state=... |          |         |
+
 ## Referencias
 
 - [Gorilla WebSocket](https://github.com/gorilla/websocket)

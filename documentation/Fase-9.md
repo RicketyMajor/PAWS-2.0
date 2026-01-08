@@ -1529,6 +1529,265 @@ curl -X POST http://localhost:8080/api/v1/matches/respond \
 4. **Testabilidad**: Docker Compose proporciona entorno reproducible
 5. **Rendimiento**: Hard constraints filtran en BD, no en aplicación
 
+## COMPLETADO EN ETAPA 15: Visibilidad de Perfil Adoptante en Solicitudes Pendientes
+
+### Problema Resuelto: Información Incompleta en Solicitudes
+
+Rescatista María recibe "like" de Juan a su mascota. El endpoint GET /matches/requests retornaba solo datos básicos del adoptante (ID, nombre, email). María no sabía:
+
+- ¿Vive en casa o departamento?
+- ¿Tiene patio?
+- ¿Qué experiencia tiene con mascotas?
+- ¿Tiene otras mascotas?
+- ¿Cuánto tiempo puede dedicar?
+
+Resultado: Aceptaba solicitudes que fallaban después.
+
+### Solución Implementada
+
+Se extendió el modelo User (lado backend) con 8 campos nuevos:
+
+```go
+// internal/core/domain/user.go
+
+type User struct {
+    // ... campos existentes ...
+
+    // NUEVOS CAMPOS ETAPA 15
+    HousingType       string `gorm:"type:varchar(50);default:'House'" json:"housing_type"`
+    HousingOwnership  string `gorm:"type:varchar(50);default:'Owned'" json:"housing_ownership"`
+    HasYard           bool   `gorm:"default:false" json:"has_yard"`
+    HasFence          bool   `gorm:"default:false" json:"has_fence"`
+    FamilyComposition string `gorm:"type:varchar(100);default:'Single'" json:"family_composition"`
+    OtherPets         string `gorm:"type:varchar(100);default:'None'" json:"other_pets"`
+    TimeAvailability  string `gorm:"type:varchar(50);default:'Medium'" json:"time_availability"`
+    Experience        string `gorm:"type:varchar(50);default:'Beginner'" json:"experience"`
+}
+```
+
+Estos campos se incluyen automáticamente en respuestas JSON cuando se consulta usuario completo.
+
+### Cambios en MatchService
+
+El método `GetPendingRequests()` ahora precarga información completa del adoptante:
+
+```go
+// internal/core/services/match_service.go
+
+func (s *MatchService) GetPendingRequests(rescuerID uint) ([]domain.Match, error) {
+    var matches []domain.Match
+    err := s.db.Table("matches").
+        Joins("JOIN pets ON matches.pet_id = pets.id").
+        Preload("Adopter").  // ← PRECARGA INFORMACIÓN COMPLETA DEL ADOPTANTE (todos 8 campos nuevos)
+        Preload("Pet").
+        Where("pets.user_id = ? AND matches.status = ?", rescuerID, domain.MatchPending).
+        Find(&matches).Error
+    return matches, err
+}
+```
+
+### Respuesta JSON Mejorada
+
+Antes de Etapa 15:
+
+```json
+{
+  "id": 42,
+  "adopter": {
+    "id": 1,
+    "name": "Juan",
+    "email": "juan@mail.com"
+  },
+  "pet": { ... },
+  "status": "pending"
+}
+```
+
+Después de Etapa 15:
+
+```json
+{
+  "id": 42,
+  "adopter": {
+    "id": 1,
+    "name": "Juan",
+    "email": "juan@mail.com",
+    "bio": "Amo los perros activos",
+    "phone": "+56912345678",
+    "photo_url": "https://minio/usuarios/juan.jpg",
+    "housing_type": "Apartment",
+    "housing_ownership": "Rented",
+    "has_yard": false,
+    "has_fence": false,
+    "family_composition": "Couple",
+    "other_pets": "Cats",
+    "time_availability": "High",
+    "experience": "Intermediate"
+  },
+  "pet": { ... },
+  "status": "pending",
+  "created_at": "2025-01-15T10:30:00Z"
+}
+```
+
+### Visualización en Frontend (MatchRequestsScreen)
+
+Rescatista ahora ve tarjeta detallada en "Solicitudes Pendientes":
+
+```dart
+// Renderizado mejorado de solicitud
+Card(
+  child: Padding(
+    padding: const EdgeInsets.all(16),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Header con foto y nombre
+        Row(
+          children: [
+            CircleAvatar(
+              backgroundImage: NetworkImage(adopter.photoUrl ?? ''),
+              radius: 30,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    adopter.name,
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                  Text(
+                    adopter.bio ?? 'Sin bio',
+                    style: const TextStyle(color: Colors.grey),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+
+        // Información de hogar
+        Text(
+          'Vivienda',
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          children: [
+            Chip(label: Text(adopter.housingType)), // "Apartment"
+            Chip(label: Text(adopter.housingOwnership)), // "Rented"
+            if (adopter.hasYard) const Chip(label: Text('Tiene Patio')),
+            if (adopter.hasFence) const Chip(label: Text('Tiene Cerca')),
+          ],
+        ),
+        const SizedBox(height: 12),
+
+        // Información de familia
+        Text(
+          'Familia',
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+        const SizedBox(height: 8),
+        Text('Composición: ${adopter.familyComposition}'),
+        Text('Otras mascotas: ${adopter.otherPets}'),
+        const SizedBox(height: 12),
+
+        // Información de experiencia
+        Text(
+          'Experiencia',
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+        const SizedBox(height: 8),
+        Text('Disponibilidad: ${adopter.timeAvailability}'),
+        Text('Experiencia: ${adopter.experience}'),
+        const SizedBox(height: 16),
+
+        // Mascota de interés
+        Text(
+          'Interesado en: ${pet.name}',
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+        ),
+        const SizedBox(height: 12),
+
+        // Botones de decisión
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            ElevatedButton.icon(
+              onPressed: () => _respondMatch(matchId, true),
+              icon: const Icon(Icons.check),
+              label: const Text('Aceptar'),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+            ),
+            ElevatedButton.icon(
+              onPressed: () => _respondMatch(matchId, false),
+              icon: const Icon(Icons.close),
+              label: const Text('Rechazar'),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            ),
+          ],
+        ),
+      ],
+    ),
+  ),
+)
+```
+
+### Impacto en Decisiones de Matching
+
+Rescatista ahora puede verificar compatibilidad ANTES de aceptar:
+
+**Ejemplo 1: Mascota requiere patio + Adopter sin patio**
+
+- Rescatista ve: "Apartment, No patio" → Rechaza inmediatamente
+- Resultado: Adopción fallida evitada
+
+**Ejemplo 2: Mascota buena con gatos + Adopter tiene gatos**
+
+- Rescatista ve: "Other pets: Cats" + "good_with_cats: true" → Acepta con confianza
+- Resultado: Probabilidad de éxito aumentada
+
+**Ejemplo 3: Mascota energética requiere experiencia + Adopter principiante**
+
+- Rescatista ve: "Experience: Beginner" + "Energy level: high" → Ofrece sesión de asesoramiento antes de aceptar
+- Resultado: Adopción educada, no rechazada
+
+### Beneficios de Etapa 15 en Matching
+
+**Para Rescatistas**:
+
+- Información COMPLETA antes de decidir (no después)
+- Menos rechazos tardíos por incompatibilidad
+- Confianza aumentada en decisiones
+- Reducción de estrés por toma de decisiones
+
+**Para Adoptantes**:
+
+- Sistema más justo: decisiones basadas en información real
+- Menos rechazos inesperados ("¿por qué rechazó mi solicitud?")
+- Siente que rescatista lo conoce/consideró realmente
+
+**Para el Sistema**:
+
+- Tasa de adopción exitosa aumenta
+- Devoluciones post-adopción disminuyen
+- Datos más ricos para potencial matching inteligente futuro
+- Escalabilidad: campos extensibles sin cambio de schema
+
+### Notas Arquitectónicas - Etapa 15 (Backend)
+
+- **Backward Compatibility**: Todos los campos tienen defaults. Usuarios sin esta información ven valores por defecto sensatos.
+- **Eager Loading**: Preload("Adopter") garantiza que información se carga en una consulta, no N+1 queries.
+- **JSON Mapping**: Tags gorm y json alinean nombres de Go (HousingType) con JSON (housing_type) automáticamente.
+- **Migraciones Automáticas**: GORM detecta campos nuevos y crea columnas con defaults sin ruptura.
+- **Escalabilidad**: Si en futuro se quieren agregar más campos (ocupación, presupuesto, etc.), estructura soporta sin cambios.
+
 ## Referencias
 
 - PhotoURL storage: MinIO S3 API v4

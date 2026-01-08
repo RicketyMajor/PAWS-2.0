@@ -6251,6 +6251,733 @@ Impacto: Los adoptantes ahora pueden explorar la mascota visualmente desde múlt
 - Flexibilidad: campos booleanos permiten futuras búsquedas filtradas ("solo mascotas vacunadas")
 - Calidad de datos: formulario estructurado asegura que información crítica no se omita
 
+## Etapa 15: Perfiles Enriquecidos y Ciclo de Vida de Chats (Parcialmente Completada)
+
+La Etapa 15 representa un refinamiento en dos áreas críticas: la expansión de perfiles de usuarios adoptantes para proporcionar a rescatistas información más profunda sobre compatibilidad, y la implementación del ciclo de vida completo de chats incluyendo exit, bloqueo y eliminación de conversaciones abandonadas. Esta etapa está parcialmente completada con funcionalidades core implementadas y características de gestión de chats aún en desarrollo. El objetivo es mejorar la confianza en el matching permitiendo que rescatistas verifiquen compatibilidad antes de aceptar solicitudes, y proporcionar mecanismos claros para usuarios que deseen abandonar conversaciones.
+
+### Problema 1: Información Incompleta del Adoptante en Solicitudes Pendientes
+
+**Contexto Anterior**: En Etapa 5, se implementaron perfiles básicos (nombre, foto, bio, teléfono). Sin embargo, cuando un rescatista recibía una solicitud de adopción (un "like" de un adoptante a una de sus mascotas), la información disponible era mínima. El rescatista no podía verificar si el adoptante tenía experiencia con mascotas, si vivía en una casa o departamento, si tenía patio, o qué tipo de hogar podría ofrecer. Esto llevaba a aceptaciones de solicitudes que resultaban en adopciones fallidas.
+
+**Escenario Problemático**: María es rescatista con un perro pastor alemán que requiere patio. Juan hace "like" a su mascota. Cuando María ve la solicitud, solo ve "Juan, bio: me encantan los perros". Ella acepta. Luego descubre que Juan vive en un departamento de 60m² sin patio. La adopción falla, el perro regresa, Juan se siente culpable, y ambos han gastado tiempo y recursos.
+
+**Solución Implementada**: Extensión del modelo User con 8 campos nuevos que capturan información de estilo de vida y experiencia del adoptante. Estos campos se editan en `EditProfileScreen` y se muestran cuando rescatistas visualizan solicitudes pendientes en `MatchRequestsScreen` o acceden a perfiles públicos en `PublicProfileScreen`.
+
+```go
+// backend/internal/core/domain/user.go
+
+type User struct {
+    // ... campos existentes (ID, Email, Name, Bio, Phone, PhotoURL, etc.) ...
+
+    // ============ NUEVOS CAMPOS ETAPA 15 ============
+    // Vivienda
+    HousingType       string `gorm:"type:varchar(50);default:'House'" json:"housing_type"`
+    // Valores: "House", "Apartment", "Parcel"
+
+    HousingOwnership  string `gorm:"type:varchar(50);default:'Owned'" json:"housing_ownership"`
+    // Valores: "Owned", "Rented"
+
+    // Características del Hogar
+    HasYard           bool   `gorm:"default:false" json:"has_yard"`
+    HasFence          bool   `gorm:"default:false" json:"has_fence"`
+
+    // Composición Familiar
+    FamilyComposition string `gorm:"type:varchar(100);default:'Single'" json:"family_composition"`
+    // Valores: "Single", "Couple", "Family" (puede incluir número de hijos)
+
+    OtherPets         string `gorm:"type:varchar(100);default:'None'" json:"other_pets"`
+    // Valores: "None", "Dogs", "Cats", "Mixed"
+
+    // Disponibilidad y Experiencia
+    TimeAvailability  string `gorm:"type:varchar(50);default:'Medium'" json:"time_availability"`
+    // Valores: "Low", "Medium", "High"
+
+    Experience       string `gorm:"type:varchar(50);default:'Beginner'" json:"experience"`
+    // Valores: "Beginner", "Intermediate", "Expert"
+
+    // ================================================
+}
+```
+
+Impacto Backend: El modelo User ahora almacena 8 campos adicionales con valores por defecto sensatos. Migraciones automáticas de GORM agregan columnas con defaults a tabla existente sin ruptura de datos. Cuando `GetPendingRequests()` se ejecuta, todos estos campos se retornan en el objeto de adoptante.
+
+```dart
+// frontend/app/lib/features/user/domain/user_model.dart
+
+class User extends Equatable {
+  // ... campos existentes ...
+
+  final String housingType;       // House, Apartment, Parcel
+  final String housingOwnership;  // Owned, Rented
+  final bool hasYard;
+  final bool hasFence;
+  final String familyComposition; // Single, Couple, Family
+  final String otherPets;         // None, Dogs, Cats, Mixed
+  final String timeAvailability;  // Low, Medium, High
+  final String experience;        // Beginner, Intermediate, Expert
+
+  // ... métodos fromJson/toJson incluyen nuevos campos ...
+}
+```
+
+### Problema 2: Perfil Adoptante Invisible en Solicitudes
+
+**Contexto Anterior**: El endpoint GET /api/v1/matches/requests retornaba lista de solicitudes, pero solo incluía datos básicos del adoptante. No había forma de ver el perfil completo (con nueva información) sin salir del flujo actual.
+
+**Solución Implementada**: Modificación de `MatchService.GetPendingRequests()` para precargar información completa del adoptante junto con la mascota. Esto permite que `MatchRequestsScreen` muestre tarjeta de solicitud con información detallada del adoptante, incluyendo todos los campos nuevos.
+
+```go
+// backend/internal/core/services/match_service.go
+
+func (s *MatchService) GetPendingRequests(rescuerID uint) ([]domain.Match, error) {
+    var matches []domain.Match
+    err := s.db.Table("matches").
+        Joins("JOIN pets ON matches.pet_id = pets.id").
+        Preload("Adopter").  // ← AHORA PRECARGA INFORMACIÓN COMPLETA DEL ADOPTANTE
+        Preload("Pet").
+        Where("pets.user_id = ? AND matches.status = ?", rescuerID, domain.MatchPending).
+        Find(&matches).Error
+    return matches, err
+}
+```
+
+Cuando rescatista abre pestaña "Solicitudes Pendientes", ve tarjeta por cada like que recibió, y la tarjeta contiene:
+
+- Foto del adoptante
+- Nombre del adoptante
+- Bio del adoptante
+- Teléfono del adoptante
+- **NUEVO**: Tipo de vivienda (Casa/Depto/Parcela)
+- **NUEVO**: Es propietario o renta
+- **NUEVO**: Tiene patio y/o cerca
+- **NUEVO**: Composición familiar
+- **NUEVO**: Otras mascotas en casa
+- **NUEVO**: Disponibilidad de tiempo (Baja/Media/Alta)
+- **NUEVO**: Experiencia con mascotas (Principiante/Intermedia/Experto)
+- Nombre y foto de la mascota de interés
+- Botones "Aceptar" y "Rechazar"
+
+### Problema 3: Edición Fragmentada de Perfil
+
+**Contexto Anterior**: EditProfileScreen permitía editar nombre, foto, bio y teléfono (desde Etapa 5). Pero los nuevos campos de estilo de vida no tenían interfaz. Un adoptante no podía indicar que vive en departamento si no había campo para ello.
+
+**Solución Implementada**: `EditProfileScreen` completamente rediseñada para incluir sección visual clara de "Información de Hogar" con dropdowns, checkboxes y segmented buttons.
+
+```dart
+// frontend/app/lib/features/user/presentation/screens/edit_profile_screen.dart
+
+class _EditProfileScreenState extends State<EditProfileScreen> {
+  // Campos de vivienda con defaults
+  String _housingType = 'House';
+  String _housingOwnership = 'Owned';
+  bool _hasYard = false;
+  bool _hasFence = false;
+  String _familyComposition = 'Single';
+  String _otherPets = 'None';
+  String _timeAvailability = 'Medium';
+  String _experience = 'Beginner';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProfile();
+  }
+
+  Future<void> _loadProfile() async {
+    try {
+      final userRepository = context.read<UserRepository>();
+      final user = await userRepository.getProfile();
+
+      setState(() {
+        _housingType = (user.housingType?.isNotEmpty ?? false) ? user.housingType : 'House';
+        _housingOwnership = (user.housingOwnership?.isNotEmpty ?? false) ? user.housingOwnership : 'Owned';
+        _hasYard = user.hasYard ?? false;
+        _hasFence = user.hasFence ?? false;
+        _familyComposition = (user.familyComposition?.isNotEmpty ?? false) ? user.familyComposition : 'Single';
+        _otherPets = (user.otherPets?.isNotEmpty ?? false) ? user.otherPets : 'None';
+        _timeAvailability = (user.timeAvailability?.isNotEmpty ?? false) ? user.timeAvailability : 'Medium';
+        _experience = (user.experience?.isNotEmpty ?? false) ? user.experience : 'Beginner';
+      });
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error cargando perfil: $e')));
+    }
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    try {
+      await context.read<UserRepository>().updateProfile(
+        name: _nameController.text,
+        bio: _bioController.text,
+        phone: _phoneController.text,
+        photoUrl: _photoUrl,
+        housingType: _housingType,
+        housingOwnership: _housingOwnership,
+        hasYard: _hasYard,
+        hasFence: _hasFence,
+        familyComposition: _familyComposition,
+        otherPets: _otherPets,
+        timeAvailability: _timeAvailability,
+        experience: _experience,
+      );
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Perfil actualizado exitosamente')),
+        );
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Editar Perfil')),
+      body: SingleChildScrollView(
+        child: Form(
+          key: _formKey,
+          child: Column(
+            children: [
+              // ... Campos básicos (nombre, bio, teléfono, foto) del Etapa 5 ...
+
+              const SizedBox(height: 20),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  'Información de Hogar',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+              ),
+              const SizedBox(height: 10),
+
+              // Tipo de Vivienda
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: DropdownButtonFormField<String>(
+                  value: _housingType,
+                  decoration: const InputDecoration(
+                    labelText: 'Tipo de Vivienda',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: ['House', 'Apartment', 'Parcel']
+                      .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                      .toList(),
+                  onChanged: (val) => setState(() => _housingType = val ?? 'House'),
+                ),
+              ),
+
+              // Propiedad
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: DropdownButtonFormField<String>(
+                  value: _housingOwnership,
+                  decoration: const InputDecoration(
+                    labelText: 'Propiedad',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: ['Owned', 'Rented']
+                      .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                      .toList(),
+                  onChanged: (val) => setState(() => _housingOwnership = val ?? 'Owned'),
+                ),
+              ),
+
+              // Patio y Cerca
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: CheckboxListTile(
+                        title: const Text('Tiene Patio'),
+                        value: _hasYard,
+                        onChanged: (val) => setState(() => _hasYard = val ?? false),
+                      ),
+                    ),
+                    Expanded(
+                      child: CheckboxListTile(
+                        title: const Text('Tiene Cerca'),
+                        value: _hasFence,
+                        onChanged: (val) => setState(() => _hasFence = val ?? false),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // Composición Familiar
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: DropdownButtonFormField<String>(
+                  value: _familyComposition,
+                  decoration: const InputDecoration(
+                    labelText: 'Composición Familiar',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: ['Single', 'Couple', 'Family']
+                      .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                      .toList(),
+                  onChanged: (val) => setState(() => _familyComposition = val ?? 'Single'),
+                ),
+              ),
+
+              // Otras Mascotas
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: DropdownButtonFormField<String>(
+                  value: _otherPets,
+                  decoration: const InputDecoration(
+                    labelText: 'Otras Mascotas en Casa',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: ['None', 'Dogs', 'Cats', 'Mixed']
+                      .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                      .toList(),
+                  onChanged: (val) => setState(() => _otherPets = val ?? 'None'),
+                ),
+              ),
+
+              // Disponibilidad de Tiempo
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: DropdownButtonFormField<String>(
+                  value: _timeAvailability,
+                  decoration: const InputDecoration(
+                    labelText: 'Disponibilidad de Tiempo',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: ['Low', 'Medium', 'High']
+                      .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                      .toList(),
+                  onChanged: (val) => setState(() => _timeAvailability = val ?? 'Medium'),
+                ),
+              ),
+
+              // Experiencia con Mascotas
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: DropdownButtonFormField<String>(
+                  value: _experience,
+                  decoration: const InputDecoration(
+                    labelText: 'Experiencia con Mascotas',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: ['Beginner', 'Intermediate', 'Expert']
+                      .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                      .toList(),
+                  onChanged: (val) => setState(() => _experience = val ?? 'Beginner'),
+                ),
+              ),
+
+              const SizedBox(height: 20),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: ElevatedButton(
+                  onPressed: _submit,
+                  style: ElevatedButton.styleFrom(
+                    minimumSize: const Size(double.infinity, 50),
+                  ),
+                  child: const Text('Guardar Cambios'),
+                ),
+              ),
+              const SizedBox(height: 20),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+```
+
+Impacto Frontend: EditProfileScreen ahora es la fuente única de verdad para información de perfil. Todos los 8 campos se cargan en initState(), se muestran con controles intuitivos (dropdowns para enumeraciones, checkboxes para booleanos), y se guardan con PUT /profile. UserRepository maneja mapeo de nombres Dart a JSON tags de Go (`housingType` → `housing_type`).
+
+### Problema 4: Ciclo de Vida Incompleto de Chats (EN DESARROLLO)
+
+**Contexto Actual**: En Etapa 11, se implementó chat en tiempo real con WebSocket y persistencia. Sin embargo, los chats tienen un problema: cuando una adopción se completa o falla, el chat permanece en la lista "activo" indefinidamente. Usuarios ven chats antiguos o abandonados. Si un rescatista elimina una mascota, el adoptante puede seguir viendo el chat pero la mascota ya no existe.
+
+**Status Actual**: Las funcionalidades de chat exit y bloqueo están parcialmente implementadas en el código (métodos en backend y UI en frontend) pero **aún no están registradas completamente en las rutas HTTP**. La siguiente documentación describe la implementación actual y lo que falta para completarse.
+
+#### Subproblema 4A: Usuario Quiere Salir del Chat (PARCIALMENTE COMPLETADO)
+
+**Flujo Esperado**:
+
+1. Adoptante o Rescatista abre chat activo
+2. Toca botón "Menú" (PopupMenu en AppBar)
+3. Selecciona "Salir del Chat"
+4. Confirmación: "¿Seguro? No podrás escribir después"
+5. Toca "Salir"
+6. Backend recibe POST /matches/unmatch con matchId
+7. MatchService.Unmatch() actualiza estado de match a "adopter_left" o "rescuer_left"
+8. Otro usuario ve el chat con aviso: "Usuario ha abandonado el chat"
+9. Ambos usuarios no pueden escribir más
+
+**Implementación Actual (Frontend - COMPLETADA)**:
+
+En `ChatScreen`, se agregó menú PopupButton con opción "Salir del Chat":
+
+```dart
+// ChatScreen PopupMenuButton
+PopupMenuButton<String>(
+  onSelected: (value) async {
+    if (value == 'leave') {
+      _confirmLeaveChat(context);
+    }
+    // ... otras opciones (report, review) ...
+  },
+  itemBuilder: (BuildContext context) {
+    return [
+      const PopupMenuItem(
+        value: 'leave',
+        child: Row(
+          children: [
+            Icon(Icons.exit_to_app, color: Colors.red),
+            SizedBox(width: 8),
+            Text('Salir del Chat', style: TextStyle(color: Colors.red)),
+          ],
+        ),
+      ),
+      // ... otras opciones ...
+    ];
+  },
+)
+
+// Dialog de confirmación
+void _confirmLeaveChat(BuildContext context) async {
+  final confirm = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text("¿Salir del chat?"),
+      content: const Text("La conversación se cerrará y no podrás volver a escribir."),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text("Cancelar"),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          style: TextButton.styleFrom(foregroundColor: Colors.red),
+          child: const Text("Salir"),
+        ),
+      ],
+    ),
+  );
+
+  if (confirm == true && context.mounted) {
+    try {
+      await context.read<MatchesRepository>().unmatch(matchId);
+      if (context.mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Has salido del chat"))
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error: $e"))
+      );
+    }
+  }
+}
+```
+
+En `MatchesRepository`, se agregó método `unmatch()`:
+
+```dart
+// MatchesRepository.unmatch()
+Future<void> unmatch(int matchId) async {
+  try {
+    final token = await _storage.read(key: 'jwt_token');
+    await _dio.post(
+      '${ApiConstants.baseUrl}/matches/unmatch',
+      data: {'match_id': matchId},
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
+  } catch (e) {
+    throw Exception('Error saliendo del chat: $e');
+  }
+}
+```
+
+**Implementación Backend (PARCIALMENTE COMPLETADA)**:
+
+En `MatchHandler`:
+
+```go
+// MatchHandler.Unmatch()
+func (h *MatchHandler) Unmatch(c *gin.Context) {
+  userID, ok := getUserIDFromContext(c)
+  if !ok {
+    c.JSON(http.StatusUnauthorized, gin.H{"error": "Usuario no identificado"})
+    return
+  }
+
+  var req struct {
+    MatchID uint `json:"match_id" binding:"required"`
+  }
+  if err := c.ShouldBindJSON(&req); err != {
+    c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+    return
+  }
+
+  if err := h.service.Unmatch(userID, req.MatchID); err != nil {
+    c.JSON(http.StatusInternalServerError, gin.H{"error": "Error saliendo del chat: " + err.Error()})
+    return
+  }
+  c.JSON(http.StatusOK, gin.H{"message": "Has salido del chat"})
+}
+```
+
+En `MatchService`:
+
+```go
+// MatchService.Unmatch() - Cambia estado de match
+func (s *MatchService) Unmatch(userID, matchID uint) error {
+  var match domain.Match
+  if err := s.db.Preload("Pet").First(&match, matchID).Error; err != nil {
+    return errors.New("match no encontrado")
+  }
+
+  newStatus := ""
+
+  // Determinamos quién está saliendo
+  if match.AdopterID == userID {
+    newStatus = MatchAdopterLeft  // Estado: "adopter_left"
+  } else if match.Pet.UserID == userID {
+    newStatus = MatchRescuerLeft  // Estado: "rescuer_left"
+  } else {
+    return errors.New("no tienes permiso para salir de este chat")
+  }
+
+  match.Status = domain.MatchStatus(newStatus)
+  return s.db.Save(&match).Error
+}
+```
+
+**Lo Que Falta**:
+
+- [ ] Registrar ruta POST /matches/unmatch en main.go (línea ~217, aún no incluida en el grupo /matches)
+- [ ] Definir constantes `MatchAdopterLeft` y `MatchRescuerLeft` en domain/match.go
+- [ ] Actualizar ChatScreen para mostrar estado "Usuario ha abandonado" cuando isPeerLeft=true
+- [ ] Lógica de bloqueo de input: si `isPetDeleted` o `isPeerLeft`, deshabilitar campo de texto
+
+**UI Cambios Esperados** (parcialmente implementados):
+
+En `ChatScreen`:
+
+```dart
+class ChatScreen extends StatelessWidget {
+  // ... parámetros existentes ...
+  final bool isPetDeleted;    // ← NUEVO: mascota fue eliminada
+  final bool isPeerLeft;      // ← NUEVO: usuario se fue del chat
+
+  // ...
+
+  @override
+  Widget build(BuildContext context) {
+    final isChatBlocked = isPetDeleted || isPeerLeft;  // Bloquea input
+
+    // En AppBar:
+    if (isPetDeleted)
+      const Text(
+        "Mascota eliminada",
+        style: TextStyle(fontSize: 10, color: Colors.red, fontWeight: FontWeight.bold),
+      ),
+
+    // En body, antes del input:
+    if (!isChatBlocked) const _ChatInput()  // Oculta input si bloqueado
+  }
+}
+```
+
+#### Subproblema 4B: Rescatista Elimina Mascota → Adoptante Se Queda Ciego (EN DESARROLLO)
+
+**Escenario**: Rescatista crea mascota, adopta. Un mes después quiere cambiar mascota (viejo no se adapta). Elimina mascota de la BD. Pero adoptante sigue viendo chat activo. Toca mensaje de bienvenida "Hola, te contaré sobre Luna..." pero Luna ya no existe. Confusión y mala experiencia.
+
+**Solución Esperada**: Cuando rescatista hace DELETE /pets/{petID}, el sistema:
+
+1. Identifica todos los matches de esa mascota (SELECT \* FROM matches WHERE pet_id = ?)
+2. Para cada match con status='accepted' (chat activo):
+   - Actualiza match.status = "pet_deleted"
+   - Notifica al adoptante: "La mascota fue eliminada por el rescatista"
+3. Adoptante ve chat con aviso rojo y campo de texto deshabilitado
+
+**Implementación Esperada** (AÚN EN DESARROLLO):
+
+```go
+// PetService.Delete() - Cascada a chats
+func (s *PetService) Delete(petID uint) error {
+  // 1. Encontrar todos los chats activos de esta mascota
+  var matches []domain.Match
+  s.db.Where("pet_id = ? AND status = ?", petID, domain.MatchAccepted).
+    Find(&matches)
+
+  // 2. Marcar todos como "pet_deleted"
+  if len(matches) > 0 {
+    s.db.Model(&domain.Match{}).
+      Where("pet_id = ? AND status = ?", petID, domain.MatchAccepted).
+      Update("status", "pet_deleted")  // ← NUEVO ESTADO
+  }
+
+  // 3. Eliminar la mascota (cascade automático a PetImage)
+  return s.db.Delete(&domain.Pet{}, petID).Error
+}
+```
+
+**Lo Que Falta**:
+
+- [ ] Definir estado "pet_deleted" en domain.go
+- [ ] Actualizar PetService.Delete() para marcar matches con state=pet_deleted
+- [ ] Actualizar GetRescuerMatches() para filtrar/mostrar chats "muertos" separadamente
+- [ ] Propagar estado pet_deleted al frontend en GetChatHistory
+- [ ] Mostrar banner rojo en ChatScreen cuando isPetDeleted=true
+
+#### Subproblema 4C: Acumulación de Chats Abandonados (EN DESARROLLO)
+
+**Escenario**: Usuario termina adopción exitosamente. Meses después, chat sigue en lista "Chats Activos" aunque la relación ha terminado. Usuario tiene 50 chats "fantasma". La lista crece sin control.
+
+**Solución Esperada**: Permitir eliminación manual de chats desde lista:
+
+1. Usuario abre RescuerChatsScreen o AdopterMatchesScreen
+2. Long-press (2 segundos) en un chat
+3. Aparece menú: "Eliminar chat"
+4. Confirmación
+5. DELETE /matches/{matchId} (soft delete o cambio de estado)
+6. Chat desaparece de lista
+
+**Implementación Esperada** (AÚN EN DESARROLLO):
+
+```dart
+// RescuerChatsScreen o AdopterMatchesScreen
+GestureDetector(
+  onLongPress: () {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Eliminar chat"),
+        content: const Text("¿Deseas eliminar este chat de tu lista?"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancelar")),
+          TextButton(
+            onPressed: () async {
+              await matchesRepository.deleteChat(matchId);
+              Navigator.pop(ctx);
+              setState(() => chats.removeWhere((c) => c.id == matchId));
+            },
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text("Eliminar"),
+          ),
+        ],
+      ),
+    );
+  },
+  child: ChatListTile(chat: chat),
+)
+
+// MatchesRepository.deleteChat()
+Future<void> deleteChat(int matchId) async {
+  final token = await _storage.read(key: 'jwt_token');
+  await _dio.delete(
+    '${ApiConstants.baseUrl}/matches/$matchId',
+    options: Options(headers: {'Authorization': 'Bearer $token'}),
+  );
+}
+```
+
+```go
+// MatchHandler.Delete() - Soft delete de match
+func (h *MatchHandler) Delete(c *gin.Context) {
+  userID, ok := getUserIDFromContext(c)
+  if !ok { c.JSON(http.StatusUnauthorized, gin.H{"error": "No autenticado"}); return }
+
+  matchID := c.Param("id")
+  var match domain.Match
+  if err := h.service.db.First(&match, matchID).Error; err != nil {
+    c.JSON(http.StatusNotFound, gin.H{"error": "Chat no encontrado"})
+    return
+  }
+
+  // Validar que el usuario es parte del match
+  if match.AdopterID != userID && match.Pet.UserID != userID {
+    c.JSON(http.StatusForbidden, gin.H{"error": "No tienes permiso"})
+    return
+  }
+
+  // Soft delete o marcar como deleted_by_user
+  match.DeletedAt = gorm.DeletedAt{Time: time.Now(), Valid: true}
+  h.service.db.Save(&match)
+
+  c.JSON(http.StatusOK, gin.H{"message": "Chat eliminado"})
+}
+```
+
+**Lo Que Falta**:
+
+- [ ] Agregar campo DeletedAt a Match (GORM soft deletes)
+- [ ] Registrar ruta DELETE /matches/:id en main.go
+- [ ] Actualizar queries para excluir soft-deleted matches
+- [ ] Implementar long-press UI en pantallas de chats
+- [ ] Manejar transacciones en caso de race conditions
+
+### Notas Arquitectónicas de Etapa 15
+
+- **Compatibilidad de Datos**: Todos los campos nuevos de User tienen defaults sensatos en base de datos. Usuarios existentes ven valores por defecto sin ruptura de funcionalidad.
+- **Extensibilidad**: Campos como `HousingType`, `Experience` son strings con enumeraciones implícitas. Permite agregar nuevos valores sin cambio de schema (ej: "Townhouse" para vivienda).
+- **Presentación en Solicitudes**: El endpoint GET /matches/requests ahora retorna adoptante completo (gracias a Preload). MatchRequestsScreen puede mostrar tarjeta informativa sin consultas adicionales.
+- **Chat Lifecycle Completo**: La visión es que cada match tenga estados claros: "pending" → "accepted" → "completed"/"adopter_left"/"rescuer_left"/"pet_deleted"/"deleted_by_user". Todavía en implementación.
+- **Bloqueo de Input Defensivo**: Si chat está en estado de bloqueo (pet eliminado, usuario se fue), input deshabilitado completamente. No hay ambigüedad de qué pasó.
+- **Soft Deletes**: Usar GORM's gorm.DeletedAt permite recuperar historial de chats si es necesario sin ruptura de relaciones.
+
+### Estado Actual de Etapa 15
+
+**COMPLETADO**:
+
+- ✓ 8 nuevos campos en User model (backend + frontend)
+- ✓ Edición en EditProfileScreen con UI profesional
+- ✓ Visualización en MatchRequestsScreen (rescatista ve info adoptante)
+- ✓ Persistencia en base de datos con migración automática
+- ✓ PopupMenu "Salir del Chat" en ChatScreen (UI frontend)
+- ✓ Método Unmatch en MatchService (backend)
+- ✓ Método unmatch() en MatchesRepository (frontend)
+
+**EN DESARROLLO**:
+
+- ⏳ Registración de ruta POST /matches/unmatch
+- ⏳ Constantes de estado ("adopter_left", "rescuer_left", "pet_deleted")
+- ⏳ Cascada de eliminación mascota → marcar matches
+- ⏳ Soft delete de matches (long-press delete chat)
+- ⏳ Mostrar estados de bloqueo en ChatScreen
+- ⏳ Notificaciones al usuario cuando otros se van o mascota se elimina
+
+**Impacto Esperado**:
+
+Para Adoptantes:
+
+- Ver más información de rescatistas en perfiles
+- Editar información completa de su hogar y experiencia
+- Salir de chats sin dejar "fantasmas"
+- Claridad cuando mascota es eliminada o usuario se va
+
+Para Rescatistas:
+
+- Evaluar compatibilidad ANTES de aceptar (no después)
+- Ver información detallada de adoptantes en solicitudes pendientes
+- Elegir adoptantes con experiencia y hogar apropiado
+- Menos adopciones fallidas por mismatch
+
+Para el Sistema:
+
+- Chats con ciclo de vida claro
+- Menos datos "basura" (chats abandonados infinitos)
+- Mejor flujo de información para decisiones de adopción
+- Posibilidad futura de matching inteligente (rescatista con patio + adoptante necesita patio = +score)
+
 ## Estructura del Proyecto
 
 Consultar `documentation/` para documentación exhaustiva:
@@ -6429,7 +7156,8 @@ Este proyecto se desarrolla en fases:
 - **Etapa 9** (Completada): Contenedorización total (Docker & Docker Compose), estabilidad de conexi\u00f3n con Supabase (Session Mode), almacenamiento resiliente (MinIO con fallback)
 - **Etapa 10** (Completada): Arquitectura orientada a eventos (RabbitMQ), registro en dos pasos con commit diferido (Redis + PostgreSQL), correos transaccionales (SendGrid), UX/UI mejorada
 - **Etapa 11** (Completada): Chat en tiempo real con WebSockets, Hub inteligente con enrutamiento por roles (Adoptante/Rescatista), dual-delivery (recipient + sender confirmation), persistencia garantizada en PostgreSQL, hybrid frontend loading (HTTP historial + WebSocket presente), stream fusion con BLoC, JWT validation en handshake
-- **Etapa 12** (Completada): Notificaciones Push con Firebase Cloud Messaging (FCM), sistema h\u00edbrido en tiempo real (WebSocket online + Push offline), l\u00f3gica WhatsApp con detecci\u00f3n Online/Offline en Hub, agrupaci\u00f3n de notificaciones por Tag, registro transparente de tokens FCM, integraci\u00f3n RabbitMQ como broker de push notifications
+- **Etapa 12** (Completada): Notificaciones Push con Firebase Cloud Messaging (FCM), sistema híbrido en tiempo real (WebSocket online + Push offline), lógica WhatsApp con detección Online/Offline en Hub, agrupación de notificaciones por Tag, registro transparente de tokens FCM, integración RabbitMQ como broker de push notifications
+- **Etapa 15** (Parcialmente Completada): Perfiles enriquecidos con 8 campos de hogar/experiencia (vivienda, patio, familia, mascotas, disponibilidad, experiencia), visibilidad de perfil adoptante en solicitudes pendientes, ciclo de vida de chats con exit/bloqueo/eliminación (en desarrollo)
 
 ## Documentación Adicional
 
@@ -6453,6 +7181,7 @@ Este proyecto se desarrolla en fases:
 - **Etapa 10**: Arquitectura orientada a eventos y seguridad avanzada (integrada en [Fase-8](documentation/Fase-8.md), [Fase-10](documentation/Fase-10.md), y nueva [Fase-14](documentation/Fase-14.md) para detalles de asincronía)
 - **Etapa 11**: Chat en tiempo real, enrutamiento inteligente, persistencia garantizada (integrada en [Fase-4](documentation/Fase-4.md) con sección "COMPLETADO EN ETAPA 11" y nueva [Fase-15](documentation/Fase-15.md) para documentación completa)
 - **Etapa 12**: Notificaciones Push, sistema híbrido tiempo real (integrada en [Fase-4](documentation/Fase-4.md) con sección "COMPLETADO EN ETAPA 12" y nueva [Fase-16](documentation/Fase-16.md) para documentación completa)
+- **Etapa 15**: Perfiles enriquecidos y ciclo de vida de chats (parcialmente integrada en [Fase-5](documentation/Fase-5.md) para EditProfileScreen, [Fase-9](documentation/Fase-9.md) para visibilidad de perfil en solicitudes, y [Fase-11](documentation/Fase-11.md) para chat exit/blocking)
 
 ## Notas Arquitectónicas
 

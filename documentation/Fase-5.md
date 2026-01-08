@@ -3045,6 +3045,638 @@ Future<void> createPet({
 - Integración fluida con backend (multipart handling)
 - Eager loading en backend garantiza que imágenes siempre se cargan
 
+## Etapa 15: Enriquecimiento de Perfiles y Gestión de Ciclo de Chats (Parcialmente Completada)
+
+### Problema: Información Incompleta en Perfiles de Adoptantes
+
+En Etapa 5, se implementó perfil básico (nombre, foto, bio, teléfono). Sin embargo, rescatistas no tenían visibilidad del tipo de hogar del adoptante. María es rescatista con un perro pastor alemán que requiere patio. Juan da "like" a su mascota. Cuando María ve la solicitud, solo ve "Juan, me encantan los perros". Ella acepta. Luego descubre que Juan vive en departamento de 60m² sin patio. La adopción falla.
+
+### Solución: EditProfileScreen Enriquecida
+
+Se extendió `EditProfileScreen` con 8 nuevos campos opcionales de hogar y experiencia:
+
+```dart
+// app/lib/features/user/presentation/screens/edit_profile_screen.dart
+
+class _EditProfileScreenState extends State<EditProfileScreen> {
+  // Campos existentes (Etapa 5)
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _bioController = TextEditingController();
+  final TextEditingController _phoneController = TextEditingController();
+
+  // ============ NUEVOS CAMPOS ETAPA 15 ============
+  String _housingType = 'House';        // House, Apartment, Parcel
+  String _housingOwnership = 'Owned';   // Owned, Rented
+  bool _hasYard = false;
+  bool _hasFence = false;
+  String _familyComposition = 'Single'; // Single, Couple, Family
+  String _otherPets = 'None';           // None, Dogs, Cats, Mixed
+  String _timeAvailability = 'Medium';  // Low, Medium, High
+  String _experience = 'Beginner';      // Beginner, Intermediate, Expert
+  // ================================================
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProfile();
+  }
+
+  Future<void> _loadProfile() async {
+    try {
+      final userRepository = context.read<UserRepository>();
+      final user = await userRepository.getProfile();
+
+      setState(() {
+        // Cargar campos básicos
+        _nameController.text = user.name ?? '';
+        _bioController.text = user.bio ?? '';
+        _phoneController.text = user.phone ?? '';
+
+        // Cargar campos nuevos con valores por defecto
+        _housingType = (user.housingType?.isNotEmpty ?? false) ? user.housingType : 'House';
+        _housingOwnership = (user.housingOwnership?.isNotEmpty ?? false) ? user.housingOwnership : 'Owned';
+        _hasYard = user.hasYard ?? false;
+        _hasFence = user.hasFence ?? false;
+        _familyComposition = (user.familyComposition?.isNotEmpty ?? false) ? user.familyComposition : 'Single';
+        _otherPets = (user.otherPets?.isNotEmpty ?? false) ? user.otherPets : 'None';
+        _timeAvailability = (user.timeAvailability?.isNotEmpty ?? false) ? user.timeAvailability : 'Medium';
+        _experience = (user.experience?.isNotEmpty ?? false) ? user.experience : 'Beginner';
+      });
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error cargando perfil: $e')),
+      );
+    }
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    try {
+      await context.read<UserRepository>().updateProfile(
+        name: _nameController.text,
+        bio: _bioController.text,
+        phone: _phoneController.text,
+        photoUrl: _photoUrl,
+        // Nuevos parámetros
+        housingType: _housingType,
+        housingOwnership: _housingOwnership,
+        hasYard: _hasYard,
+        hasFence: _hasFence,
+        familyComposition: _familyComposition,
+        otherPets: _otherPets,
+        timeAvailability: _timeAvailability,
+        experience: _experience,
+      );
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Perfil actualizado exitosamente')),
+        );
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Editar Perfil')),
+      body: SingleChildScrollView(
+        child: Form(
+          key: _formKey,
+          child: Column(
+            children: [
+              // ... Foto y campos básicos (Etapa 5) ...
+
+              const SizedBox(height: 20),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  'Información de Hogar',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+              ),
+              const SizedBox(height: 10),
+
+              // Tipo de Vivienda
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: DropdownButtonFormField<String>(
+                  value: _housingType,
+                  decoration: const InputDecoration(
+                    labelText: 'Tipo de Vivienda',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: ['House', 'Apartment', 'Parcel']
+                      .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                      .toList(),
+                  onChanged: (val) => setState(() => _housingType = val ?? 'House'),
+                ),
+              ),
+
+              // Propiedad (Propietario/Renta)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: DropdownButtonFormField<String>(
+                  value: _housingOwnership,
+                  decoration: const InputDecoration(
+                    labelText: 'Propiedad',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: ['Owned', 'Rented']
+                      .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                      .toList(),
+                  onChanged: (val) => setState(() => _housingOwnership = val ?? 'Owned'),
+                ),
+              ),
+
+              // Patio y Cerca (Checkboxes lado a lado)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: CheckboxListTile(
+                        title: const Text('Tiene Patio'),
+                        value: _hasYard,
+                        onChanged: (val) => setState(() => _hasYard = val ?? false),
+                        dense: true,
+                      ),
+                    ),
+                    Expanded(
+                      child: CheckboxListTile(
+                        title: const Text('Tiene Cerca'),
+                        value: _hasFence,
+                        onChanged: (val) => setState(() => _hasFence = val ?? false),
+                        dense: true,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // Composición Familiar
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: DropdownButtonFormField<String>(
+                  value: _familyComposition,
+                  decoration: const InputDecoration(
+                    labelText: 'Composición Familiar',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: ['Single', 'Couple', 'Family']
+                      .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                      .toList(),
+                  onChanged: (val) => setState(() => _familyComposition = val ?? 'Single'),
+                ),
+              ),
+
+              // Otras Mascotas en Casa
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: DropdownButtonFormField<String>(
+                  value: _otherPets,
+                  decoration: const InputDecoration(
+                    labelText: 'Otras Mascotas en Casa',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: ['None', 'Dogs', 'Cats', 'Mixed']
+                      .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                      .toList(),
+                  onChanged: (val) => setState(() => _otherPets = val ?? 'None'),
+                ),
+              ),
+
+              // Disponibilidad de Tiempo
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: DropdownButtonFormField<String>(
+                  value: _timeAvailability,
+                  decoration: const InputDecoration(
+                    labelText: 'Disponibilidad de Tiempo',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: ['Low', 'Medium', 'High']
+                      .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                      .toList(),
+                  onChanged: (val) => setState(() => _timeAvailability = val ?? 'Medium'),
+                ),
+              ),
+
+              // Experiencia con Mascotas
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: DropdownButtonFormField<String>(
+                  value: _experience,
+                  decoration: const InputDecoration(
+                    labelText: 'Experiencia con Mascotas',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: ['Beginner', 'Intermediate', 'Expert']
+                      .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                      .toList(),
+                  onChanged: (val) => setState(() => _experience = val ?? 'Beginner'),
+                ),
+              ),
+
+              const SizedBox(height: 20),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: ElevatedButton(
+                  onPressed: _submit,
+                  style: ElevatedButton.styleFrom(
+                    minimumSize: const Size(double.infinity, 50),
+                  ),
+                  child: const Text('Guardar Cambios'),
+                ),
+              ),
+              const SizedBox(height: 20),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _bioController.dispose();
+    _phoneController.dispose();
+    super.dispose();
+  }
+}
+```
+
+### Cambios en UserRepository
+
+Se extendió `updateProfile()` para aceptar nuevos parámetros:
+
+```dart
+// app/lib/features/user/data/user_repository.dart
+
+Future<void> updateProfile({
+  required String name,
+  required String bio,
+  required String phone,
+  required String photoUrl,
+  // Nuevos parámetros Etapa 15
+  String housingType = 'House',
+  String housingOwnership = 'Owned',
+  bool hasYard = false,
+  bool hasFence = false,
+  String familyComposition = 'Single',
+  String otherPets = 'None',
+  String timeAvailability = 'Medium',
+  String experience = 'Beginner',
+}) async {
+  try {
+    final token = await _storage.read(key: 'jwt_token');
+
+    // Construir FormData para soporte multipart
+    final formData = FormData.fromMap({
+      'name': name,
+      'bio': bio,
+      'phone': phone,
+      'housing_type': housingType,
+      'housing_ownership': housingOwnership,
+      'has_yard': hasYard ? '1' : '0',
+      'has_fence': hasFence ? '1' : '0',
+      'family_composition': familyComposition,
+      'other_pets': otherPets,
+      'time_availability': timeAvailability,
+      'experience': experience,
+    });
+
+    // Si hay foto nueva (no nulo y diferente de la anterior)
+    if (photoUrl.isNotEmpty && !photoUrl.startsWith('http')) {
+      formData.files.add(MapEntry('photo', await MultipartFile.fromFile(photoUrl)));
+    }
+
+    final response = await _dio.put(
+      '${ApiConstants.baseUrl}/profile',
+      data: formData,
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
+
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      throw Exception('Error actualizando perfil');
+    }
+  } catch (e) {
+    throw Exception('Error actualizando perfil: $e');
+  }
+}
+```
+
+### Cambios en User Model
+
+Se agregaron propiedades al modelo User:
+
+```dart
+// app/lib/features/user/domain/user_model.dart
+
+class User extends Equatable {
+  // ... campos existentes ...
+
+  final String? housingType;
+  final String? housingOwnership;
+  final bool hasYard;
+  final bool hasFence;
+  final String? familyComposition;
+  final String? otherPets;
+  final String? timeAvailability;
+  final String? experience;
+
+  const User({
+    required this.id,
+    required this.email,
+    // ... otros campos ...
+    this.housingType,
+    this.housingOwnership,
+    required this.hasYard,
+    required this.hasFence,
+    this.familyComposition,
+    this.otherPets,
+    this.timeAvailability,
+    this.experience,
+  });
+
+  factory User.fromJson(Map<String, dynamic> json) {
+    return User(
+      id: json['id'] ?? 0,
+      email: json['email'] ?? '',
+      // ... otros campos del fromJson existente ...
+      housingType: json['housing_type'],
+      housingOwnership: json['housing_ownership'],
+      hasYard: json['has_yard'] == true || json['has_yard'] == '1',
+      hasFence: json['has_fence'] == true || json['has_fence'] == '1',
+      familyComposition: json['family_composition'],
+      otherPets: json['other_pets'],
+      timeAvailability: json['time_availability'],
+      experience: json['experience'],
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'email': email,
+      // ... otros campos del toJson existente ...
+      'housing_type': housingType,
+      'housing_ownership': housingOwnership,
+      'has_yard': hasYard,
+      'has_fence': hasFence,
+      'family_composition': familyComposition,
+      'other_pets': otherPets,
+      'time_availability': timeAvailability,
+      'experience': experience,
+    };
+  }
+
+  @override
+  List<Object?> get props => [
+    id, email, // ... otros campos existentes ...
+    housingType, housingOwnership, hasYard, hasFence,
+    familyComposition, otherPets, timeAvailability, experience,
+  ];
+}
+```
+
+### Ciclo de Vida de Chats - Chat Exit (EN DESARROLLO)
+
+Se agregó funcionalidad de "Salir del Chat" en `ChatScreen`:
+
+```dart
+// app/lib/features/chat/presentation/screens/chat_screen.dart
+
+class ChatScreen extends StatelessWidget {
+  final int matchId;
+  final String peerName;
+  final int peerId;
+  final String? peerPhotoUrl;
+
+  // Nuevos parámetros para estados de bloqueo
+  final bool isPetDeleted;
+  final bool isPeerLeft;
+
+  const ChatScreen({
+    super.key,
+    required this.matchId,
+    required this.peerName,
+    required this.peerId,
+    this.peerPhotoUrl,
+    this.isPetDeleted = false,
+    this.isPeerLeft = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isChatBlocked = isPetDeleted || isPeerLeft;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Row(
+          children: [
+            CircleAvatar(
+              radius: 18,
+              backgroundImage: ImageHelper.getProvider(peerPhotoUrl),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(peerName, overflow: TextOverflow.ellipsis),
+                  if (isPetDeleted)
+                    const Text(
+                      "Mascota eliminada",
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: Colors.red,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  if (isPeerLeft)
+                    const Text(
+                      "Usuario ha abandonado el chat",
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: Colors.red,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          PopupMenuButton<String>(
+            onSelected: (value) async {
+              if (value == 'leave') {
+                _confirmLeaveChat(context);
+              } else if (value == 'report') {
+                _showReportDialog(context);
+              } else if (value == 'review') {
+                _showReviewDialog(context);
+              }
+            },
+            itemBuilder: (BuildContext context) {
+              return [
+                const PopupMenuItem(
+                  value: 'leave',
+                  child: Row(
+                    children: [
+                      Icon(Icons.exit_to_app, color: Colors.red),
+                      SizedBox(width: 8),
+                      Text('Salir del Chat', style: TextStyle(color: Colors.red)),
+                    ],
+                  ),
+                ),
+                // ... otros items (report, review) ...
+              ];
+            },
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          // ... mensajes ...
+
+          // Input deshabilitado si chat está bloqueado
+          if (!isChatBlocked) const _ChatInput(),
+          if (isChatBlocked)
+            Container(
+              color: Colors.grey[200],
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                isPetDeleted
+                    ? 'La mascota fue eliminada. No puedes escribir.'
+                    : 'El usuario ha abandonado el chat. No puedes escribir.',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.grey),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmLeaveChat(BuildContext context) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("¿Salir del chat?"),
+        content: const Text(
+          "La conversación se cerrará y no podrás volver a escribir.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text("Cancelar"),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text("Salir"),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true && context.mounted) {
+      try {
+        await context.read<MatchesRepository>().unmatch(matchId);
+        if (context.mounted) {
+          Navigator.pop(context);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Has salido del chat")),
+          );
+        }
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Error: $e")),
+          );
+        }
+      }
+    }
+  }
+
+  void _showReportDialog(BuildContext context) {
+    // ... implementación de reporte ...
+  }
+
+  void _showReviewDialog(BuildContext context) {
+    // ... implementación de reseña ...
+  }
+}
+```
+
+### Cambios en MatchesRepository
+
+```dart
+// app/lib/features/pets/data/matches_repository.dart
+
+Future<void> unmatch(int matchId) async {
+  try {
+    final token = await _storage.read(key: 'jwt_token');
+    await _dio.post(
+      '${ApiConstants.baseUrl}/matches/unmatch',
+      data: {'match_id': matchId},
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
+  } catch (e) {
+    throw Exception('Error saliendo del chat: $e');
+  }
+}
+```
+
+### Archivos Modificados/Creados en Etapa 15
+
+| Archivo                                                               | Cambio    | Tipo        |
+| --------------------------------------------------------------------- | --------- | ----------- |
+| `app/lib/features/user/presentation/screens/edit_profile_screen.dart` | Extensión | Actualizado |
+| `app/lib/features/user/domain/user_model.dart`                        | Extensión | Actualizado |
+| `app/lib/features/user/data/user_repository.dart`                     | Extensión | Actualizado |
+| `app/lib/features/chat/presentation/screens/chat_screen.dart`         | Extensión | Actualizado |
+| `app/lib/features/pets/data/matches_repository.dart`                  | Extensión | Actualizado |
+
+### Estado de Implementación - Etapa 15 (Frontend)
+
+**COMPLETADO**:
+
+- ✓ 8 nuevos campos en EditProfileScreen UI
+- ✓ Dropdown/checkbox widgets para entrada de datos
+- ✓ Mapeo de datos a UserRepository.updateProfile()
+- ✓ User model extendido con nuevas propiedades
+- ✓ JSON serialization (fromJson/toJson)
+- ✓ PopupMenu "Salir del Chat" UI en ChatScreen
+- ✓ Dialog de confirmación para abandono de chat
+- ✓ MatchesRepository.unmatch() para llamada al backend
+
+**EN DESARROLLO**:
+
+- ⏳ Validación/persistencia en backend
+- ⏳ Estados de match ("adopter_left", "rescuer_left", "pet_deleted")
+- ⏳ Bloqueo de input cuando chat está en estado inactivo
+- ⏳ Soft delete de matches (eliminación manual desde lista)
+- ⏳ Notificaciones when usuario se va o mascota se elimina
+
+### Notas Arquitectónicas - Etapa 15 (Frontend)
+
+- **Backward Compatibility**: Todos los campos nuevos son opcionales con valores por defecto sensatos
+- **UX Familiar**: Dropdowns y checkboxes son patrones UI estándar conocidos
+- **Validación Local**: EditProfileScreen valida tipos antes de enviar al backend
+- **State Management**: BLoC continúa manejando chat messages, nuevos campos son parte de User model
+- **Error Handling**: Try-catch en submit() proporciona feedback claro al usuario
+- **Network Resilience**: Si actualización de perfil falla, snackbar muestra error, estado local se revierte
+
 ## Referencias y Recursos
 
 - **Flutter Bloc Pattern**: https://bloclibrary.dev/
