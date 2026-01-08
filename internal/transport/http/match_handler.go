@@ -18,26 +18,15 @@ func NewMatchHandler(service *services.MatchService) *MatchHandler {
 	}
 }
 
-// Helper para obtener el UserID de forma segura sin causar Pánico
 func getUserIDFromContext(c *gin.Context) (uint, bool) {
 	idVal, exists := c.Get("userID")
-	if !exists {
-		return 0, false
-	}
-
-	// Manejo robusto de tipos:
-	// JWT suele devolver float64, pero si cambiamos el middleware podría ser uint o int
+	if !exists { return 0, false }
 	switch v := idVal.(type) {
-	case float64:
-		return uint(v), true
-	case uint:
-		return v, true
-	case int:
-		return uint(v), true
-	case uint64:
-		return uint(v), true
-	default:
-		return 0, false
+	case float64: return uint(v), true
+	case uint: return v, true
+	case int: return uint(v), true
+	case uint64: return uint(v), true
+	default: return 0, false
 	}
 }
 
@@ -141,6 +130,20 @@ func (h *MatchHandler) Respond(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Respuesta registrada"})
+}
+// --- NUEVO: UNMATCH (Salir del Chat) ---
+func (h *MatchHandler) Unmatch(c *gin.Context) {
+	userID, ok := getUserIDFromContext(c)
+	if !ok { c.JSON(http.StatusUnauthorized, gin.H{"error": "Usuario no identificado"}); return }
+	
+	var req struct { MatchID uint `json:"match_id" binding:"required"` }
+	if err := c.ShouldBindJSON(&req); err != nil { c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()}); return }
+
+	if err := h.service.Unmatch(userID, req.MatchID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error saliendo del chat: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Has salido del chat"})
 }
 
 // GetMyMatches (GET /matches/mine) - Para el Adoptante

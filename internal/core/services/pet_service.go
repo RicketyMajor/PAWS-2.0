@@ -141,9 +141,28 @@ func (s *PetService) GetByID(id uint) (*domain.Pet, error) {
 	return &pet, err
 }
 
+// Delete elimina la mascota y limpia solicitudes pendientes
 func (s *PetService) Delete(id uint, ownerID uint) error {
-	result := s.db.Where("id = ? AND user_id = ?", id, ownerID).Delete(&domain.Pet{})
-	if result.Error != nil { return result.Error }
-	if result.RowsAffected == 0 { return errors.New("mascota no encontrada o sin permiso") }
-	return nil
+	// 1. Verificar propiedad y existencia
+	var pet domain.Pet
+	if err := s.db.Where("id = ? AND user_id = ?", id, ownerID).First(&pet).Error; err != nil {
+		return errors.New("mascota no encontrada o sin permiso")
+	}
+
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		// 2. "Rechazar" automáticamente todas las solicitudes PENDIENTES
+		// para que desaparezcan de la lista de "Enviados" del adoptante.
+		if err := tx.Model(&domain.Match{}).
+			Where("pet_id = ? AND status = ?", id, domain.MatchPending).
+			Update("status", domain.MatchRejected).Error; err != nil {
+			return err
+		}
+
+		// 3. Borrar la Mascota (Soft Delete)
+		if err := tx.Delete(&pet).Error; err != nil {
+			return err
+		}
+		
+		return nil
+	})
 }
