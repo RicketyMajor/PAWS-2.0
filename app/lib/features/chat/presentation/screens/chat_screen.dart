@@ -4,13 +4,19 @@ import '../bloc/chat_bloc.dart';
 import '../../data/chat_repository.dart';
 import '../../domain/message_model.dart';
 import '../../../social/data/social_repository.dart';
-import '../../../../core/utils/image_helper.dart'; // <--- IMPORTANTE
+import '../../../../core/utils/image_helper.dart';
+import '../../../pets/data/matches_repository.dart'; // <--- NECESARIO para la función unmatch
 
 class ChatScreen extends StatelessWidget {
   final int matchId;
-  final String peerName; // Nombre de la otra persona
+  final String peerName;
   final int peerId;
   final String? peerPhotoUrl;
+
+  // --- NUEVOS PARÁMETROS DE ESTADO ---
+  final bool isPetDeleted;
+  final bool isPeerLeft;
+  // -----------------------------------
 
   const ChatScreen({
     super.key,
@@ -18,10 +24,15 @@ class ChatScreen extends StatelessWidget {
     required this.peerName,
     required this.peerId,
     this.peerPhotoUrl,
+    this.isPetDeleted = false,
+    this.isPeerLeft = false,
   });
 
   @override
   Widget build(BuildContext context) {
+    // Determinamos si el chat está bloqueado (Solo lectura)
+    final isChatBlocked = isPetDeleted || isPeerLeft;
+
     return BlocProvider(
       create: (context) =>
           ChatBloc(repository: RepositoryProvider.of<ChatRepository>(context))
@@ -32,20 +43,43 @@ class ChatScreen extends StatelessWidget {
           titleSpacing: 0,
           title: Row(
             children: [
-              // FOTO EN LA BARRA SUPERIOR (ESTILO WHATSAPP)
+              // --- TU FOTO DE PERFIL (Mantenida intacta) ---
               CircleAvatar(
                 radius: 18,
                 backgroundImage: ImageHelper.getProvider(peerPhotoUrl),
               ),
               const SizedBox(width: 10),
-              Expanded(child: Text(peerName, overflow: TextOverflow.ellipsis)),
+              // --- NOMBRE Y ESTADO ---
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      peerName,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 16),
+                    ),
+                    if (isPetDeleted)
+                      const Text(
+                        "Mascota eliminada",
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.red,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
             ],
           ),
           actions: [
-            // --- MENÚ DE CONFIANZA ---
+            // --- NUEVO MENÚ DE OPCIONES ---
             PopupMenuButton<String>(
-              onSelected: (value) {
-                if (value == 'report') {
+              onSelected: (value) async {
+                if (value == 'leave') {
+                  _confirmLeaveChat(context);
+                } else if (value == 'report') {
                   _showReportDialog(context);
                 } else if (value == 'review') {
                   _showReviewDialog(context);
@@ -54,12 +88,25 @@ class ChatScreen extends StatelessWidget {
               itemBuilder: (BuildContext context) {
                 return [
                   const PopupMenuItem(
+                    value: 'leave',
+                    child: Row(
+                      children: [
+                        Icon(Icons.exit_to_app, color: Colors.red),
+                        SizedBox(width: 8),
+                        Text(
+                          'Salir del Chat',
+                          style: TextStyle(color: Colors.red),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const PopupMenuItem(
                     value: 'review',
                     child: Row(
                       children: [
                         Icon(Icons.star, color: Colors.amber),
                         SizedBox(width: 8),
-                        Text('Calificar Experiencia'),
+                        Text('Calificar'),
                       ],
                     ),
                   ),
@@ -67,9 +114,9 @@ class ChatScreen extends StatelessWidget {
                     value: 'report',
                     child: Row(
                       children: [
-                        Icon(Icons.flag, color: Colors.red),
+                        Icon(Icons.flag, color: Colors.grey),
                         SizedBox(width: 8),
-                        Text('Reportar Usuario'),
+                        Text('Reportar'),
                       ],
                     ),
                   ),
@@ -80,33 +127,51 @@ class ChatScreen extends StatelessWidget {
         ),
         body: Column(
           children: [
-            // LISTA DE MENSAJES
+            // --- BANNERS DE BLOQUEO (Nuevos) ---
+            if (isPetDeleted)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(8),
+                color: Colors.grey[300],
+                child: const Text(
+                  "🔒 La publicación de esta mascota ha sido eliminada.",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.black54, fontSize: 12),
+                ),
+              )
+            else if (isPeerLeft)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(8),
+                color: Colors.grey[300],
+                child: Text(
+                  "$peerName ha salido del chat.",
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.black54, fontSize: 12),
+                ),
+              ),
+
+            // --- LISTA DE MENSAJES (Tu código original) ---
             Expanded(
               child: BlocBuilder<ChatBloc, ChatState>(
                 builder: (context, state) {
                   if (state is ChatLoading) {
                     return const Center(child: CircularProgressIndicator());
                   } else if (state is ChatLoaded) {
-                    if (state.messages.isEmpty) {
-                      return _buildEmptyState();
-                    }
+                    if (state.messages.isEmpty) return _buildEmptyState();
 
-                    // TRUCO DE CHAT PRO:
-                    // Usamos la lista invertida (reverse: true).
-                    // Esto hace que el scroll empiece desde abajo y maneja mejor el teclado.
+                    // Mantenemos tu truco de lista invertida
                     final reversedMessages = state.messages.reversed.toList();
 
                     return ListView.builder(
-                      reverse: true, // <--- LA CLAVE
+                      reverse: true,
                       padding: const EdgeInsets.symmetric(
                         horizontal: 10,
                         vertical: 20,
                       ),
                       itemCount: reversedMessages.length,
-                      itemBuilder: (context, index) {
-                        final msg = reversedMessages[index];
-                        return _buildMessageBubble(msg);
-                      },
+                      itemBuilder: (context, index) =>
+                          _buildMessageBubble(reversedMessages[index]),
                     );
                   } else if (state is ChatError) {
                     return Center(child: Text("Error: ${state.error}"));
@@ -115,12 +180,55 @@ class ChatScreen extends StatelessWidget {
                 },
               ),
             ),
-            // INPUT AREA
-            const _ChatInput(),
+
+            // --- INPUT AREA (Se oculta si está bloqueado) ---
+            if (!isChatBlocked) const _ChatInput(),
           ],
         ),
       ),
     );
+  }
+
+  // --- LÓGICA DE SALIR DEL CHAT ---
+  void _confirmLeaveChat(BuildContext context) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("¿Salir del chat?"),
+        content: const Text(
+          "La conversación se cerrará y no podrás volver a escribir.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text("Cancelar"),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text("Salir"),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true && context.mounted) {
+      try {
+        await context.read<MatchesRepository>().unmatch(matchId);
+        if (context.mounted) {
+          Navigator.pop(context); // Volver a la lista de chats
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text("Has salido del chat")));
+        }
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text("Error: $e")));
+        }
+      }
+    }
   }
 
   // --- DIÁLOGO DE REPORTE ---
@@ -266,7 +374,7 @@ Widget _buildEmptyState() {
         borderRadius: BorderRadius.circular(20),
       ),
       child: const Text(
-        "👋 Di hola para comenzar la adopción",
+        "Di hola para comenzar la adopción",
         style: TextStyle(color: Colors.grey),
       ),
     ),
@@ -275,24 +383,18 @@ Widget _buildEmptyState() {
 
 Widget _buildMessageBubble(ChatMessage msg) {
   final isMe = msg.isMe;
-
-  // Alineación y Colores
   final alignment = isMe ? Alignment.centerRight : Alignment.centerLeft;
-  final bgColor = isMe
-      ? const Color(0xFFE91E63)
-      : Colors.white; // Rosado PAWS vs Blanco
+  final bgColor = isMe ? const Color(0xFFE91E63) : Colors.white;
   final textColor = isMe ? Colors.white : Colors.black87;
 
-  // Formato de hora manual (para no importar intl solo por esto)
+  // Formato hora manual
   final timeStr =
       "${msg.createdAt.hour.toString().padLeft(2, '0')}:${msg.createdAt.minute.toString().padLeft(2, '0')}";
 
   return Align(
     alignment: alignment,
     child: Container(
-      constraints: const BoxConstraints(
-        maxWidth: 280,
-      ), // Ancho máximo de burbuja
+      constraints: const BoxConstraints(maxWidth: 280),
       margin: const EdgeInsets.symmetric(vertical: 4),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
@@ -307,12 +409,12 @@ Widget _buildMessageBubble(ChatMessage msg) {
         borderRadius: BorderRadius.only(
           topLeft: const Radius.circular(16),
           topRight: const Radius.circular(16),
-          bottomLeft: Radius.circular(isMe ? 16 : 0), // Punta hacia abajo
+          bottomLeft: Radius.circular(isMe ? 16 : 0),
           bottomRight: Radius.circular(isMe ? 0 : 16),
         ),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end, // Hora a la derecha
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           Text(msg.content, style: TextStyle(color: textColor, fontSize: 16)),
           const SizedBox(height: 4),
@@ -328,7 +430,6 @@ Widget _buildMessageBubble(ChatMessage msg) {
               ),
               if (isMe) ...[
                 const SizedBox(width: 4),
-                // Icono de "leído" (Doble Check) simulado
                 const Icon(Icons.done_all, size: 12, color: Colors.white70),
               ],
             ],
@@ -339,16 +440,15 @@ Widget _buildMessageBubble(ChatMessage msg) {
   );
 }
 
+// --- TU INPUT ORIGINAL ---
 class _ChatInput extends StatefulWidget {
   const _ChatInput();
-
   @override
   State<_ChatInput> createState() => _ChatInputState();
 }
 
 class _ChatInputState extends State<_ChatInput> {
   final _controller = TextEditingController();
-
   void _send() {
     if (_controller.text.trim().isEmpty) return;
     context.read<ChatBloc>().add(SendMessageEvent(_controller.text));
@@ -358,7 +458,6 @@ class _ChatInputState extends State<_ChatInput> {
   @override
   Widget build(BuildContext context) {
     return SafeArea(
-      // Protege en iPhone X+
       child: Container(
         padding: const EdgeInsets.all(8),
         decoration: const BoxDecoration(
@@ -368,7 +467,6 @@ class _ChatInputState extends State<_ChatInput> {
         child: Row(
           children: [
             const SizedBox(width: 8),
-            // Campo de Texto
             Expanded(
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -382,12 +480,11 @@ class _ChatInputState extends State<_ChatInput> {
                     hintText: "Escribe un mensaje...",
                     border: InputBorder.none,
                   ),
-                  onSubmitted: (_) => _send(), // Enviar al dar Enter teclado
+                  onSubmitted: (_) => _send(),
                 ),
               ),
             ),
             const SizedBox(width: 8),
-            // Botón Enviar
             CircleAvatar(
               backgroundColor: const Color(0xFFE91E63),
               radius: 24,

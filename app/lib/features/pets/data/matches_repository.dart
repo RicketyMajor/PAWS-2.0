@@ -35,6 +35,20 @@ class MatchesRepository {
     }
   }
 
+  // --- NUEVO: Salir del Chat ---
+  Future<void> unmatch(int matchId) async {
+    try {
+      final token = await _storage.read(key: 'jwt_token');
+      await _dio.post(
+        '${ApiConstants.baseUrl}/matches/unmatch',
+        data: {'match_id': matchId},
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+    } catch (e) {
+      throw Exception('Error saliendo del chat: $e');
+    }
+  }
+
   // Obtener chats activos del Rescatista
   Future<List<dynamic>> getRescuerChats() async {
     try {
