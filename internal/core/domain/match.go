@@ -2,16 +2,19 @@ package domain
 
 import (
 	"time"
-
 	"gorm.io/gorm"
 )
 
 type MatchStatus string
 
 const (
-	MatchPending  MatchStatus = "pending"  // Like dado, esperando respuesta
-	MatchAccepted MatchStatus = "accepted" // Rescatista aceptó -> Chat habilitado
-	MatchRejected MatchStatus = "rejected" // Rescatista rechazó
+	MatchPending     MatchStatus = "pending"
+	MatchAccepted    MatchStatus = "accepted"
+	MatchRejected    MatchStatus = "rejected"
+	// --- NUEVOS ESTADOS ---
+	MatchAdopterLeft MatchStatus = "adopter_left" // El adoptante abandonó
+	MatchRescuerLeft MatchStatus = "rescuer_left" // El rescatista abandonó
+	MatchPetDeleted  MatchStatus = "pet_deleted"  // La mascota fue eliminada
 )
 
 type Match struct {

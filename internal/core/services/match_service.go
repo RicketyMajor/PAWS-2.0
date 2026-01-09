@@ -14,6 +14,7 @@ import (
 const (
 	MatchAdopterLeft = "adopter_left"
 	MatchRescuerLeft = "rescuer_left"
+	MatchPetDeleted  = "pet_deleted" // Aseguramos que esta constante exista o usamos string directo
 )
 
 // Estructura del evento de notificación
@@ -38,28 +39,52 @@ func NewMatchService(db *gorm.DB, petService *PetService, mq *messaging.RabbitMQ
 	}
 }
 
-// --- LOGICA DE UNMATCH / SALIR DEL CHAT ---
+// Unmatch permite a un usuario salir de un chat, bloqueándolo para ambos.
 func (s *MatchService) Unmatch(userID, matchID uint) error {
 	var match domain.Match
-	// Buscamos el match incluyendo la mascota para saber quién es quién
-	if err := s.db.Preload("Pet").First(&match, matchID).Error; err != nil {
+
+	// CORRECCIÓN CRÍTICA: Usamos Unscoped() aquí.
+	// Si la mascota fue eliminada, aún necesitamos cargarla para verificar
+	// que el usuario actual (Rescatista) es el dueño legítimo y permitirle salir del chat.
+	if err := s.db.Preload("Pet", func(db *gorm.DB) *gorm.DB {
+		return db.Unscoped()
+	}).First(&match, matchID).Error; err != nil {
 		return errors.New("match no encontrado")
 	}
 
-	newStatus := ""
-	
-	// Determinamos quién está saliendo
-	if match.AdopterID == userID {
-		newStatus = MatchAdopterLeft
-	} else if match.Pet.UserID == userID {
-		newStatus = MatchRescuerLeft
+	// Validamos si se puede salir
+	if match.Status != domain.MatchAccepted && 
+	   match.Status != MatchAdopterLeft && 
+	   match.Status != MatchRescuerLeft && 
+	   match.Status != domain.MatchPetDeleted { // Permitimos salir incluso si la mascota se borró
+		
+		if match.Status == domain.MatchRejected {
+			return errors.New("este chat ya está cerrado")
+		}
+	}
+
+	var newStatus domain.MatchStatus
+
+	// Determinamos quién está cancelando
+	if userID == match.AdopterID {
+		newStatus = domain.MatchAdopterLeft
+	} else if userID == match.Pet.UserID { // El dueño de la mascota es el Rescatista
+		newStatus = domain.MatchRescuerLeft
 	} else {
 		return errors.New("no tienes permiso para salir de este chat")
 	}
 
-	// Actualizamos estado (CONVERSIÓN DE TIPO AÑADIDA)
-	match.Status = domain.MatchStatus(newStatus)
-	return s.db.Save(&match).Error
+	// Si ya estaba en ese estado, no hacemos nada
+	if match.Status == newStatus {
+		return nil
+	}
+
+	// Actualizamos el estado
+	if err := s.db.Model(&match).Update("status", newStatus).Error; err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // GetSwipeDeck ...
@@ -122,22 +147,23 @@ func (s *MatchService) RespondMatch(rescuerID, matchID uint, accept bool) error 
 	return nil
 }
 
-// --- ACTUALIZADO: GetAcceptedMatches (Adoptante) ---
+// GetAcceptedMatches (Adoptante)
 func (s *MatchService) GetAcceptedMatches(adopterID uint) ([]domain.Match, error) {
 	var matches []domain.Match
-	// Usamos Unscoped() para traer la mascota aunque haya sido borrada
+	
 	err := s.db.Preload("Pet.User").
 		Preload("Pet.Images").
 		Preload("Pet", func(db *gorm.DB) *gorm.DB {
 			return db.Unscoped()
 		}).
-		Where("adopter_id = ? AND (status = ? OR status = ?)", adopterID, domain.MatchAccepted, MatchRescuerLeft).
+		// CORRECCIÓN: Incluimos MatchPetDeleted para que el adoptante vea el aviso
+		Where("adopter_id = ? AND (status = ? OR status = ? OR status = ?)", 
+			adopterID, domain.MatchAccepted, MatchRescuerLeft, domain.MatchPetDeleted).
+		Order("updated_at DESC").
 		Find(&matches).Error
 	
-	// Marcamos visualmente si la mascota fue borrada
 	for i := range matches {
 		if !matches[i].Pet.DeletedAt.Time.IsZero() {
-			// CONVERSIÓN DE TIPO AÑADIDA
 			matches[i].Pet.Status = domain.PetStatus("deleted") 
 		}
 	}
@@ -149,37 +175,46 @@ func (s *MatchService) GetAdopterPendingMatches(adopterID uint) ([]domain.Match,
 	var matches []domain.Match
 	err := s.db.Preload("Pet.Images").Preload("Pet").
 		Where("adopter_id = ? AND status = ?", adopterID, domain.MatchPending).
+		Order("created_at DESC").
 		Find(&matches).Error
 	return matches, err
 }
 
-// GetPendingRequests ...
+// GetPendingRequests (Rescatista)
 func (s *MatchService) GetPendingRequests(rescuerID uint) ([]domain.Match, error) {
 	var matches []domain.Match
+	// Select matches.* evita ambigüedad de IDs
 	err := s.db.Table("matches").
+		Select("matches.*"). 
 		Joins("JOIN pets ON matches.pet_id = pets.id").
 		Preload("Adopter").Preload("Pet.Images").Preload("Pet").
 		Where("pets.user_id = ? AND matches.status = ?", rescuerID, domain.MatchPending).
+		Order("matches.created_at DESC").
 		Find(&matches).Error
 	return matches, err
 }
 
-// --- ACTUALIZADO: GetRescuerMatches (Rescatista) ---
+// GetRescuerMatches (Rescatista)
 func (s *MatchService) GetRescuerMatches(rescuerID uint) ([]domain.Match, error) {
 	var matches []domain.Match
+	
 	err := s.db.Table("matches").
+		Select("matches.*").
 		Joins("JOIN pets ON matches.pet_id = pets.id").
 		Preload("Adopter").
 		Preload("Pet.Images").
 		Preload("Pet", func(db *gorm.DB) *gorm.DB {
 			return db.Unscoped()
 		}).
-		Where("pets.user_id = ? AND (matches.status = ? OR matches.status = ?)", rescuerID, domain.MatchAccepted, MatchAdopterLeft).
+		// CORRECCIÓN: Incluimos MatchPetDeleted si queremos que el rescatista también vea 
+		// el historial de chats de mascotas que él mismo eliminó.
+		Where("pets.user_id = ? AND (matches.status = ? OR matches.status = ? OR matches.status = ?)", 
+			rescuerID, domain.MatchAccepted, MatchAdopterLeft, domain.MatchPetDeleted).
+		Order("matches.updated_at DESC").
 		Find(&matches).Error
 	
 	for i := range matches {
 		if !matches[i].Pet.DeletedAt.Time.IsZero() {
-			// CONVERSIÓN DE TIPO AÑADIDA
 			matches[i].Pet.Status = domain.PetStatus("deleted")
 		}
 	}

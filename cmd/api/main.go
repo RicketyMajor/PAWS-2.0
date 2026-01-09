@@ -216,9 +216,12 @@ func main() {
 				match.GET("/requests", matchHandler.GetPending)
 				match.POST("/respond", matchHandler.Respond)
 				match.GET("/:id/messages", socialHandler.GetChatHistory)
-				match.GET("/mine", matchHandler.GetMyMatches)
-				match.GET("/mine/pending", matchHandler.GetMyPending)
 				match.GET("/rescuer", matchHandler.GetRescuerMatches)
+				// --- RUTAS ACTUALIZADAS ---
+				// Unificamos las rutas del adoptante en una sola
+				match.GET("/adopter", matchHandler.GetAdopterMatches)
+				// Agregamos la ruta para salir del chat
+				match.POST("/unmatch", matchHandler.Unmatch)
 			}
 
 			protected.POST("/reviews", socialHandler.CreateReview)
