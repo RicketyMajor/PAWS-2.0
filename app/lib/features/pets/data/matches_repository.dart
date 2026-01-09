@@ -1,27 +1,30 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../../core/constants/api_constants.dart';
+import '../domain/match_model.dart'; // Importamos el nuevo modelo
 
 class MatchesRepository {
   final Dio _dio = Dio();
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
 
   // Obtener solicitudes pendientes (Rescatista)
-  Future<List<dynamic>> getPendingRequests() async {
+  Future<List<Match>> getPendingRequests() async {
     try {
       final token = await _storage.read(key: 'jwt_token');
       final response = await _dio.get(
         '${ApiConstants.baseUrl}/matches/requests',
         options: Options(headers: {'Authorization': 'Bearer $token'}),
       );
-      return response
-          .data; // Devuelve lista de Matches con datos de Adoptante y Mascota
+
+      // Convertimos la lista dinámica a List<Match>
+      return (response.data as List)
+          .map((json) => Match.fromJson(json))
+          .toList();
     } catch (e) {
       throw Exception('Error cargando solicitudes: $e');
     }
   }
 
-  // Responder a una solicitud (Aceptar/Rechazar)
   Future<void> respondMatch(int matchId, bool accept) async {
     try {
       final token = await _storage.read(key: 'jwt_token');
@@ -35,7 +38,6 @@ class MatchesRepository {
     }
   }
 
-  // --- NUEVO: Salir del Chat ---
   Future<void> unmatch(int matchId) async {
     try {
       final token = await _storage.read(key: 'jwt_token');
@@ -49,30 +51,38 @@ class MatchesRepository {
     }
   }
 
-  // Obtener chats activos del Rescatista
-  Future<List<dynamic>> getRescuerChats() async {
+  // Obtener chats activos del Rescatista (Ahora retorna List<Match>)
+  Future<List<Match>> getRescuerChats() async {
     try {
       final token = await _storage.read(key: 'jwt_token');
       final response = await _dio.get(
-        '${ApiConstants.baseUrl}/matches/rescuer', // La ruta que acabamos de crear
+        '${ApiConstants.baseUrl}/matches/rescuer',
         options: Options(headers: {'Authorization': 'Bearer $token'}),
       );
-      return response.data;
+      return (response.data as List)
+          .map((json) => Match.fromJson(json))
+          .toList();
     } catch (e) {
       throw Exception('Error cargando chats: $e');
     }
   }
 
-  Future<List<dynamic>> getMyPendingMatches() async {
+  // Obtener matches del Adoptante (Ahora retorna List<Match>)
+  Future<List<Match>> getMyPendingMatches() async {
     try {
       final token = await _storage.read(key: 'jwt_token');
+      // NOTA: Asegúrate que el endpoint en backend para adoptantes (ej: /matches/adopter)
+      // devuelva la estructura completa de Match. Si usas uno que solo devuelve Pets, habrá que ajustarlo.
+      // Asumiendo que usas /matches/adopter o similar que devuelve Matches:
       final response = await _dio.get(
-        '${ApiConstants.baseUrl}/matches/mine/pending',
+        '${ApiConstants.baseUrl}/matches/adopter',
         options: Options(headers: {'Authorization': 'Bearer $token'}),
       );
-      return response.data;
+      return (response.data as List)
+          .map((json) => Match.fromJson(json))
+          .toList();
     } catch (e) {
-      throw Exception('Error cargando pendientes: $e');
+      throw Exception('Error cargando matches: $e');
     }
   }
 }

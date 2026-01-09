@@ -2,8 +2,9 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../../../core/constants/api_constants.dart';
-import '../../../../core/utils/image_helper.dart'; // <--- IMPORTANTE
+import '../../../../core/utils/image_helper.dart';
 import '../../../chat/presentation/screens/chat_screen.dart';
+import '../../domain/match_model.dart'; // Importamos Match
 
 class AdopterMatchesScreen extends StatefulWidget {
   const AdopterMatchesScreen({super.key});
@@ -18,8 +19,9 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
   final Dio _dio = Dio();
   final _storage = const FlutterSecureStorage();
 
-  List<dynamic> _acceptedMatches = [];
-  List<dynamic> _pendingMatches = [];
+  // Ahora son Listas de Match, no dynamic
+  List<Match> _acceptedMatches = [];
+  List<Match> _pendingMatches = [];
   bool _isLoading = true;
 
   @override
@@ -32,31 +34,55 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
   Future<void> _loadAllData() async {
     if (!mounted) return;
     setState(() => _isLoading = true);
+
     try {
       final token = await _storage.read(key: 'jwt_token');
       final options = Options(headers: {'Authorization': 'Bearer $token'});
 
-      final responses = await Future.wait([
-        _dio.get(
-          '${ApiConstants.baseUrl}/matches/mine',
-          options: options,
-        ), // Accepted
-        _dio.get(
-          '${ApiConstants.baseUrl}/matches/mine/pending',
-          options: options,
-        ), // Pending
-      ]);
+      // Hacemos las peticiones por separado para depurar mejor
+      // y usamos try-catch individual para que un error en Pendientes no oculte los Activos
 
-      if (mounted) {
-        setState(() {
-          _acceptedMatches = responses[0].data ?? [];
-          _pendingMatches = responses[1].data ?? [];
-          _isLoading = false;
-        });
+      // 1. Cargar Chats Activos
+      try {
+        final resAccepted = await _dio.get(
+          '${ApiConstants.baseUrl}/matches/adopter?status=accepted',
+          options: options,
+        );
+        if (mounted) {
+          setState(() {
+            _acceptedMatches = (resAccepted.data as List)
+                .map((json) => Match.fromJson(json))
+                .toList();
+          });
+        }
+      } catch (e) {
+        print("Error cargando chats activos: $e");
+      }
+
+      // 2. Cargar Solicitudes Pendientes
+      try {
+        final resPending = await _dio.get(
+          '${ApiConstants.baseUrl}/matches/adopter?status=pending',
+          options: options,
+        );
+
+        // DEBUG: Ver qué llega del backend
+        print("Respuesta Pendientes: ${resPending.data}");
+
+        if (mounted) {
+          setState(() {
+            _pendingMatches = (resPending.data as List)
+                .map((json) => Match.fromJson(json))
+                .toList();
+          });
+        }
+      } catch (e) {
+        print("Error cargando pendientes: $e");
       }
     } catch (e) {
+      print("Error general en AdopterMatches: $e");
+    } finally {
       if (mounted) setState(() => _isLoading = false);
-      print("Error cargando matches: $e");
     }
   }
 
@@ -64,10 +90,7 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Mis Interacciones"),
-        backgroundColor: Colors.white,
-        foregroundColor: const Color(0xFFE91E63),
-        elevation: 0,
+        title: const Text("Mis Solicitudes"),
         bottom: TabBar(
           controller: _tabController,
           labelColor: const Color(0xFFE91E63),
@@ -75,7 +98,7 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
           indicatorColor: const Color(0xFFE91E63),
           tabs: const [
             Tab(text: "Chats Activos"),
-            Tab(text: "Enviados"),
+            Tab(text: "Pendientes"),
           ],
         ),
       ),
@@ -83,64 +106,86 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
           ? const Center(child: CircularProgressIndicator())
           : TabBarView(
               controller: _tabController,
-              children: [_buildChatsList(), _buildPendingList()],
+              children: [_buildAcceptedList(), _buildPendingList()],
             ),
     );
   }
 
-  Widget _buildChatsList() {
+  Widget _buildAcceptedList() {
     if (_acceptedMatches.isEmpty) {
       return _buildEmptyState(
         "No tienes chats activos",
         Icons.chat_bubble_outline,
       );
     }
+
     return ListView.builder(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(12),
       itemCount: _acceptedMatches.length,
       itemBuilder: (context, index) {
         final match = _acceptedMatches[index];
-        final pet =
-            match['pet'] ?? match['Pet']; // Robustez mayúsculas/minúsculas
+        final pet = match.pet;
 
-        // Extraer datos del Rescatista (Dueño de la mascota)
-        final rescuerData = pet['User'] ?? pet['user'];
-        final rescuerName = rescuerData?['name'] ?? 'Rescatista';
-        final rescuerId = rescuerData?['ID'] ?? rescuerData?['id'] ?? 0;
-
-        // --- NUEVO: Extraer Foto del Rescatista ---
-        final rescuerPhoto = rescuerData?['photo_url'];
+        // Datos del Peer (En este caso, el dueño de la mascota/Rescatista)
+        final rescuerName = pet?.ownerName ?? 'Rescatista';
+        final rescuerPhoto = pet?.ownerPhotoUrl;
 
         return Card(
+          margin: const EdgeInsets.only(bottom: 12),
+          elevation: 2,
           child: ListTile(
-            leading: ClipRRect(
-              borderRadius: BorderRadius.circular(30),
-              // Usamos ImageHelper para asegurar que la foto de la mascota se vea
-              child: ImageHelper.getImage(
-                pet['photo_url'],
-                width: 60,
-                height: 60,
-                fit: BoxFit.cover,
-              ),
+            contentPadding: const EdgeInsets.all(12),
+            leading: CircleAvatar(
+              radius: 28,
+              backgroundImage: ImageHelper.getProvider(
+                pet?.imageUrl,
+              ), // Mostramos foto mascota
             ),
             title: Text(
-              pet['name'],
-              style: const TextStyle(fontWeight: FontWeight.bold),
+              pet?.name ?? 'Mascota',
+              style: TextStyle(
+                // Tachado si la mascota se borró
+                decoration: match.isPetDeleted
+                    ? TextDecoration.lineThrough
+                    : null,
+                color: match.isPetDeleted ? Colors.grey : Colors.black,
+              ),
             ),
-            subtitle: Text("Rescatista: $rescuerName"),
-            trailing: const Icon(Icons.send, color: Color(0xFFE91E63)),
-            onTap: () {
-              Navigator.push(
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text("Rescatista: $rescuerName"),
+                if (match.isPetDeleted)
+                  const Text(
+                    "Publicación eliminada",
+                    style: TextStyle(color: Colors.red, fontSize: 12),
+                  ),
+                if (match.isRescuerLeft)
+                  const Text(
+                    "Rescatista abandonó",
+                    style: TextStyle(color: Colors.red, fontSize: 12),
+                  ),
+              ],
+            ),
+            trailing: const Icon(Icons.message, color: Color(0xFFE91E63)),
+            onTap: () async {
+              // <--- 1. Agregamos async
+              // 2. Esperamos (await) a que el usuario regrese del chat
+              await Navigator.push(
                 context,
                 MaterialPageRoute(
                   builder: (_) => ChatScreen(
-                    matchId: match['id'],
+                    matchId: match.id,
                     peerName: rescuerName,
-                    peerId: rescuerId,
-                    peerPhotoUrl: rescuerPhoto, // <--- Enviamos la foto al chat
+                    peerId: pet?.ownerId ?? 0,
+                    peerPhotoUrl: rescuerPhoto,
+                    isPetDeleted: match.isPetDeleted,
+                    isPeerLeft: match.isRescuerLeft,
                   ),
                 ),
               );
+              // 3. Al volver, recargamos la lista automáticamente
+              _loadAllData();
             },
           ),
         );
@@ -148,7 +193,6 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
     );
   }
 
-  // --- TAB 2: LIKES ENVIADOS (PENDIENTES) ---
   Widget _buildPendingList() {
     if (_pendingMatches.isEmpty) {
       return _buildEmptyState(
@@ -156,30 +200,29 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
         Icons.access_time,
       );
     }
+
     return ListView.builder(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(12),
       itemCount: _pendingMatches.length,
       itemBuilder: (context, index) {
         final match = _pendingMatches[index];
-        final pet =
-            match['pet'] ?? match['Pet']; // Robustez mayúsculas/minúsculas
+        final pet = match.pet;
 
         return Card(
-          color: Colors.grey[50], // Color diferente para indicar "Espera"
+          color: Colors.grey[50],
           margin: const EdgeInsets.only(bottom: 12),
           child: ListTile(
             leading: ClipRRect(
               borderRadius: BorderRadius.circular(30),
-              // Aquí también aplicamos ImageHelper para que se vea la foto
               child: ImageHelper.getImage(
-                pet['photo_url'],
+                pet?.imageUrl,
                 width: 60,
                 height: 60,
                 fit: BoxFit.cover,
               ),
             ),
             title: Text(
-              pet['name'] ?? 'Sin Nombre',
+              pet?.name ?? 'Sin Nombre',
               style: const TextStyle(fontWeight: FontWeight.w600),
             ),
             subtitle: const Text(
@@ -200,7 +243,7 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
         children: [
           Icon(icon, size: 60, color: Colors.grey[300]),
           const SizedBox(height: 16),
-          Text(msg, style: const TextStyle(color: Colors.grey)),
+          Text(msg, style: TextStyle(color: Colors.grey[600], fontSize: 16)),
         ],
       ),
     );

@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import '../../../../core/utils/image_helper.dart'; // <--- IMPORTANTE
+import '../../../../core/utils/image_helper.dart';
 import '../../../pets/data/matches_repository.dart';
+import '../../../pets/domain/match_model.dart';
 import 'chat_screen.dart';
 
 class RescuerChatsScreen extends StatefulWidget {
@@ -12,12 +13,19 @@ class RescuerChatsScreen extends StatefulWidget {
 }
 
 class _RescuerChatsScreenState extends State<RescuerChatsScreen> {
-  late Future<List<dynamic>> _chatsFuture;
+  late Future<List<Match>> _chatsFuture;
 
   @override
   void initState() {
     super.initState();
-    _chatsFuture = context.read<MatchesRepository>().getRescuerChats();
+    _loadChats();
+  }
+
+  // Método extraído para poder llamarlo de nuevo
+  void _loadChats() {
+    setState(() {
+      _chatsFuture = context.read<MatchesRepository>().getRescuerChats();
+    });
   }
 
   @override
@@ -28,7 +36,7 @@ class _RescuerChatsScreenState extends State<RescuerChatsScreen> {
         backgroundColor: Colors.white,
         foregroundColor: const Color(0xFFE91E63),
       ),
-      body: FutureBuilder<List<dynamic>>(
+      body: FutureBuilder<List<Match>>(
         future: _chatsFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
@@ -37,34 +45,31 @@ class _RescuerChatsScreenState extends State<RescuerChatsScreen> {
           if (snapshot.hasError) {
             return Center(child: Text("Error: ${snapshot.error}"));
           }
-          final chats = snapshot.data ?? [];
 
-          if (chats.isEmpty) {
+          final matches = snapshot.data ?? [];
+
+          if (matches.isEmpty) {
             return const Center(child: Text("No tienes chats activos aún."));
           }
 
           return ListView.builder(
-            itemCount: chats.length,
+            itemCount: matches.length,
+            padding: const EdgeInsets.symmetric(vertical: 8),
             itemBuilder: (context, index) {
-              final match = chats[index];
+              final match = matches[index];
+              final adopter = match.adopter;
+              final pet = match.pet;
 
-              // Datos del Adoptante
-              final adopter = match['Adopter'] ?? match['adopter'];
-              final pet = match['Pet'] ?? match['pet'];
-
-              final adopterName = adopter?['name'] ?? 'Adoptante';
-              final petName = pet?['name'] ?? 'Mascota';
-              final adopterId = adopter?['ID'] ?? adopter?['id'] ?? 0;
-
-              // --- NUEVO: Foto del Adoptante ---
-              final adopterPhoto = adopter?['photo_url'];
+              final adopterName = adopter?.name ?? 'Usuario Desconocido';
+              final adopterPhoto = adopter?.photoUrl;
+              final petName = pet?.name ?? 'Mascota';
 
               return Card(
-                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                elevation: 1,
+                margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 child: ListTile(
                   leading: CircleAvatar(
                     backgroundColor: Colors.purple[100],
-                    // Usamos ImageHelper para mostrar la foto real si existe
                     backgroundImage: ImageHelper.getProvider(adopterPhoto),
                     child: (adopterPhoto == null || adopterPhoto.isEmpty)
                         ? Text(
@@ -74,23 +79,46 @@ class _RescuerChatsScreenState extends State<RescuerChatsScreen> {
                           )
                         : null,
                   ),
-                  title: Text(adopterName),
-                  subtitle: Text("Interesado en $petName"),
+                  title: Text(
+                    adopterName,
+                    style: TextStyle(
+                      color: match.isAdopterLeft ? Colors.grey : Colors.black,
+                      decoration: match.isAdopterLeft
+                          ? TextDecoration.lineThrough
+                          : null,
+                    ),
+                  ),
+                  subtitle: Text(
+                    match.isAdopterLeft
+                        ? "El usuario abandonó el chat"
+                        : "Interesado en $petName",
+                    style: TextStyle(
+                      color: match.isAdopterLeft
+                          ? Colors.red[300]
+                          : Colors.grey[600],
+                      fontStyle: match.isAdopterLeft
+                          ? FontStyle.italic
+                          : FontStyle.normal,
+                    ),
+                  ),
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: () {
-                    if (adopterId == 0) return;
-
-                    Navigator.push(
+                  onTap: () async {
+                    // CAMBIO CLAVE: Esperamos el resultado de la navegación
+                    await Navigator.push(
                       context,
                       MaterialPageRoute(
                         builder: (_) => ChatScreen(
-                          matchId: match['id'],
+                          matchId: match.id,
                           peerName: adopterName,
-                          peerId: adopterId,
-                          peerPhotoUrl: adopterPhoto, // <--- Enviamos la foto
+                          peerId: match.adopterId,
+                          peerPhotoUrl: adopterPhoto,
+                          isPetDeleted: match.isPetDeleted,
+                          isPeerLeft: match.isAdopterLeft,
                         ),
                       ),
                     );
+                    // AL VOLVER, RECARGAMOS LA LISTA
+                    _loadChats();
                   },
                 ),
               );

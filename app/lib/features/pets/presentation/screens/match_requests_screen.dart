@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../data/matches_repository.dart';
+import '../../domain/match_model.dart'; // <--- Importamos el modelo Match
 import '../../../../core/utils/image_helper.dart';
-import '../../../user/domain/user_model.dart'; // <--- Importamos el modelo
-import '../../../user/presentation/screens/public_profile_screen.dart'; // <--- Importamos la pantalla
+import '../../../user/presentation/screens/public_profile_screen.dart';
 
 class MatchRequestsScreen extends StatefulWidget {
   const MatchRequestsScreen({super.key});
@@ -13,7 +13,8 @@ class MatchRequestsScreen extends StatefulWidget {
 }
 
 class _MatchRequestsScreenState extends State<MatchRequestsScreen> {
-  late Future<List<dynamic>> _requestsFuture;
+  // Cambiamos dynamic por Match
+  late Future<List<Match>> _requestsFuture;
 
   @override
   void initState() {
@@ -30,6 +31,7 @@ class _MatchRequestsScreenState extends State<MatchRequestsScreen> {
   Future<void> _respond(int matchId, bool accept) async {
     try {
       await context.read<MatchesRepository>().respondMatch(matchId, accept);
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(accept ? "¡Match Aceptado! 🎉" : "Solicitud rechazada"),
@@ -38,9 +40,10 @@ class _MatchRequestsScreenState extends State<MatchRequestsScreen> {
       );
       _loadRequests();
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("Error: $e")));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
+      );
     }
   }
 
@@ -48,7 +51,8 @@ class _MatchRequestsScreenState extends State<MatchRequestsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text("Solicitudes de Adopción")),
-      body: FutureBuilder<List<dynamic>>(
+      body: FutureBuilder<List<Match>>(
+        // Tipado fuerte
         future: _requestsFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
@@ -57,59 +61,73 @@ class _MatchRequestsScreenState extends State<MatchRequestsScreen> {
           if (snapshot.hasError) {
             return Center(child: Text("Error: ${snapshot.error}"));
           }
+
           final requests = snapshot.data ?? [];
 
           if (requests.isEmpty) {
             return const Center(
-              child: Text("No tienes solicitudes pendientes."),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.inbox, size: 60, color: Colors.grey),
+                  SizedBox(height: 16),
+                  Text(
+                    "No tienes solicitudes pendientes",
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                ],
+              ),
             );
           }
 
           return ListView.builder(
+            padding: const EdgeInsets.all(12),
             itemCount: requests.length,
             itemBuilder: (context, index) {
-              final req = requests[index];
-              // Extraer datos crudos
-              final adopterMap = req['adopter'];
-              final petName = req['pet']?['name'] ?? 'Mascota';
-              final matchId = req['id'];
+              final match = requests[index];
+              final adopter = match.adopter;
+              final pet = match.pet;
 
-              // Crear objeto User seguro
-              User? adopter;
-              if (adopterMap != null) {
-                adopter = User.fromJson(adopterMap);
-              }
+              // Datos seguros del adoptante
+              final adopterName = adopter?.name ?? 'Usuario Desconocido';
+              final petName = pet?.name ?? 'Mascota';
 
               return Card(
-                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                elevation: 3,
+                margin: const EdgeInsets.only(bottom: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
                 child: Column(
                   children: [
                     ListTile(
+                      contentPadding: const EdgeInsets.all(12),
                       leading: CircleAvatar(
+                        radius: 28,
+                        backgroundColor: Colors.purple[50],
                         backgroundImage: ImageHelper.getProvider(
                           adopter?.photoUrl,
                         ),
-                        child:
-                            adopter?.photoUrl == null ||
-                                adopter!.photoUrl.isEmpty
-                            ? const Icon(Icons.person)
+                        child: (adopter?.photoUrl == null)
+                            ? Text(
+                                adopterName.isNotEmpty
+                                    ? adopterName[0].toUpperCase()
+                                    : '?',
+                              )
                             : null,
                       ),
                       title: Text(
-                        "${adopter?.name ?? 'Usuario'} quiere adoptar a $petName",
+                        "$adopterName quiere adoptar a $petName",
+                        style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
-                      subtitle: const Text(
-                        "Toca para ver perfil completo",
-                        style: TextStyle(color: Colors.blue),
-                      ),
+                      subtitle: const Text("Toca para ver perfil completo"),
                       onTap: () {
-                        // --- AQUÍ LA MAGIA: Navegar al perfil ---
                         if (adopter != null) {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (context) =>
-                                  PublicProfileScreen(user: adopter!),
+                              builder: (_) =>
+                                  PublicProfileScreen(user: adopter),
                             ),
                           );
                         } else {
@@ -123,24 +141,34 @@ class _MatchRequestsScreenState extends State<MatchRequestsScreen> {
                         }
                       },
                     ),
-                    ButtonBar(
-                      alignment: MainAxisAlignment.end,
-                      children: [
-                        TextButton(
-                          onPressed: () => _respond(matchId, false),
-                          child: const Text(
-                            "RECHAZAR",
-                            style: TextStyle(color: Colors.red),
+
+                    // Botones de Acción
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton(
+                            onPressed: () => _respond(match.id, false),
+                            child: const Text(
+                              "RECHAZAR",
+                              style: TextStyle(color: Colors.red),
+                            ),
                           ),
-                        ),
-                        ElevatedButton(
-                          onPressed: () => _respond(matchId, true),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.green,
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            onPressed: () => _respond(match.id, true),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green,
+                              foregroundColor: Colors.white,
+                            ),
+                            child: const Text("ACEPTAR"),
                           ),
-                          child: const Text("ACEPTAR"),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ],
                 ),
