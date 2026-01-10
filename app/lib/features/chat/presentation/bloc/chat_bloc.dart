@@ -11,17 +11,18 @@ import '../../../pets/data/matches_repository.dart';
 // --- EVENTOS ---
 abstract class ChatEvent extends Equatable {
   @override
-  // CORRECCIÓN: Usar Object? aquí también
   List<Object?> get props => [];
 }
 
 class InitChat extends ChatEvent {
   final int matchId;
   final String? initialStatus;
-  InitChat(this.matchId, {this.initialStatus});
+  final bool isRescuer; // <--- NUEVO CAMPO
+
+  InitChat(this.matchId, {this.initialStatus, this.isRescuer = false});
 
   @override
-  List<Object?> get props => [matchId, initialStatus];
+  List<Object?> get props => [matchId, initialStatus, isRescuer];
 }
 
 class SendMessageEvent extends ChatEvent {
@@ -47,7 +48,6 @@ class _ReceiveMessageEvent extends ChatEvent {
 // --- ESTADOS ---
 abstract class ChatState extends Equatable {
   @override
-  // CORRECCIÓN CRÍTICA: Cambiar List<Object> por List<Object?>
   List<Object?> get props => [];
 }
 
@@ -71,7 +71,6 @@ class ChatLoaded extends ChatState {
   });
 
   @override
-  // Ahora esto coincide perfectamente con el padre
   List<Object?> get props => [
     messages,
     matchId,
@@ -141,12 +140,17 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
 
         if (event.initialStatus != null && event.initialStatus != 'accepted') {
           isLocked = true;
-          if (event.initialStatus == 'pet_deleted')
-            reason = 'La mascota fue eliminada.';
-          else if (event.initialStatus == 'adopter_left')
+          // Lógica personalizada de mensajes de bloqueo
+          if (event.initialStatus == 'pet_deleted') {
+            reason = event.isRescuer
+                ? 'Has eliminado la publicación de esta mascota.'
+                : 'La publicación de esta mascota ha sido eliminada.';
+          } else if (event.initialStatus == 'adopter_left')
             reason = 'El adoptante abandonó el chat.';
           else if (event.initialStatus == 'rescuer_left')
             reason = 'El rescatista abandonó el chat.';
+          else if (event.initialStatus == 'peer_left') // Fallback genérico
+            reason = 'El otro usuario abandonó el chat.';
           else
             reason = 'Chat finalizado.';
         }

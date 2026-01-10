@@ -21,7 +21,6 @@ class _RescuerChatsScreenState extends State<RescuerChatsScreen> {
     _loadChats();
   }
 
-  // Método extraído para poder llamarlo de nuevo
   void _loadChats() {
     setState(() {
       _chatsFuture = context.read<MatchesRepository>().getRescuerChats();
@@ -82,28 +81,45 @@ class _RescuerChatsScreenState extends State<RescuerChatsScreen> {
                   title: Text(
                     adopterName,
                     style: TextStyle(
-                      color: match.isAdopterLeft ? Colors.grey : Colors.black,
-                      decoration: match.isAdopterLeft
+                      // Tachado si adoptante se fue O si la mascota fue borrada
+                      color: (match.isAdopterLeft || match.isPetDeleted)
+                          ? Colors.grey
+                          : Colors.black,
+                      decoration: (match.isAdopterLeft || match.isPetDeleted)
                           ? TextDecoration.lineThrough
                           : null,
                     ),
                   ),
-                  subtitle: Text(
-                    match.isAdopterLeft
-                        ? "El usuario abandonó el chat"
-                        : "Interesado en $petName",
-                    style: TextStyle(
-                      color: match.isAdopterLeft
-                          ? Colors.red[300]
-                          : Colors.grey[600],
-                      fontStyle: match.isAdopterLeft
-                          ? FontStyle.italic
-                          : FontStyle.normal,
-                    ),
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Subtítulo con lógica de prioridad
+                      if (match.isPetDeleted)
+                        const Text(
+                          "Has eliminado esta publicación",
+                          style: TextStyle(
+                            color: Colors.red,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        )
+                      else if (match.isAdopterLeft)
+                        const Text(
+                          "El usuario abandonó el chat",
+                          style: TextStyle(
+                            color: Colors.redAccent,
+                            fontStyle: FontStyle.italic,
+                          ),
+                        )
+                      else
+                        Text(
+                          "Interesado en $petName",
+                          style: TextStyle(color: Colors.grey[600]),
+                        ),
+                    ],
                   ),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () async {
-                    // CAMBIO CLAVE: Esperamos el resultado de la navegación
                     await Navigator.push(
                       context,
                       MaterialPageRoute(
@@ -114,10 +130,11 @@ class _RescuerChatsScreenState extends State<RescuerChatsScreen> {
                           peerPhotoUrl: adopterPhoto,
                           isPetDeleted: match.isPetDeleted,
                           isPeerLeft: match.isAdopterLeft,
+                          isRescuer:
+                              true, // <--- CLAVE: Indicamos que soy el rescatista
                         ),
                       ),
                     );
-                    // AL VOLVER, RECARGAMOS LA LISTA
                     _loadChats();
                   },
                 ),

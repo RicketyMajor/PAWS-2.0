@@ -6,7 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 // Imports de Capa de Datos y Dominio
 import '../../data/chat_repository.dart';
 import '../../domain/message_model.dart';
-import '../../../pets/data/matches_repository.dart'; // <--- NUEVO IMPORT
+import '../../../pets/data/matches_repository.dart';
 
 // Imports de Presentación (Blocs y Widgets)
 import '../bloc/chat_bloc.dart';
@@ -18,9 +18,10 @@ class ChatScreen extends StatefulWidget {
   final int peerId;
   final String? peerPhotoUrl;
 
-  // --- FLAGS DE ESTADO (Para bloqueo inicial) ---
+  // --- FLAGS DE ESTADO ---
   final bool isPetDeleted;
   final bool isPeerLeft;
+  final bool isRescuer; // <--- NUEVO PARAMETRO
 
   const ChatScreen({
     super.key,
@@ -30,6 +31,7 @@ class ChatScreen extends StatefulWidget {
     this.peerPhotoUrl,
     this.isPetDeleted = false,
     this.isPeerLeft = false,
+    this.isRescuer = false, // Por defecto falso (para adoptantes)
   });
 
   @override
@@ -60,19 +62,32 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Determinamos el estado inicial para pasarlo al BLoC
+    // Determinamos el estado inicial
     String? initialStatus;
     if (widget.isPetDeleted)
       initialStatus = 'pet_deleted';
     else if (widget.isPeerLeft)
-      initialStatus = 'peer_left'; // El BLoC interpretará esto
+      initialStatus = widget.isRescuer
+          ? 'adopter_left'
+          : 'rescuer_left'; // Ajustamos según rol si es necesario, o usamos peer_left genérico
+
+    // Mejor usamos el genérico 'peer_left' si no queremos ser tan específicos aquí,
+    // pero el Bloc ya maneja 'adopter_left' y 'rescuer_left' si se pasan desde el match model.
+    // Para simplificar y dado que pasamos flags booleanos:
+    if (widget.isPeerLeft) initialStatus = 'peer_left';
 
     return BlocProvider(
-      create: (context) => ChatBloc(
-        chatRepository: context.read<ChatRepository>(),
-        matchesRepository: context
-            .read<MatchesRepository>(), // <--- INYECCIÓN DE REPO
-      )..add(InitChat(widget.matchId, initialStatus: initialStatus)),
+      create: (context) =>
+          ChatBloc(
+            chatRepository: context.read<ChatRepository>(),
+            matchesRepository: context.read<MatchesRepository>(),
+          )..add(
+            InitChat(
+              widget.matchId,
+              initialStatus: initialStatus,
+              isRescuer: widget.isRescuer, // <--- PASAMOS EL ROL
+            ),
+          ),
 
       child: Scaffold(
         appBar: AppBar(
@@ -89,7 +104,11 @@ class _ChatScreenState extends State<ChatScreen> {
                 backgroundColor: Colors.grey[200],
                 backgroundImage: ImageHelper.getProvider(widget.peerPhotoUrl),
                 child: (widget.peerPhotoUrl == null)
-                    ? Text(widget.peerName[0].toUpperCase())
+                    ? Text(
+                        widget.peerName.isNotEmpty
+                            ? widget.peerName[0].toUpperCase()
+                            : '?',
+                      )
                     : null,
               ),
               const SizedBox(width: 10),
@@ -107,13 +126,9 @@ class _ChatScreenState extends State<ChatScreen> {
             ],
           ),
           actions: [
-            // --- MENÚ DE OPCIONES ---
             BlocBuilder<ChatBloc, ChatState>(
               builder: (context, state) {
-                // Verificamos si está bloqueado para cambiar el texto,
-                // pero YA NO ocultamos el botón.
                 bool isLocked = (state is ChatLoaded && state.isLocked);
-
                 return PopupMenuButton<String>(
                   icon: const Icon(Icons.more_vert, color: Colors.grey),
                   onSelected: (value) {
@@ -123,12 +138,10 @@ class _ChatScreenState extends State<ChatScreen> {
                   },
                   itemBuilder: (BuildContext context) {
                     return [
-                      // La opción aparece SIEMPRE
                       PopupMenuItem(
                         value: 'unmatch',
                         child: Row(
                           children: [
-                            // Icono y texto cambian según el estado para dar mejor contexto
                             Icon(
                               isLocked ? Icons.delete_outline : Icons.block,
                               color: Colors.red,
@@ -153,7 +166,6 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
         body: Column(
           children: [
-            // --- LISTA DE MENSAJES ---
             Expanded(
               child: BlocBuilder<ChatBloc, ChatState>(
                 builder: (context, state) {
@@ -166,12 +178,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     return ListView.builder(
                       controller: _scrollController,
                       reverse:
-                          true, // Importante: Mensajes nuevos abajo (si la lista viene ordenada desc)
-                      // Ojo: Si tu ChatBloc añade al final, reverse debe ser false con controlador al final.
-                      // Ajusta esto según tu lógica actual de ordenamiento.
-                      // Asumiré orden cronológico (index 0 = antiguo) -> reverse: false + jumpToBottom
-                      // O si usas reverse: true (index 0 = nuevo).
-                      // MANTENDRÉ TU LOGICA ORIGINAL DE LISTVIEW SI LA TIENES DEFINIDA
+                          true, // Asumiendo mensajes nuevos al final y orden invertido visualmente o desde backend
                       itemCount: state.messages.length,
                       itemBuilder: (context, index) {
                         final msg = state.messages[index];
@@ -186,26 +193,13 @@ class _ChatScreenState extends State<ChatScreen> {
                 },
               ),
             ),
-
-            // --- BARRA DE INPUT O MENSAJE DE BLOQUEO ---
             BlocConsumer<ChatBloc, ChatState>(
-              listener: (context, state) {
-                // Escuchar si se bloqueó para hacer scroll o mostrar aviso
-                if (state is ChatLoaded && state.messages.isNotEmpty) {
-                  // Scroll al fondo al recibir mensaje (opcional)
-                  // _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-                }
-              },
+              listener: (context, state) {},
               builder: (context, state) {
-                // 1. Si el chat está bloqueado, mostrar aviso
                 if (state is ChatLoaded && state.isLocked) {
                   return _buildLockedWidget(state.lockReason);
                 }
-
-                // 2. Si está cargando o error, no mostrar input
                 if (state is! ChatLoaded) return const SizedBox.shrink();
-
-                // 3. Si está activo, mostrar Input normal
                 return _buildInputArea(context);
               },
             ),
@@ -214,8 +208,6 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
   }
-
-  // --- WIDGETS AUXILIARES ---
 
   Widget _buildLockedWidget(String reason) {
     return Container(
@@ -262,13 +254,6 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
         child: Row(
           children: [
-            // Botón de adjuntar (Opcional, si lo tenías)
-            IconButton(
-              icon: const Icon(Icons.add_circle_outline, color: Colors.grey),
-              onPressed: () {},
-            ),
-
-            // Campo de Texto
             Expanded(
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -288,10 +273,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
               ),
             ),
-
             const SizedBox(width: 8),
-
-            // Botón Enviar
             CircleAvatar(
               backgroundColor: const Color(0xFFE91E63),
               radius: 22,
@@ -390,7 +372,6 @@ class _ChatScreenState extends State<ChatScreen> {
           TextButton(
             onPressed: () {
               Navigator.pop(dialogContext);
-              // Enviamos el evento para borrarlo/salir
               context.read<ChatBloc>().add(UnmatchChatEvent());
             },
             child: Text(
@@ -404,7 +385,6 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   String _formatTime(DateTime dt) {
-    // Helper simple para hora. Puedes usar intl si lo prefieres.
     return "${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}";
   }
 }

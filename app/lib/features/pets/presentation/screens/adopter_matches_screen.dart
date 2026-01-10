@@ -19,7 +19,6 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
   final Dio _dio = Dio();
   final _storage = const FlutterSecureStorage();
 
-  // Ahora son Listas de Match, no dynamic
   List<Match> _acceptedMatches = [];
   List<Match> _pendingMatches = [];
   bool _isLoading = true;
@@ -38,9 +37,6 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
     try {
       final token = await _storage.read(key: 'jwt_token');
       final options = Options(headers: {'Authorization': 'Bearer $token'});
-
-      // Hacemos las peticiones por separado para depurar mejor
-      // y usamos try-catch individual para que un error en Pendientes no oculte los Activos
 
       // 1. Cargar Chats Activos
       try {
@@ -65,10 +61,6 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
           '${ApiConstants.baseUrl}/matches/adopter?status=pending',
           options: options,
         );
-
-        // DEBUG: Ver qué llega del backend
-        print("Respuesta Pendientes: ${resPending.data}");
-
         if (mounted) {
           setState(() {
             _pendingMatches = (resPending.data as List)
@@ -126,7 +118,6 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
         final match = _acceptedMatches[index];
         final pet = match.pet;
 
-        // Datos del Peer (En este caso, el dueño de la mascota/Rescatista)
         final rescuerName = pet?.ownerName ?? 'Rescatista';
         final rescuerPhoto = pet?.ownerPhotoUrl;
 
@@ -137,40 +128,44 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
             contentPadding: const EdgeInsets.all(12),
             leading: CircleAvatar(
               radius: 28,
-              backgroundImage: ImageHelper.getProvider(
-                pet?.imageUrl,
-              ), // Mostramos foto mascota
+              backgroundImage: ImageHelper.getProvider(pet?.imageUrl),
+              backgroundColor: Colors.grey[200],
             ),
             title: Text(
               pet?.name ?? 'Mascota',
               style: TextStyle(
-                // Tachado si la mascota se borró
+                // --- VISUAL: TACHADO SI ESTÁ BORRADO ---
                 decoration: match.isPetDeleted
                     ? TextDecoration.lineThrough
                     : null,
                 color: match.isPetDeleted ? Colors.grey : Colors.black,
+                fontWeight: FontWeight.bold,
               ),
             ),
             subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text("Rescatista: $rescuerName"),
+                // --- VISUAL: AVISO DE ESTADO ---
                 if (match.isPetDeleted)
                   const Text(
-                    "Publicación eliminada",
-                    style: TextStyle(color: Colors.red, fontSize: 12),
+                    "⚠️ Publicación eliminada",
+                    style: TextStyle(
+                      color: Colors.red,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 if (match.isRescuerLeft)
                   const Text(
-                    "Rescatista abandonó",
-                    style: TextStyle(color: Colors.red, fontSize: 12),
+                    "⚠️ Rescatista abandonó el chat",
+                    style: TextStyle(color: Colors.orange, fontSize: 12),
                   ),
               ],
             ),
-            trailing: const Icon(Icons.message, color: Color(0xFFE91E63)),
+            trailing: const Icon(Icons.chevron_right, color: Colors.grey),
             onTap: () async {
-              // <--- 1. Agregamos async
-              // 2. Esperamos (await) a que el usuario regrese del chat
+              // Navegación con espera para recargar al volver
               await Navigator.push(
                 context,
                 MaterialPageRoute(
@@ -179,12 +174,13 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
                     peerName: rescuerName,
                     peerId: pet?.ownerId ?? 0,
                     peerPhotoUrl: rescuerPhoto,
+                    // Pasamos los flags de estado
                     isPetDeleted: match.isPetDeleted,
                     isPeerLeft: match.isRescuerLeft,
                   ),
                 ),
               );
-              // 3. Al volver, recargamos la lista automáticamente
+              // Recargar lista al volver
               _loadAllData();
             },
           ),
