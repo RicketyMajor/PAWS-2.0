@@ -5,12 +5,10 @@ class Match {
   final int id;
   final int adopterId;
   final int petId;
-  final String
-  status; // 'pending', 'accepted', 'rejected', 'adopter_left', 'rescuer_left', 'pet_deleted'
+  final String status;
   final String? message;
   final DateTime? createdAt;
 
-  // Relaciones (pueden venir null dependiendo del endpoint)
   final Pet? pet;
   final User? adopter;
 
@@ -27,40 +25,29 @@ class Match {
 
   factory Match.fromJson(Map<String, dynamic> json) {
     return Match(
-      id: json['id'] is int ? json['id'] : int.parse(json['id'].toString()),
-      adopterId: json['adopter_id'] is int
-          ? json['adopter_id']
-          : int.parse(json['adopter_id'].toString()),
-      petId: json['pet_id'] is int
-          ? json['pet_id']
-          : int.parse(json['pet_id'].toString()),
+      // Parseo seguro de enteros para evitar crash con "null"
+      id: _parseInt(json['id']),
+      adopterId: _parseInt(json['adopter_id']),
+      petId: _parseInt(json['pet_id']),
+
       status: json['status'] ?? 'pending',
       message: json['message'],
       createdAt: json['created_at'] != null
           ? DateTime.tryParse(json['created_at'])
           : null,
 
-      // Mapeo seguro de objetos anidados
       pet: json['pet'] != null ? Pet.fromJson(json['pet']) : null,
-      // Nota: Asegúrate de tener un User.fromJson en tu user_model.dart,
-      // si no, puedes dejar esto como null o mapearlo manualmente por ahora.
       adopter: json['adopter'] != null ? User.fromJson(json['adopter']) : null,
     );
   }
 
-  // --- GETTERS INTELIGENTES PARA LA UI ---
-
-  /// Indica si el chat está activo y se puede escribir.
+  // --- Helpers de Estado ---
   bool get isChatActive => status == 'accepted';
-
-  /// Indica si la mascota fue eliminada.
   bool get isPetDeleted => status == 'pet_deleted';
-
-  /// Indica si el otro usuario abandonó (lógica depende de quién soy yo, se valida en UI/Bloc).
   bool get isAdopterLeft => status == 'adopter_left';
   bool get isRescuerLeft => status == 'rescuer_left';
+  bool get isCancelled => status == 'cancelled';
 
-  /// Mensaje amigable para mostrar por qué está bloqueado
   String get blockReason {
     switch (status) {
       case 'pet_deleted':
@@ -69,12 +56,24 @@ class Match {
         return 'El adoptante ha abandonado el chat.';
       case 'rescuer_left':
         return 'El rescatista ha abandonado el chat.';
+      case 'cancelled':
+        return 'Chat finalizado.';
       case 'rejected':
-        return 'Esta solicitud fue rechazada.';
-      case 'pending':
-        return 'Solicitud pendiente de aceptación.';
+        return 'Solicitud rechazada.';
       default:
         return '';
     }
+  }
+
+  // --- Helper Privado Seguro ---
+  static int _parseInt(dynamic value) {
+    if (value == null) return 0;
+    if (value is int) return value;
+    if (value is double) return value.toInt();
+    if (value is String) {
+      if (value.toLowerCase() == 'null' || value.isEmpty) return 0;
+      return int.tryParse(value) ?? 0;
+    }
+    return 0;
   }
 }
