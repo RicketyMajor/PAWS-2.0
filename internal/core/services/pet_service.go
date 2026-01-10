@@ -14,9 +14,6 @@ func NewPetService(db *gorm.DB) *PetService {
 	return &PetService{db: db}
 }
 
-// Create actualizada (Mantenemos la versión con Input DTO que hicimos antes)
-// Si no tienes este struct definido en tu archivo actual, asegúrate de mantener tu versión de Create
-// o usar la que definimos en el paso anterior.
 type CreatePetInput struct {
 	Name        string
 	Type        string
@@ -53,60 +50,49 @@ func (s *PetService) Create(input CreatePetInput) (*domain.Pet, error) {
 		Latitude:      input.Latitude,
 		Longitude:     input.Longitude,
 		Address:       input.Address,
-		PhotoURL:      mainPhoto,
-		Status:        domain.StatusAvailable,
 		UserID:        input.UserID,
 		IsVaccinated:  input.IsVaccinated,
 		IsSterilized:  input.IsSterilized,
 		IsDewormed:    input.IsDewormed,
 		SpecialNeeds:  input.SpecialNeeds,
-        RequiresYard:  input.RequiresYard,
-        GoodWithKids:  input.GoodWithKids,
-        GoodWithDogs:  input.GoodWithDogs,
-        EnergyLevel:   input.EnergyLevel,
+		RequiresYard:  input.RequiresYard,
+		GoodWithKids:  input.GoodWithKids,
+		GoodWithDogs:  input.GoodWithDogs,
+		EnergyLevel:   input.EnergyLevel,
+        // Usamos campos compatibles
+		PhotoURL:      mainPhoto, 
+		Status:        domain.StatusAvailable,
 	}
 
-	err := s.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(&newPet).Error; err != nil {
-			return err
-		}
-        if len(input.ImageURLs) > 0 {
-            var images []domain.PetImage
-            for i, url := range input.ImageURLs {
-                images = append(images, domain.PetImage{
-                    PetID:   newPet.ID,
-                    URL:     url,
-                    IsCover: (i == 0),
-                })
-            }
-            if err := tx.Create(&images).Error; err != nil {
-                return err
-            }
-        }
-		return nil
-	})
-
-	if err != nil {
+	if err := s.db.Create(&newPet).Error; err != nil {
 		return nil, err
 	}
 
-    // Preload al devolver la creada
-	s.db.Preload("User").Preload("Images").First(&newPet, newPet.ID)
+    // Guardar imágenes en tabla relacionada
+    if len(input.ImageURLs) > 0 {
+        var images []domain.PetImage
+        for i, url := range input.ImageURLs {
+            images = append(images, domain.PetImage{
+                PetID:   newPet.ID,
+                URL:     url,
+                IsCover: (i == 0),
+            })
+        }
+        s.db.Create(&images)
+    }
+
 	return &newPet, nil
 }
 
-// GetAll devuelve todas las mascotas disponibles
 func (s *PetService) GetAll() ([]domain.Pet, error) {
 	var pets []domain.Pet
-	// CORRECCIÓN: Agregamos .Preload("Images")
-	err := s.db.Preload("User").Preload("Images").Where("status = ?", domain.StatusAvailable).Find(&pets).Error
+	err := s.db.Where("status = ?", domain.StatusAvailable).Find(&pets).Error
 	return pets, err
 }
 
-// SearchNearby busca mascotas en un radio
-func (s *PetService) SearchNearby(lat, lng float64, distanceKM float64) ([]domain.Pet, error) {
+func (s *PetService) GetNearby(lat, lng, dist float64) ([]domain.Pet, error) {
 	var pets []domain.Pet
-	
+	// Fórmula Haversine simple en SQL
 	query := `
 		SELECT *, (
 			6371 * acos(
@@ -115,17 +101,15 @@ func (s *PetService) SearchNearby(lat, lng float64, distanceKM float64) ([]domai
 			)
 		) AS distance 
 		FROM pets 
-		WHERE status = ? 
+		WHERE status = ? AND deleted_at IS NULL 
 		ORDER BY distance ASC
 	`
 	
-	// Scan NO hace Preload automáticamente porque es SQL crudo
-	err := s.db.Raw(query, lat, lng, lat, domain.PetAvailable).Scan(&pets).Error
+	err := s.db.Raw(query, lat, lng, lat, domain.StatusAvailable).Scan(&pets).Error
 	if err != nil {
 		return nil, err
 	}
 	
-	// CORRECCIÓN MANUAL: Cargar relaciones para cada resultado
 	for i := range pets {
 		s.db.Model(&pets[i]).Association("Images").Find(&pets[i].Images)
 		s.db.Model(&pets[i]).Association("User").Find(&pets[i].User)
@@ -136,11 +120,11 @@ func (s *PetService) SearchNearby(lat, lng float64, distanceKM float64) ([]domai
 
 func (s *PetService) GetByID(id uint) (*domain.Pet, error) {
 	var pet domain.Pet
-	// CORRECCIÓN: Agregamos .Preload("Images")
 	err := s.db.Preload("User").Preload("Images").First(&pet, id).Error
 	return &pet, err
 }
 
+// Delete elimina la mascota y actualiza los estados de los matches
 func (s *PetService) Delete(id uint, ownerID uint) error {
 	// 1. Verificar propiedad
 	var pet domain.Pet
@@ -149,15 +133,16 @@ func (s *PetService) Delete(id uint, ownerID uint) error {
 	}
 
 	return s.db.Transaction(func(tx *gorm.DB) error {
-		// A. Rechazar solicitudes pendientes (Ya lo tenías, mantenlo)
+		// A. Rechazar solicitudes PENDIENTES
+		// (Para que desaparezcan de la lista de pendientes del adoptante)
 		if err := tx.Model(&domain.Match{}).
 			Where("pet_id = ? AND status = ?", id, domain.MatchPending).
 			Update("status", domain.MatchRejected).Error; err != nil {
 			return err
 		}
 
-		// B. NUEVO: Bloquear chats activos (Accepted -> PetDeleted)
-		// Esto hará que el ChatService impida nuevos mensajes
+		// B. NUEVO: Bloquear chats ACTIVOS (Accepted -> PetDeleted)
+		// (Para que aparezcan con aviso en la lista de chats del adoptante)
 		if err := tx.Model(&domain.Match{}).
 			Where("pet_id = ? AND status = ?", id, domain.MatchAccepted).
 			Update("status", domain.MatchPetDeleted).Error; err != nil {

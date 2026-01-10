@@ -66,7 +66,16 @@ func (h *PetHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "no auth"})
 		return
 	}
-	userID := uint(userIDFloat.(float64))
+	
+	// Conversión segura de ID (Mejorada para evitar pánicos)
+	var userID uint
+	if val, ok := userIDFloat.(float64); ok {
+		userID = uint(val)
+	} else if val, ok := userIDFloat.(uint); ok {
+		userID = val
+	} else {
+		userID = userIDFloat.(uint) // Fallback
+	}
 
 	// 2. Bind de campos de texto
 	var form CreatePetForm
@@ -174,9 +183,10 @@ func (h *PetHandler) GetNearby(c *gin.Context) {
 		dist = 10.0
 	}
 
-	pets, err := h.service.SearchNearby(lat, lng, dist)
+	// CORRECCIÓN PRINCIPAL: Cambiado de SearchNearby a GetNearby
+	pets, err := h.service.GetNearby(lat, lng, dist)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error calculando cercanía"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error calculando cercanía: " + err.Error()})
 		return
 	}
 
@@ -212,6 +222,8 @@ func (h *PetHandler) Delete(c *gin.Context) {
 	var userID uint
 	if val, ok := userIDVal.(float64); ok {
 		userID = uint(val)
+	} else if val, ok := userIDVal.(uint); ok {
+		userID = val
 	} else {
 		userID = userIDVal.(uint)
 	}
