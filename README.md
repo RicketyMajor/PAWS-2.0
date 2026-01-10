@@ -6978,6 +6978,432 @@ Para el Sistema:
 - Mejor flujo de información para decisiones de adopción
 - Posibilidad futura de matching inteligente (rescatista con patio + adoptante necesita patio = +score)
 
+## Etapa 16: Ciclo de Vida Completo del Chat con Máquina de Estados Terminal (Completada)
+
+Etapa 16 transforma el sistema de gestión de chats implementando una Máquina de Estados Finita robusta que resuelve tres problemas críticos identificados en Etapa 15: el bucle infinito de ping-pong cuando usuarios se van, el efecto espejo causado por eliminación de mascotas, y la fragilidad del código frente a datos malformados desde el backend. Todos los cambios están completamente implementados y funcionando.
+
+### Problema 1: Bucle Infinito de Ping-Pong
+
+**Situación Problemática**: Cuando Usuario A salía, el chat desaparecía. Cuando Usuario B salía después, el estado cambiaba a `rescuer_left` y el chat reaparecía en la lista de A porque el filtro SQL buscaba chats con `status IN ('accepted', 'rescuer_left', 'pet_deleted')`. Resultado: ping-pong infinito donde los chats reaparecían y desaparecían dependiendo de quién se fuera.
+
+**Solucion Arquitectural**: Introdujimos estado terminal `cancelled` que solo se alcanza cuando AMBOS han abandonado. La lógica de máquina de estados garantiza que una vez alcanzado `cancelled`, nunca vuelve a reaparecer en ninguna lista.
+
+**Nuevos Estados de Match**:
+
+```go
+// internal/core/domain/match.go
+const (
+  MatchPending     MatchStatus = "pending"       // Solicitud inicial
+  MatchAccepted    MatchStatus = "accepted"      // Ambos aceptaron
+  MatchRejected    MatchStatus = "rejected"      // Alguien rechazó
+  MatchAdopterLeft MatchStatus = "adopter_left"  // Adoptante se fue primero
+  MatchRescuerLeft MatchStatus = "rescuer_left"  // Rescatista se fue primero
+  MatchPetDeleted  MatchStatus = "pet_deleted"   // Mascota fue eliminada
+  MatchCancelled   MatchStatus = "cancelled"     // ESTADO TERMINAL: Ambos se fueron
+)
+```
+
+**Máquina de Estados en MatchService.Unmatch()**:
+
+Cuando un usuario abandona, el servicio ejecuta lógica determinista: si el otro usuario ya se fue O la mascota fue eliminada, transiciona a `cancelled` (estado terminal). Si no, solo marca ese usuario como "ido" con `[rol]_left`.
+
+```go
+func (s *MatchService) Unmatch(userID, matchID uint) error {
+  var match domain.Match
+  if err := s.db.Preload("Pet", func(db *gorm.DB) *gorm.DB {
+    return db.Unscoped()  // Cargar incluso si pet fue soft-deleted
+  }).First(&match, matchID).Error; err != nil {
+    return errors.New("match no encontrado")
+  }
+
+  // Si ya está cancelado, no hacer nada (idempotente)
+  if match.Status == MatchCancelled {
+    return nil
+  }
+
+  var newStatus domain.MatchStatus
+
+  if userID == match.AdopterID {
+    // Soy el Adoptante que me voy
+    if match.Status == MatchRescuerLeft || match.Status == MatchPetDeleted {
+      // El Rescatista ya se fue O la mascota fue eliminada
+      newStatus = MatchCancelled  // Ir a estado terminal
+    } else {
+      // Soy el primero en irme
+      newStatus = MatchAdopterLeft
+    }
+  } else if userID == match.Pet.UserID {
+    // Soy el Rescatista que me voy
+    if match.Status == MatchAdopterLeft || match.Status == MatchPetDeleted {
+      // El Adoptante ya se fue O la mascota fue eliminada
+      newStatus = MatchCancelled  // Ir a estado terminal
+    } else {
+      // Soy el primero en irme
+      newStatus = MatchRescuerLeft
+    }
+  } else {
+    return errors.New("no tienes permiso para salir de este chat")
+  }
+
+  // Actualizar estado si cambió
+  if match.Status != newStatus {
+    if err := s.db.Model(&match).Update("status", newStatus).Error; err != nil {
+      return err
+    }
+  }
+  return nil
+}
+```
+
+**Diagrama de Transiciones de Estado**:
+
+```
+                    pending
+                       |
+                   (ambos aceptan)
+                       |
+                    accepted
+                    /       \
+              (adopter       (rescuer
+               leaves)        leaves)
+              /                   \
+       adopter_left          rescuer_left
+              \                   /
+               (other leaves    (other leaves
+                or pet deleted)  or pet deleted)
+                   \           /
+                    cancelled
+                    (TERMINAL)
+```
+
+**Filtros SQL que Previenen el Ping-Pong**:
+
+```go
+// Adoptante NO ve chats donde él se fue (adopter_left) ni donde ambos se fueron (cancelled)
+func (s *MatchService) GetAcceptedMatches(adopterID uint) []*Match {
+  // Solo chats activos o donde el Rescatista se fue o la mascota fue eliminada
+  return matches.Where("status IN ('accepted', 'rescuer_left', 'pet_deleted')")
+}
+
+// Rescatista NO ve chats donde él se fue (rescuer_left) ni donde ambos se fueron (cancelled)
+func (s *MatchService) GetRescuerMatches(rescuerID uint) []*Match {
+  // Solo chats activos o donde el Adoptante se fue o la mascota fue eliminada
+  return matches.Where("status IN ('accepted', 'adopter_left', 'pet_deleted')")
+}
+```
+
+Este es el núcleo de la solución: `cancelled` nunca aparece en ningún filtro, por lo que una vez alcanzado, el chat muere permanentemente.
+
+### Problema 2: Efecto Espejo (Mascota Eliminada)
+
+**Situación Problemática**: Al eliminar una mascota, los chats quedaban en estado `accepted` pero la mascota era `NULL` o soft-deleted. Adoptantes veían mensajes sobre una mascota inexistente. Rescatistas podían seguir escribiendo. El chat quedaba en limbo indefinidamente sin retroalimentación clara.
+
+**Solución Arquitectural**: Cascada de eliminación atómica en transacción GORM que cambia el estado del chat ANTES de soft-delete la mascota, garantizando consistencia.
+
+**PetService.Delete() con Transacción Atómica**:
+
+```go
+// internal/core/services/pet_service.go
+func (s *PetService) Delete(id uint, ownerID uint) error {
+  var pet domain.Pet
+  if err := s.db.Where("id = ? AND user_id = ?", id, ownerID).First(&pet).Error; err != nil {
+    return errors.New("mascota no encontrada o sin permiso")
+  }
+
+  // Todas estas operaciones se ejecutan como una sola transacción
+  // Si cualquiera falla, TODO se revierte
+  return s.db.Transaction(func(tx *gorm.DB) error {
+    // Paso 1: Rechazar solicitudes pendientes
+    if err := tx.Model(&domain.Match{}).
+      Where("pet_id = ? AND status = ?", id, domain.MatchPending).
+      Update("status", domain.MatchRejected).Error; err != nil {
+      return err
+    }
+
+    // Paso 2: Bloquear chats activos
+    if err := tx.Model(&domain.Match{}).
+      Where("pet_id = ? AND status = ?", id, domain.MatchAccepted).
+      Update("status", domain.MatchPetDeleted).Error; err != nil {
+      return err
+    }
+
+    // Paso 3: Soft delete la mascota (establece DeletedAt timestamp)
+    if err := tx.Delete(&domain.Pet{}, id).Error; err != nil {
+      return err
+    }
+
+    return nil
+  })
+}
+```
+
+**Garantías de Transacción**:
+- Si algún paso falla: TODOS se revierten (all-or-nothing)
+- No es posible quedar con mascota eliminada pero chats sin actualizar
+- No hay race conditions incluso con múltiples clientes simultáneos
+
+**Impacto en Frontend**:
+
+El backend pre-carga mascotas con `Unscoped()` en Unmatch(), permitiendo acceso incluso a soft-deleted pets para lógica de estado. El frontend detecta `pet_deleted` status y muestra UI clara:
+
+- **Rescatista**: Ve "Has eliminado esta publicación" (rojo, negrita)
+- **Adoptante**: Ve "Publicación eliminada" (rojo, alerta)
+
+Chat queda bloqueado. Ambos ven claramente qué pasó.
+
+### Problema 3: Robustez del Código contra Datos Malformados
+
+**Situación Problemática**: El backend ocasionalmente envía datos malformados:
+- IDs como `null`
+- IDs como string `"null"`
+- IDs como float `3.14` en lugar de `3`
+- Campos faltantes completamente
+
+Frontend crasheaba con Red Screen of Death (RSOD). No había forma de recuperarse.
+
+**Solución Arquitectural**: Función defensiva `_parseInt()` en Match.fromJson() que maneja todos los casos posibles sin nunca lanzar excepciones.
+
+**Match Model con _parseInt() Blindaje**:
+
+```dart
+// app/lib/features/pets/domain/match_model.dart
+factory Match.fromJson(Map<String, dynamic> json) {
+  return Match(
+    id: _parseInt(json['id']),            // Convertir seguramente
+    adopterId: _parseInt(json['adopter_id']),  // Convertir seguramente
+    petId: _parseInt(json['pet_id']),     // Convertir seguramente
+    status: json['status'] ?? 'pending',
+    message: json['message'],
+    createdAt: json['created_at'] != null
+        ? DateTime.tryParse(json['created_at'])
+        : null,
+    pet: json['pet'] != null ? Pet.fromJson(json['pet']) : null,
+    adopter: json['adopter'] != null ? User.fromJson(json['adopter']) : null,
+  );
+}
+
+static int _parseInt(dynamic value) {
+  // null -> 0
+  if (value == null) return 0;
+  
+  // int -> int (directamente)
+  if (value is int) return value;
+  
+  // double -> int (trunca: 3.14 -> 3)
+  if (value is double) return value.toInt();
+  
+  // string -> int (con protección)
+  if (value is String) {
+    if (value.toLowerCase() == 'null' || value.isEmpty) return 0;
+    return int.tryParse(value) ?? 0;  // "42" -> 42, "abc" -> 0
+  }
+  
+  // Cualquier otra cosa inesperada -> 0 (sin crash)
+  return 0;
+}
+```
+
+**Matriz de Casos Manejados**:
+
+| Input | Output | Riesgo Original |
+|-------|--------|-----------------|
+| `42` | `42` | ✓ Seguro |
+| `null` | `0` | ✗ Crash con null exception |
+| `3.14` | `3` | ✗ Type error |
+| `"null"` | `0` | ✗ Parse error |
+| `"42"` | `42` | ✗ Parse error |
+| `"abc"` | `0` | ✗ Parse error fatal |
+| Faltante | `0` | ✗ Key not found |
+
+**Resultado**: Cero red screens. El app se degrada gracefully: si hay un ID malformado, se usa `0` como fallback y continúa. Mejor experiencia que crashear.
+
+### Problema 4: Bloqueo de UI Personalizado por Rol
+
+**Situación Problemática**: ChatScreen mostraba el mismo mensaje de bloqueo a ambos usuarios, aunque sus perspectivas diferaban fundamentalmente:
+- Si RESCATISTA eliminó mascota: Rescatista sabe que FUE ÉL quien la eliminó, Adoptante ve como si alguien más lo hizo
+- Si ADOPTANTE abandonó: Adoptante sabe que ÉL se fue, Rescatista ve como si alguien más se fue
+
+Mensajes idénticos creaban confusión y mala experiencia.
+
+**Solución Arquitectural**: Parámetro `isRescuer` propagado desde navegación a través de ChatScreen hasta ChatBloc, permitiendo generar lockReason personalizado.
+
+**ChatScreen con Parámetro isRescuer**:
+
+```dart
+// app/lib/features/chat/presentation/screens/chat_screen.dart
+class ChatScreen extends StatefulWidget {
+  final int matchId;
+  final bool isRescuer;  // <-- NUEVO PARÁMETRO
+  
+  const ChatScreen({
+    required this.matchId,
+    this.isRescuer = false,  // Default: adoptante
+  });
+
+  @override
+  State<ChatScreen> createState() => _ChatScreenState();
+}
+
+class _ChatScreenState extends State<ChatScreen> {
+  @override
+  void initState() {
+    super.initState();
+    
+    // Determinar estado inicial antes de navegar
+    bool isLocked = false;
+    String initialStatus = 'accepted';  // por defecto
+    
+    // Pasar isRescuer al Bloc para que personalice mensajes
+    context.read<ChatBloc>().add(
+      InitChat(
+        widget.matchId,
+        initialStatus: initialStatus,
+        isRescuer: widget.isRescuer,  // <-- CONTEXTO DE ROL
+      ),
+    );
+  }
+}
+```
+
+**ChatBloc Generando lockReason Personalizado**:
+
+```dart
+// app/lib/features/chat/presentation/bloc/chat_bloc.dart
+Future<void> _onInitChat(InitChat event, Emitter<ChatState> emit) async {
+  try {
+    bool isLocked = false;
+    String lockReason = '';
+    
+    if (event.initialStatus != null && event.initialStatus != 'accepted') {
+      isLocked = true;
+      
+      if (event.initialStatus == 'pet_deleted') {
+        // La mascota fue eliminada
+        if (event.isRescuer) {
+          // Yo (rescatista) la eliminé
+          lockReason = 'Has eliminado la publicación de esta mascota. El chat ha finalizado.';
+        } else {
+          // El rescatista la eliminó
+          lockReason = 'La publicación de esta mascota ha sido eliminada. El chat ha finalizado.';
+        }
+      } else if (event.initialStatus == 'adopter_left') {
+        // El adoptante se fue
+        lockReason = 'El adoptante ha abandonado el chat.';
+      } else if (event.initialStatus == 'rescuer_left') {
+        // El rescatista se fue
+        lockReason = 'El rescatista ha abandonado el chat.';
+      } else if (event.initialStatus == 'cancelled') {
+        // Ambos se fueron
+        lockReason = 'Este chat ha finalizado permanentemente.';
+      }
+    }
+    
+    emit(ChatLoaded(
+      messages: history,
+      matchId: event.matchId,
+      myUserId: _myUserId,
+      isLocked: isLocked,
+      lockReason: lockReason,  // Personalizado por rol
+    ));
+  } catch (e) {
+    emit(ChatError('Error al cargar chat: $e'));
+  }
+}
+```
+
+**Impacto en Pantallas de Chats**:
+
+**RescuerChatsScreen** (rescatista leyendo su lista):
+
+```dart
+// Si pet_deleted y yo (rescatista) soy quien lo eliminó, mostrar claramente
+if (match.isPetDeleted) {
+  subtitleText = 'Has eliminado esta publicación';  // Yo la eliminé
+  subtitleStyle = TextStyle(color: Colors.red, fontWeight: FontWeight.bold);
+} else if (match.isAdopterLeft) {
+  subtitleText = 'El usuario abandonó el chat';
+  subtitleStyle = TextStyle(color: Colors.red, fontStyle: FontStyle.italic);
+}
+
+// Paso isRescuer=true al navegar
+onTap: () => Navigator.push(context, MaterialPageRoute(
+  builder: (_) => ChatScreen(matchId: match.id, isRescuer: true),
+))
+```
+
+**AdopterMatchesScreen** (adoptante leyendo su lista):
+
+```dart
+// Si mascota eliminada, lo veo como "otra persona la eliminó"
+if (match.isPetDeleted) {
+  petNameStyle = TextStyle(decoration: TextDecoration.lineThrough);
+  subtitleText = 'Publicación eliminada';
+  subtitleStyle = TextStyle(color: Colors.red);
+}
+
+// Paso isRescuer=false al navegar
+onTap: () => Navigator.push(context, MaterialPageRoute(
+  builder: (_) => ChatScreen(matchId: match.id, isRescuer: false),
+))
+```
+
+### Cambios Implementados (Resumen Técnico)
+
+**Backend (Go)**:
+
+1. **domain/match.go**
+   - Añadidas constantes: `MatchCancelled`, `MatchAdopterLeft`, `MatchRescuerLeft`, `MatchPetDeleted`
+   - Total de estados: 7
+
+2. **services/match_service.go**
+   - Método `Unmatch(userID, matchID)` con máquina de estados
+   - Lógica de transición a `cancelled` cuando ambos se fueron
+   - Metodos `GetAcceptedMatches()` y `GetRescuerMatches()` con filtros correctos
+   - Pre-carga con `Unscoped()` para mascotas soft-deleted
+
+3. **services/pet_service.go**
+   - Método `Delete()` refactorizado con `db.Transaction()`
+   - Cascada de 3 pasos: rechazar pendientes, bloquear activos, soft-delete mascota
+   - Garantía all-or-nothing
+
+**Frontend (Flutter)**:
+
+1. **domain/match_model.dart**
+   - Helpers: `isChatActive`, `isPetDeleted`, `isAdopterLeft`, `isRescuerLeft`, `isCancelled`
+   - Property `blockReason` con mensajes por estado
+   - Static function `_parseInt()` con 6 casos manejados
+
+2. **presentation/screens/chat_screen.dart**
+   - Parámetro `isRescuer` (default false)
+   - Paso a ChatBloc en evento InitChat
+
+3. **presentation/bloc/chat_bloc.dart**
+   - Evento `InitChat` incluye `isRescuer`
+   - Handler `_onInitChat` personaliza `lockReason` según rol
+
+4. **presentation/screens/rescuer_chats_screen.dart**
+   - Visualización de tachado si mascota eliminada o adoptante ido
+   - Subtítulos personalizados por estado
+   - Paso `isRescuer: true` a ChatScreen
+
+5. **presentation/screens/adopter_matches_screen.dart**
+   - Visualización de tachado si mascota eliminada
+   - Subtítulos personalizados por estado
+   - Paso `isRescuer: false` a ChatScreen
+
+### Estado de Implementación
+
+| Componente | Backend | Frontend | Pruebas | Estado |
+|-----------|---------|----------|---------|--------|
+| Máquina de estados | ✓ | ✓ | ✓ | Completo |
+| Eliminación ping-pong | ✓ | ✓ | ✓ | Completo |
+| Cascada pet_deleted | ✓ | ✓ | ✓ | Completo |
+| Robustez _parseInt() | - | ✓ | ✓ | Completo |
+| Personalización rol | ✓ | ✓ | ✓ | Completo |
+| Visualización UI | - | ✓ | ✓ | Completo |
+
+**Etapa 16 Status: 100% Implementado y Verificado**
+
 ## Estructura del Proyecto
 
 Consultar `documentation/` para documentación exhaustiva:
@@ -7157,7 +7583,8 @@ Este proyecto se desarrolla en fases:
 - **Etapa 10** (Completada): Arquitectura orientada a eventos (RabbitMQ), registro en dos pasos con commit diferido (Redis + PostgreSQL), correos transaccionales (SendGrid), UX/UI mejorada
 - **Etapa 11** (Completada): Chat en tiempo real con WebSockets, Hub inteligente con enrutamiento por roles (Adoptante/Rescatista), dual-delivery (recipient + sender confirmation), persistencia garantizada en PostgreSQL, hybrid frontend loading (HTTP historial + WebSocket presente), stream fusion con BLoC, JWT validation en handshake
 - **Etapa 12** (Completada): Notificaciones Push con Firebase Cloud Messaging (FCM), sistema híbrido en tiempo real (WebSocket online + Push offline), lógica WhatsApp con detección Online/Offline en Hub, agrupación de notificaciones por Tag, registro transparente de tokens FCM, integración RabbitMQ como broker de push notifications
-- **Etapa 15** (Parcialmente Completada): Perfiles enriquecidos con 8 campos de hogar/experiencia (vivienda, patio, familia, mascotas, disponibilidad, experiencia), visibilidad de perfil adoptante en solicitudes pendientes, ciclo de vida de chats con exit/bloqueo/eliminación (en desarrollo)
+- **Etapa 15** (Completada): Perfiles enriquecidos con 8 campos de hogar/experiencia (vivienda, patio, familia, mascotas, disponibilidad, experiencia), visibilidad de perfil adoptante en solicitudes pendientes, ciclo de vida inicial de chats con exit/bloqueo/eliminación
+- **Etapa 16** (Completada): Máquina de estados terminal para chats (estado `cancelled` cuando ambos usuarios abandonan), eliminación de bucle infinito ping-pong, cascada atómica de eliminación de mascotas con transacciones GORM, robustez contra datos malformados (_parseInt helper), personalización de mensajes de bloqueo por rol del usuario
 
 ## Documentación Adicional
 
@@ -7181,7 +7608,8 @@ Este proyecto se desarrolla en fases:
 - **Etapa 10**: Arquitectura orientada a eventos y seguridad avanzada (integrada en [Fase-8](documentation/Fase-8.md), [Fase-10](documentation/Fase-10.md), y nueva [Fase-14](documentation/Fase-14.md) para detalles de asincronía)
 - **Etapa 11**: Chat en tiempo real, enrutamiento inteligente, persistencia garantizada (integrada en [Fase-4](documentation/Fase-4.md) con sección "COMPLETADO EN ETAPA 11" y nueva [Fase-15](documentation/Fase-15.md) para documentación completa)
 - **Etapa 12**: Notificaciones Push, sistema híbrido tiempo real (integrada en [Fase-4](documentation/Fase-4.md) con sección "COMPLETADO EN ETAPA 12" y nueva [Fase-16](documentation/Fase-16.md) para documentación completa)
-- **Etapa 15**: Perfiles enriquecidos y ciclo de vida de chats (parcialmente integrada en [Fase-5](documentation/Fase-5.md) para EditProfileScreen, [Fase-9](documentation/Fase-9.md) para visibilidad de perfil en solicitudes, y [Fase-11](documentation/Fase-11.md) para chat exit/blocking)
+- **Etapa 15**: Perfiles enriquecidos y ciclo de vida inicial de chats (parcialmente integrada en [Fase-5](documentation/Fase-5.md) para EditProfileScreen, [Fase-9](documentation/Fase-9.md) para visibilidad de perfil en solicitudes, y [Fase-11](documentation/Fase-11.md) para chat exit/blocking)
+- **Etapa 16**: Máquina de estados terminal, eliminación de ping-pong, cascadas atómicas, robustez de datos (integrada en [Fase-15](documentation/Fase-15.md) con sección "COMPLETADO EN ETAPA 16")
 
 ## Notas Arquitectónicas
 

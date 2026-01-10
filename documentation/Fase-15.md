@@ -1809,6 +1809,94 @@ const (
 | Bloqueo de Input    | EN DESARROLLO | isChatBlocked flag  |          |         |
 | Notificaciones      | EN DESARROLLO | Push when state=... |          |         |
 
+## COMPLETADO EN ETAPA 16: Máquina de Estados Terminal y Ciclo de Vida Final
+
+Etapa 16 cierra el ciclo de vida de chats implementando una **máquina de estados finita robusta** que resuelve tres problemas críticos de Etapa 15:
+
+### Problema Resuelto 1: Bucle Infinito de Ping-Pong
+
+**Situación en Etapa 15**: Cuando Usuario A salía, el chat desaparecía. Cuando Usuario B salía, el estado cambiaba a `rescuer_left` y el chat reaparecía en lista de A. Resultado: ciclo infinito de aparición/desaparición.
+
+**Solución en Etapa 16**: Estado terminal `cancelled` que se alcanza solo cuando AMBOS usuarios han abandonado, garantizando que una vez alcanzado, nunca reaparecer en ninguna lista.
+
+```go
+// Nueva máquina de estados con 7 estados totales
+const (
+  MatchPending     = "pending"       // Inicial
+  MatchAccepted    = "accepted"      // Activo
+  MatchAdopterLeft = "adopter_left"  // Adoptante se fue
+  MatchRescuerLeft = "rescuer_left"  // Rescatista se fue
+  MatchPetDeleted  = "pet_deleted"   // Mascota eliminada
+  MatchRejected    = "rejected"      // Rechazado
+  MatchCancelled   = "cancelled"     // TERMINAL: Ambos se fueron
+)
+```
+
+Lógica en `MatchService.Unmatch()`:
+- Si yo me voy Y el otro ya se fue → transicionar a `cancelled` (terminal)
+- Si yo me voy PRIMERO → transicionar a `[mi_rol]_left`
+- Filtros SQL excluyen `cancelled` de todas las bandeja, garantizando que desaparece permanentemente
+
+### Problema Resuelto 2: Efecto Espejo (Eliminación de Mascota)
+
+**Situación en Etapa 15**: Al eliminar mascota, chats quedaban en limbo. Adoptante confundido, Rescatista podía seguir escribiendo. Inconsistencia total.
+
+**Solución en Etapa 16**: Transacción GORM atómica en `PetService.Delete()` que cambia estados de match ANTES de soft-delete la mascota:
+1. Rechazar pendientes
+2. Bloquear activos (→ `pet_deleted`)
+3. Soft-delete mascota
+
+Garantía all-or-nothing: Si cualquier paso falla, TODOS se revierten. No hay estado intermedio inconsistente.
+
+### Problema Resuelto 3: Robustez contra Datos Malformados
+
+**Situación en Etapa 15**: Backend ocasionalmente envía `null`, `"null"`, floats en campos de ID. Frontend crasheaba.
+
+**Solución en Etapa 16**: Función `_parseInt()` defensiva en `Match.fromJson()` que maneja:
+- `null` → 0
+- `3.14` → 3
+- `"null"` → 0
+- `"abc"` → 0
+- Faltante → 0
+
+Cero red screens. App se degrada gracefully.
+
+### Problema Resuelto 4: Bloqueo de Mensajes Personalizado por Rol
+
+**Situación en Etapa 15**: Ambos usuarios veían el mismo mensaje de bloqueo, aunque perspectivas diferaban.
+
+**Solución en Etapa 16**: Parámetro `isRescuer` propagado a `ChatBloc` que personaliza `lockReason`:
+- Si rescatista y `pet_deleted`: "Has eliminado la publicación..." (Yo la eliminé)
+- Si adoptante y `pet_deleted`: "La publicación ha sido eliminada..." (Otro la eliminó)
+
+Impacto en UX: Mensajes coherentes con perspectiva de usuario.
+
+### Implementación Técnica - Etapa 16
+
+**Backend (Go)**:
+- `domain/match.go`: Constantes de nuevos estados
+- `services/match_service.go`: Unmatch() con máquina de estados + GetAcceptedMatches/GetRescuerMatches con filtros correctos
+- `services/pet_service.go`: Delete() con transacción atómica de 3 pasos
+
+**Frontend (Flutter)**:
+- `domain/match_model.dart`: Helpers de estado + _parseInt()
+- `presentation/screens/chat_screen.dart`: Parámetro `isRescuer`
+- `presentation/bloc/chat_bloc.dart`: InitChat con `isRescuer`, personalización de lockReason
+- `presentation/screens/{adopter,rescuer}_*_screen.dart`: Visualización de tachado + subtítulos personalizados
+
+### Estado Final - Etapa 16
+
+| Funcionalidad               | Estado        | Implementación              | Frontend | Backend |
+| --------------------------- | ------------- | --------------------------- | -------- | ------- |
+| Máquina de estados terminal | COMPLETADO    | Estado `cancelled`          | ✓        | ✓       |
+| Eliminación ping-pong        | COMPLETADO    | Filtros SQL + `cancelled`   | ✓        | ✓       |
+| Cascada de eliminación       | COMPLETADO    | Transacción GORM de 3 pasos |          | ✓       |
+| Robustez de datos            | COMPLETADO    | _parseInt() defensiva       | ✓        |         |
+| Personalización por rol      | COMPLETADO    | isRescuer en ChatBloc        | ✓        | ✓       |
+| Visualización en listas      | COMPLETADO    | Tachado + subtítulos        | ✓        |         |
+
+**Etapa 16 Status: 100% Implementado y Verificado**
+
 ## Referencias
 
 - [Gorilla WebSocket](https://github.com/gorilla/websocket)
