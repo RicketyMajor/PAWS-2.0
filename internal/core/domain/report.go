@@ -1,19 +1,45 @@
 package domain
 
-import "gorm.io/gorm"
+import (
+	"time"
+	"gorm.io/gorm"
+)
+
+// Categorías de Reporte
+const (
+	ReportReasonAbuse = "abuse" // Maltrato animal
+	ReportReasonScam  = "scam"  // Estafa
+	ReportReasonSpam  = "spam"  // Spam/Comercial
+	ReportReasonHate  = "hate"  // Lenguaje ofensivo/Odio
+	ReportReasonOther = "other" // Otro
+)
 
 type Report struct {
 	gorm.Model
 	
-	// IDs (Llaves Foráneas)
-	ReporterID uint   `gorm:"not null" json:"reporter_id"`
-	ReportedID uint   `gorm:"not null" json:"reported_id"`
+	// Quien acusa y quien es acusado
+	ReporterID uint `gorm:"not null;index" json:"reporter_id"`
+	ReportedID uint `gorm:"not null;index" json:"reported_id"`
+	
+	// Relaciones
+	Reporter User `gorm:"foreignKey:ReporterID" json:"reporter"`
+	Reported User `gorm:"foreignKey:ReportedID" json:"reported"`
 
-	// --- RELACIONES (Lo que te faltaba) ---
-	// Esto le dice a GORM: "El campo Reporter es un User que se busca usando ReporterID"
-	Reporter   User   `gorm:"foreignKey:ReporterID" json:"Reporter"`
-	Reported   User   `gorm:"foreignKey:ReportedID" json:"Reported"`
+	// Contexto del Reporte
+	MatchID uint `gorm:"index" json:"match_id"` // El chat donde ocurrió (opcional)
 
-	Reason     string `gorm:"not null" json:"reason"` 
-	Status     string `gorm:"default:'pending'" json:"status"`
+	// Datos del Reporte
+	Category    string `gorm:"type:varchar(50);not null" json:"category"` // Enum: abuse, scam, etc.
+	Description string `gorm:"type:text" json:"description"`              // Texto libre del usuario
+
+	// Estado y Resolución
+	Status string `gorm:"default:'pending';index" json:"status"` // pending, resolved, dismissed
+	
+	// EVIDENCIA INMUTABLE
+	// Aquí guardaremos el historial del chat en JSON cuando el admin dicte sentencia.
+	// Si borran el chat después, esto queda como prueba legal.
+	EvidenceSnapshot string `gorm:"type:text" json:"evidence_snapshot"` 
+
+	ResolvedAt *time.Time `json:"resolved_at"`
+	ResolverID *uint      `json:"resolver_id"` // ID del Admin que cerró el caso
 }

@@ -8,16 +8,16 @@ import (
 )
 
 type AdminHandler struct {
-    // CORRECCIÓN: Cambiamos el nombre del campo de 'reportService' a 'service'
 	service *services.ReportService 
 }
 
 func NewAdminHandler(s *services.ReportService) *AdminHandler {
-	return &AdminHandler{service: s} // Ahora sí coincide
+	return &AdminHandler{service: s} 
 }
-// GetReports (GET /admin/reports)
+
+// GetReports (GET /admin/reports) - Solo pendientes
 func (h *AdminHandler) GetReports(c *gin.Context) {
-	reports, err := h.service.GetAllReports()
+	reports, err := h.service.GetAllPending()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error cargando reportes"})
 		return
@@ -25,30 +25,45 @@ func (h *AdminHandler) GetReports(c *gin.Context) {
 	c.JSON(http.StatusOK, reports)
 }
 
-// BanUser (POST /admin/ban/:id)
-func (h *AdminHandler) BanUser(c *gin.Context) {
-	// Obtenemos ID del Admin (quien ejecuta la acción)
-	adminIDVal, _ := c.Get("userID")
-    // Conversión segura simple (asumiendo que ya aplicaste el fix de seguridad anterior)
-    adminID := uint(adminIDVal.(float64))
+// GetReportDetails (GET /admin/reports/:id) - EL CONTEXTO
+func (h *AdminHandler) GetReportDetails(c *gin.Context) {
+	idStr := c.Param("id")
+	id, _ := strconv.Atoi(idStr)
 
-	// Obtenemos ID del usuario a banear
-	targetIDStr := c.Param("id")
-	targetID, _ := strconv.Atoi(targetIDStr)
+	report, messages, err := h.service.GetReportDetails(uint(id))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Reporte no encontrado"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"report":   report,
+		"evidence": messages, // El chat completo para el juez
+	})
+}
+
+// Resolve (POST /admin/reports/:id/resolve)
+func (h *AdminHandler) Resolve(c *gin.Context) {
+	adminIDVal, _ := c.Get("userID")
+	adminID := uint(adminIDVal.(float64))
+
+	idStr := c.Param("id")
+	id, _ := strconv.Atoi(idStr)
 
 	var req struct {
-		Reason string `json:"reason" binding:"required"`
+		Action          string `json:"action" binding:"required"` // 'ban' o 'dismiss'
+		PublicBlacklist bool   `json:"public_blacklist"`          // Toggle para blacklist pública
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Se requiere motivo (reason)"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	err := h.service.BanUserManual(adminID, uint(targetID), req.Reason)
+	err := h.service.ResolveReport(adminID, uint(id), req.Action, req.PublicBlacklist)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error baneando usuario: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error resolviendo reporte"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "JUSTICIA APLICADA: Usuario baneado."})
+	c.JSON(http.StatusOK, gin.H{"message": "Caso cerrado exitosamente"})
 }

@@ -1833,6 +1833,7 @@ const (
 ```
 
 Lógica en `MatchService.Unmatch()`:
+
 - Si yo me voy Y el otro ya se fue → transicionar a `cancelled` (terminal)
 - Si yo me voy PRIMERO → transicionar a `[mi_rol]_left`
 - Filtros SQL excluyen `cancelled` de todas las bandeja, garantizando que desaparece permanentemente
@@ -1842,6 +1843,7 @@ Lógica en `MatchService.Unmatch()`:
 **Situación en Etapa 15**: Al eliminar mascota, chats quedaban en limbo. Adoptante confundido, Rescatista podía seguir escribiendo. Inconsistencia total.
 
 **Solución en Etapa 16**: Transacción GORM atómica en `PetService.Delete()` que cambia estados de match ANTES de soft-delete la mascota:
+
 1. Rechazar pendientes
 2. Bloquear activos (→ `pet_deleted`)
 3. Soft-delete mascota
@@ -1853,6 +1855,7 @@ Garantía all-or-nothing: Si cualquier paso falla, TODOS se revierten. No hay es
 **Situación en Etapa 15**: Backend ocasionalmente envía `null`, `"null"`, floats en campos de ID. Frontend crasheaba.
 
 **Solución en Etapa 16**: Función `_parseInt()` defensiva en `Match.fromJson()` que maneja:
+
 - `null` → 0
 - `3.14` → 3
 - `"null"` → 0
@@ -1866,6 +1869,7 @@ Cero red screens. App se degrada gracefully.
 **Situación en Etapa 15**: Ambos usuarios veían el mismo mensaje de bloqueo, aunque perspectivas diferaban.
 
 **Solución en Etapa 16**: Parámetro `isRescuer` propagado a `ChatBloc` que personaliza `lockReason`:
+
 - Si rescatista y `pet_deleted`: "Has eliminado la publicación..." (Yo la eliminé)
 - Si adoptante y `pet_deleted`: "La publicación ha sido eliminada..." (Otro la eliminó)
 
@@ -1874,26 +1878,28 @@ Impacto en UX: Mensajes coherentes con perspectiva de usuario.
 ### Implementación Técnica - Etapa 16
 
 **Backend (Go)**:
+
 - `domain/match.go`: Constantes de nuevos estados
 - `services/match_service.go`: Unmatch() con máquina de estados + GetAcceptedMatches/GetRescuerMatches con filtros correctos
 - `services/pet_service.go`: Delete() con transacción atómica de 3 pasos
 
 **Frontend (Flutter)**:
-- `domain/match_model.dart`: Helpers de estado + _parseInt()
+
+- `domain/match_model.dart`: Helpers de estado + \_parseInt()
 - `presentation/screens/chat_screen.dart`: Parámetro `isRescuer`
 - `presentation/bloc/chat_bloc.dart`: InitChat con `isRescuer`, personalización de lockReason
 - `presentation/screens/{adopter,rescuer}_*_screen.dart`: Visualización de tachado + subtítulos personalizados
 
 ### Estado Final - Etapa 16
 
-| Funcionalidad               | Estado        | Implementación              | Frontend | Backend |
-| --------------------------- | ------------- | --------------------------- | -------- | ------- |
-| Máquina de estados terminal | COMPLETADO    | Estado `cancelled`          | ✓        | ✓       |
-| Eliminación ping-pong        | COMPLETADO    | Filtros SQL + `cancelled`   | ✓        | ✓       |
-| Cascada de eliminación       | COMPLETADO    | Transacción GORM de 3 pasos |          | ✓       |
-| Robustez de datos            | COMPLETADO    | _parseInt() defensiva       | ✓        |         |
-| Personalización por rol      | COMPLETADO    | isRescuer en ChatBloc        | ✓        | ✓       |
-| Visualización en listas      | COMPLETADO    | Tachado + subtítulos        | ✓        |         |
+| Funcionalidad               | Estado     | Implementación              | Frontend | Backend |
+| --------------------------- | ---------- | --------------------------- | -------- | ------- |
+| Máquina de estados terminal | COMPLETADO | Estado `cancelled`          | ✓        | ✓       |
+| Eliminación ping-pong       | COMPLETADO | Filtros SQL + `cancelled`   | ✓        | ✓       |
+| Cascada de eliminación      | COMPLETADO | Transacción GORM de 3 pasos |          | ✓       |
+| Robustez de datos           | COMPLETADO | \_parseInt() defensiva      | ✓        |         |
+| Personalización por rol     | COMPLETADO | isRescuer en ChatBloc       | ✓        | ✓       |
+| Visualización en listas     | COMPLETADO | Tachado + subtítulos        | ✓        |         |
 
 **Etapa 16 Status: 100% Implementado y Verificado**
 

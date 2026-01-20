@@ -2,9 +2,10 @@ package domain
 
 import "gorm.io/gorm"
 
-// BlacklistEntry representa un usuario bloqueado del sistema [cite: 52]
+// BlacklistEntry representa un usuario bloqueado del sistema
 type BlacklistEntry struct {
 	gorm.Model
-	Run    string `gorm:"uniqueIndex;not null"` // El RUN es único en la lista negra
-	Reason string // Razón: "Maltrato", "Multicuenta", "Estafa"
+	Run    string `gorm:"uniqueIndex;not null" json:"run"` // RUT Único
+	Name   string `json:"name"`                            // Nombre al momento del ban (referencia)
+	Reason string `json:"reason"`                          // Razón pública (ej: "Maltrato Animal")
 }

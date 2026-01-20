@@ -12,7 +12,7 @@ import (
 	"github.com/RicketyMajor/PAWS-2.0/internal/platform/database"
 	
 	httpTransport "github.com/RicketyMajor/PAWS-2.0/internal/transport/http"
-	"github.com/RicketyMajor/PAWS-2.0/internal/transport/http/middleware" // Asegúrate que importe el paquete donde pusiste cors.go y auth.go
+	"github.com/RicketyMajor/PAWS-2.0/internal/transport/http/middleware" 
 	
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -26,31 +26,16 @@ func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Println("Info: No se encontró archivo .env, usando variables del sistema")
 	}
-	// --- AGREGAR ESTO TEMPORALMENTE ---
     url := os.Getenv("DATABASE_URL")
     if url != "" {
         log.Println("DEBUG: ¡Variable DATABASE_URL encontrada! Longitud:", len(url))
-        // No imprimas la URL completa por seguridad, solo verifica que existe.
     } else {
         log.Println("DEBUG: DATABASE_URL está vacía. Godotenv cargó el archivo pero no leyó la variable.")
     }
-    // ----------------------------------
 
 	database.Connect()
 
-    // ZONA DE PELIGRO: LIMPIEZA PARA TESTEO 
-    // Descomenta estas líneas para borrar TODOS los usuarios y empezar de cero.
-    // Vuélvelas a comentar cuando quieras persistencia.
-    
-    //database.DB.Migrator().DropTable(&domain.User{})         // Borra usuarios
-    //database.DB.Exec("DELETE FROM blacklist_entries")        // Borra blacklist (opcional)
-    //database.DB.Exec("DELETE FROM otps")                     // (Si tuvieras tabla de OTPs)
-    
-    // Nota: Si borras User, se borrarán en cascada perfiles, mascotas, etc.
-    
-	//database.DB.Migrator().DropTable(&domain.Report{}) // Esta ya la tenías
-
-	// Migraciones (Esto volverá a crear la tabla vacía inmediatamente después)
+	// Migraciones
 	if err := database.DB.AutoMigrate(
 		&domain.User{}, 
 		&domain.UserProfile{},
@@ -66,14 +51,12 @@ func main() {
 	}
 
 	// =========================================================================
-	// SEEDER DE ADMIN (Auto-Promoción)
+	// SEEDER DE ADMIN
 	// =========================================================================
 	var adminUser domain.User
 	targetEmail := "alonso.vera@mail.udp.cl"
 
-	// Buscamos si el usuario ya se registró
 	if err := database.DB.Where("email = ?", targetEmail).First(&adminUser).Error; err == nil {
-		// Si existe y no es admin, lo promovemos
 		if adminUser.Role != "admin" {
 			database.DB.Model(&adminUser).Update("role", "admin")
 			log.Printf("Usuario %s promovido a ADMIN.", targetEmail)
@@ -81,60 +64,51 @@ func main() {
 			log.Println("El usuario Admin ya está configurado correctamente.")
 		}
 	} else {
-		log.Printf("AVISO: El usuario %s aún no existe en la BD. Regístrate en la App y reinicia el backend.", targetEmail)
+		log.Printf("AVISO: El usuario %s aún no existe en la BD.", targetEmail)
 	}
-	// =========================================================================
 
 	// -------------------------------------------------------------------------
-	// KILL SWITCH: RabbitMQ & Async (Etapa 10)
+	// KILL SWITCH: RabbitMQ & Async
 	// -------------------------------------------------------------------------
 	var mqClient *messaging.RabbitMQClient
 	var err error
 	
-	// 1. Leemos configuración de RabbitMQ del entorno
-	// Si estamos en local (go run), usaremos localhost. En K8s, usaremos el servicio.
 	rabbitUser := os.Getenv("RABBITMQ_USER")
 	rabbitPass := os.Getenv("RABBITMQ_PASSWORD")
 	rabbitHost := os.Getenv("RABBITMQ_HOST")
 	rabbitPort := os.Getenv("RABBITMQ_PORT")
 
-	// Valores por defecto (Para K8s o Local standard)
 	if rabbitUser == "" { rabbitUser = "guest" }
 	if rabbitPass == "" { rabbitPass = "guest" }
-	if rabbitHost == "" { rabbitHost = "localhost" } // <--- CAMBIO CLAVE: Default a localhost
+	if rabbitHost == "" { rabbitHost = "localhost" }
 	if rabbitPort == "" { rabbitPort = "5672" }
 
 	rabbitURL := fmt.Sprintf("amqp://%s:%s@%s:%s/", rabbitUser, rabbitPass, rabbitHost, rabbitPort)
 
-	// 2. Intentamos conectar si está habilitado
 	if os.Getenv("ENABLE_ASYNC_FEATURES") == "true" {
 		log.Printf("Intentando conectar a RabbitMQ en: %s:%s...", rabbitHost, rabbitPort)
 		mqClient, err = messaging.ConnectRabbitMQ(rabbitURL)
 		if err != nil {
-			log.Printf("RabbitMQ error: %v. \nEl sistema funcionará en MODO SÍNCRONO (Terminal).", err)
+			log.Printf("RabbitMQ error: %v. \nEl sistema funcionará en MODO SÍNCRONO.", err)
 		} else {
 			defer mqClient.Close()
-			log.Println("Conectado a RabbitMQ (Sistema de Correos Activo)")
+			log.Println("Conectado a RabbitMQ")
 		}
 	} else {
-		log.Println("ℹAsync Features desactivadas. Usando modo síncrono simple (Logs en Terminal).")
+		log.Println("ℹAsync Features desactivadas. Usando modo síncrono.")
 	}
 
 	emailClient := email.NewEmailClient()
 
-	// Worker solo arranca si hay conexión real
 	if mqClient != nil {
 		workers.StartEmailConsumer(mqClient, emailClient)
 		workers.StartNotificationConsumer(mqClient, database.DB)
 	}
 
-	
-
 	// =========================================================================
 	// 2. INYECCIÓN DE DEPENDENCIAS
 	// =========================================================================
 
-	// IMPORTANTE: Los servicios deben saber manejar mqClient == nil
 	otpService      := services.NewOTPService(mqClient) 
 	authService     := services.NewAuthService(database.DB)
 	petService      := services.NewPetService(database.DB)
@@ -145,9 +119,8 @@ func main() {
 	identityService := services.NewIdentityService()
 
 	reportService   := services.NewReportService(database.DB, authService)
-	matchService := services.NewMatchService(database.DB, petService, mqClient)
+	matchService    := services.NewMatchService(database.DB, petService, mqClient)
 
-	// WebSocket Hub
 	hub := httpTransport.NewHub(chatService, mqClient)
 	go hub.Run()
 
@@ -172,10 +145,7 @@ func main() {
 	// =========================================================================
 
 	r := gin.Default()
-	
-	// APLICAR CORS: Fundamental para Flutter Web
 	r.Use(middleware.CORSMiddleware())
-
 	r.Static("/uploads", "./uploads")
 
 	api := r.Group("/api/v1")
@@ -191,6 +161,9 @@ func main() {
 
 		api.POST("/verification/verify", identityHandler.Verify)
 
+		// BUSCADOR PÚBLICO DE BLACKLIST
+		api.GET("/blacklist/search", reportHandler.SearchBlacklist)
+		
 		petsPublic := api.Group("/pets")
 		{
 			petsPublic.GET("", petHandler.GetAll)
@@ -200,7 +173,7 @@ func main() {
 
 		// RUTAS PROTEGIDAS
 		protected := api.Group("/")
-		protected.Use(middleware.AuthMiddleware()) // Tu auth.go original
+		protected.Use(middleware.AuthMiddleware()) 
 		{
 			protected.PUT("/profile", userHandler.UpdateProfile)
 			protected.GET("/profile", userHandler.GetProfile)
@@ -217,26 +190,23 @@ func main() {
 				match.POST("/respond", matchHandler.Respond)
 				match.GET("/:id/messages", socialHandler.GetChatHistory)
 				match.GET("/rescuer", matchHandler.GetRescuerMatches)
-				// --- RUTAS ACTUALIZADAS ---
-				// Unificamos las rutas del adoptante en una sola
 				match.GET("/adopter", matchHandler.GetAdopterMatches)
-				// Agregamos la ruta para salir del chat
 				match.POST("/unmatch", matchHandler.Unmatch)
 			}
 
 			protected.POST("/reviews", socialHandler.CreateReview)
 			protected.POST("/report", reportHandler.Create)
 
-			// WebSocket unificado
 			protected.GET("/ws", wsHandler.HandleConnections)
 		}
 
-		// GRUPO ADMIN: Doble protección (Auth + Role Admin)
+		// ADMIN
 		admin := protected.Group("/admin")
 		admin.Use(middleware.RequireRole("admin")) 
 		{
-			admin.GET("/reports", adminHandler.GetReports)
-			admin.POST("/ban/:id", adminHandler.BanUser)
+			admin.GET("/reports", adminHandler.GetReports)       
+			admin.GET("/reports/:id", adminHandler.GetReportDetails) 
+			admin.POST("/reports/:id/resolve", adminHandler.Resolve) 
 		}
 	}
 
@@ -250,7 +220,6 @@ func main() {
 	}
 	log.Printf("Servidor PAWS iniciado en puerto %s", port)
 	
-	// En Web/Vercel no usamos localhost, usamos 0.0.0.0 implícitamente al omitir IP
 	if err := r.Run(":" + port); err != nil {
 		log.Fatal("Error fatal en servidor:", err)
 	}

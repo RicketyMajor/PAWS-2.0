@@ -7138,6 +7138,7 @@ func (s *PetService) Delete(id uint, ownerID uint) error {
 ```
 
 **Garantías de Transacción**:
+
 - Si algún paso falla: TODOS se revierten (all-or-nothing)
 - No es posible quedar con mascota eliminada pero chats sin actualizar
 - No hay race conditions incluso con múltiples clientes simultáneos
@@ -7154,6 +7155,7 @@ Chat queda bloqueado. Ambos ven claramente qué pasó.
 ### Problema 3: Robustez del Código contra Datos Malformados
 
 **Situación Problemática**: El backend ocasionalmente envía datos malformados:
+
 - IDs como `null`
 - IDs como string `"null"`
 - IDs como float `3.14` en lugar de `3`
@@ -7163,7 +7165,7 @@ Frontend crasheaba con Red Screen of Death (RSOD). No había forma de recuperars
 
 **Solución Arquitectural**: Función defensiva `_parseInt()` en Match.fromJson() que maneja todos los casos posibles sin nunca lanzar excepciones.
 
-**Match Model con _parseInt() Blindaje**:
+**Match Model con \_parseInt() Blindaje**:
 
 ```dart
 // app/lib/features/pets/domain/match_model.dart
@@ -7185,19 +7187,19 @@ factory Match.fromJson(Map<String, dynamic> json) {
 static int _parseInt(dynamic value) {
   // null -> 0
   if (value == null) return 0;
-  
+
   // int -> int (directamente)
   if (value is int) return value;
-  
+
   // double -> int (trunca: 3.14 -> 3)
   if (value is double) return value.toInt();
-  
+
   // string -> int (con protección)
   if (value is String) {
     if (value.toLowerCase() == 'null' || value.isEmpty) return 0;
     return int.tryParse(value) ?? 0;  // "42" -> 42, "abc" -> 0
   }
-  
+
   // Cualquier otra cosa inesperada -> 0 (sin crash)
   return 0;
 }
@@ -7205,21 +7207,22 @@ static int _parseInt(dynamic value) {
 
 **Matriz de Casos Manejados**:
 
-| Input | Output | Riesgo Original |
-|-------|--------|-----------------|
-| `42` | `42` | ✓ Seguro |
-| `null` | `0` | ✗ Crash con null exception |
-| `3.14` | `3` | ✗ Type error |
-| `"null"` | `0` | ✗ Parse error |
-| `"42"` | `42` | ✗ Parse error |
-| `"abc"` | `0` | ✗ Parse error fatal |
-| Faltante | `0` | ✗ Key not found |
+| Input    | Output | Riesgo Original            |
+| -------- | ------ | -------------------------- |
+| `42`     | `42`   | ✓ Seguro                   |
+| `null`   | `0`    | ✗ Crash con null exception |
+| `3.14`   | `3`    | ✗ Type error               |
+| `"null"` | `0`    | ✗ Parse error              |
+| `"42"`   | `42`   | ✗ Parse error              |
+| `"abc"`  | `0`    | ✗ Parse error fatal        |
+| Faltante | `0`    | ✗ Key not found            |
 
 **Resultado**: Cero red screens. El app se degrada gracefully: si hay un ID malformado, se usa `0` como fallback y continúa. Mejor experiencia que crashear.
 
 ### Problema 4: Bloqueo de UI Personalizado por Rol
 
 **Situación Problemática**: ChatScreen mostraba el mismo mensaje de bloqueo a ambos usuarios, aunque sus perspectivas diferaban fundamentalmente:
+
 - Si RESCATISTA eliminó mascota: Rescatista sabe que FUE ÉL quien la eliminó, Adoptante ve como si alguien más lo hizo
 - Si ADOPTANTE abandonó: Adoptante sabe que ÉL se fue, Rescatista ve como si alguien más se fue
 
@@ -7234,7 +7237,7 @@ Mensajes idénticos creaban confusión y mala experiencia.
 class ChatScreen extends StatefulWidget {
   final int matchId;
   final bool isRescuer;  // <-- NUEVO PARÁMETRO
-  
+
   const ChatScreen({
     required this.matchId,
     this.isRescuer = false,  // Default: adoptante
@@ -7248,11 +7251,11 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    
+
     // Determinar estado inicial antes de navegar
     bool isLocked = false;
     String initialStatus = 'accepted';  // por defecto
-    
+
     // Pasar isRescuer al Bloc para que personalice mensajes
     context.read<ChatBloc>().add(
       InitChat(
@@ -7273,10 +7276,10 @@ Future<void> _onInitChat(InitChat event, Emitter<ChatState> emit) async {
   try {
     bool isLocked = false;
     String lockReason = '';
-    
+
     if (event.initialStatus != null && event.initialStatus != 'accepted') {
       isLocked = true;
-      
+
       if (event.initialStatus == 'pet_deleted') {
         // La mascota fue eliminada
         if (event.isRescuer) {
@@ -7297,7 +7300,7 @@ Future<void> _onInitChat(InitChat event, Emitter<ChatState> emit) async {
         lockReason = 'Este chat ha finalizado permanentemente.';
       }
     }
-    
+
     emit(ChatLoaded(
       messages: history,
       matchId: event.matchId,
@@ -7352,10 +7355,12 @@ onTap: () => Navigator.push(context, MaterialPageRoute(
 **Backend (Go)**:
 
 1. **domain/match.go**
+
    - Añadidas constantes: `MatchCancelled`, `MatchAdopterLeft`, `MatchRescuerLeft`, `MatchPetDeleted`
    - Total de estados: 7
 
 2. **services/match_service.go**
+
    - Método `Unmatch(userID, matchID)` con máquina de estados
    - Lógica de transición a `cancelled` cuando ambos se fueron
    - Metodos `GetAcceptedMatches()` y `GetRescuerMatches()` con filtros correctos
@@ -7369,19 +7374,23 @@ onTap: () => Navigator.push(context, MaterialPageRoute(
 **Frontend (Flutter)**:
 
 1. **domain/match_model.dart**
+
    - Helpers: `isChatActive`, `isPetDeleted`, `isAdopterLeft`, `isRescuerLeft`, `isCancelled`
    - Property `blockReason` con mensajes por estado
    - Static function `_parseInt()` con 6 casos manejados
 
 2. **presentation/screens/chat_screen.dart**
+
    - Parámetro `isRescuer` (default false)
    - Paso a ChatBloc en evento InitChat
 
 3. **presentation/bloc/chat_bloc.dart**
+
    - Evento `InitChat` incluye `isRescuer`
    - Handler `_onInitChat` personaliza `lockReason` según rol
 
 4. **presentation/screens/rescuer_chats_screen.dart**
+
    - Visualización de tachado si mascota eliminada o adoptante ido
    - Subtítulos personalizados por estado
    - Paso `isRescuer: true` a ChatScreen
@@ -7393,14 +7402,14 @@ onTap: () => Navigator.push(context, MaterialPageRoute(
 
 ### Estado de Implementación
 
-| Componente | Backend | Frontend | Pruebas | Estado |
-|-----------|---------|----------|---------|--------|
-| Máquina de estados | ✓ | ✓ | ✓ | Completo |
-| Eliminación ping-pong | ✓ | ✓ | ✓ | Completo |
-| Cascada pet_deleted | ✓ | ✓ | ✓ | Completo |
-| Robustez _parseInt() | - | ✓ | ✓ | Completo |
-| Personalización rol | ✓ | ✓ | ✓ | Completo |
-| Visualización UI | - | ✓ | ✓ | Completo |
+| Componente            | Backend | Frontend | Pruebas | Estado   |
+| --------------------- | ------- | -------- | ------- | -------- |
+| Máquina de estados    | ✓       | ✓        | ✓       | Completo |
+| Eliminación ping-pong | ✓       | ✓        | ✓       | Completo |
+| Cascada pet_deleted   | ✓       | ✓        | ✓       | Completo |
+| Robustez \_parseInt() | -       | ✓        | ✓       | Completo |
+| Personalización rol   | ✓       | ✓        | ✓       | Completo |
+| Visualización UI      | -       | ✓        | ✓       | Completo |
 
 **Etapa 16 Status: 100% Implementado y Verificado**
 
@@ -7584,7 +7593,7 @@ Este proyecto se desarrolla en fases:
 - **Etapa 11** (Completada): Chat en tiempo real con WebSockets, Hub inteligente con enrutamiento por roles (Adoptante/Rescatista), dual-delivery (recipient + sender confirmation), persistencia garantizada en PostgreSQL, hybrid frontend loading (HTTP historial + WebSocket presente), stream fusion con BLoC, JWT validation en handshake
 - **Etapa 12** (Completada): Notificaciones Push con Firebase Cloud Messaging (FCM), sistema híbrido en tiempo real (WebSocket online + Push offline), lógica WhatsApp con detección Online/Offline en Hub, agrupación de notificaciones por Tag, registro transparente de tokens FCM, integración RabbitMQ como broker de push notifications
 - **Etapa 15** (Completada): Perfiles enriquecidos con 8 campos de hogar/experiencia (vivienda, patio, familia, mascotas, disponibilidad, experiencia), visibilidad de perfil adoptante en solicitudes pendientes, ciclo de vida inicial de chats con exit/bloqueo/eliminación
-- **Etapa 16** (Completada): Máquina de estados terminal para chats (estado `cancelled` cuando ambos usuarios abandonan), eliminación de bucle infinito ping-pong, cascada atómica de eliminación de mascotas con transacciones GORM, robustez contra datos malformados (_parseInt helper), personalización de mensajes de bloqueo por rol del usuario
+- **Etapa 16** (Completada): Máquina de estados terminal para chats (estado `cancelled` cuando ambos usuarios abandonan), eliminación de bucle infinito ping-pong, cascada atómica de eliminación de mascotas con transacciones GORM, robustez contra datos malformados (\_parseInt helper), personalización de mensajes de bloqueo por rol del usuario
 
 ## Documentación Adicional
 
