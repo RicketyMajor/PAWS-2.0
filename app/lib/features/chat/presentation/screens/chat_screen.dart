@@ -11,6 +11,7 @@ import '../../../pets/data/matches_repository.dart';
 // Imports de Presentación (Blocs y Widgets)
 import '../bloc/chat_bloc.dart';
 import '../../../../core/utils/image_helper.dart';
+import '../widgets/chat_bubble.dart';
 
 class ChatScreen extends StatefulWidget {
   final int matchId;
@@ -217,7 +218,9 @@ class _ChatScreenState extends State<ChatScreen> {
                         itemBuilder: (context, index) {
                           final msg = state.messages[index];
                           final isMe = msg.senderId == _myUserId;
-                          return _buildMessageBubble(msg, isMe);
+
+                          // USAMOS EL WIDGET REUTILIZABLE
+                          return ChatBubble(message: msg, isMe: isMe);
                         },
                       );
                     } else if (state is ChatError) {
@@ -431,46 +434,6 @@ class _ChatScreenState extends State<ChatScreen> {
               child: IconButton(
                 icon: const Icon(Icons.send, color: Colors.white, size: 20),
                 onPressed: () => _sendMessage(context),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMessageBubble(ChatMessage msg, bool isMe) {
-    return Align(
-      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        constraints: const BoxConstraints(maxWidth: 260),
-        decoration: BoxDecoration(
-          color: isMe ? const Color(0xFFE91E63) : Colors.grey[200],
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(16),
-            topRight: const Radius.circular(16),
-            bottomLeft: isMe ? const Radius.circular(16) : Radius.zero,
-            bottomRight: isMe ? Radius.zero : const Radius.circular(16),
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              msg.content,
-              style: TextStyle(
-                color: isMe ? Colors.white : Colors.black87,
-                fontSize: 15,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              _formatTime(msg.createdAt),
-              style: TextStyle(
-                color: isMe ? Colors.white70 : Colors.black54,
-                fontSize: 10,
               ),
             ),
           ],
