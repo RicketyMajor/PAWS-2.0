@@ -17,11 +17,10 @@ class ChatRepository {
     final token = await _storage.read(key: 'jwt_token');
     if (token == null) throw Exception('No authentication token found');
 
-    // URL: ws://localhost:8080/api/v1/ws
+    // WS URL: Ajustar según tu ApiConstants (ws:// o wss://)
     final uri = Uri.parse('${ApiConstants.wsUrl}/ws');
 
     try {
-      // Usamos IOWebSocketChannel para enviar el header de Auth
       _channel = IOWebSocketChannel.connect(
         uri,
         headers: {'Authorization': 'Bearer $token'},
@@ -35,7 +34,6 @@ class ChatRepository {
   }
 
   // 2. OBTENER HISTORIAL (HTTP)
-  // Devuelve una lista dinámica (JSON crudo) para que el BLoC la procese con el ID correcto.
   Future<List<dynamic>> getHistory(int matchId) async {
     try {
       final token = await _storage.read(key: 'jwt_token');
@@ -43,11 +41,9 @@ class ChatRepository {
         '${ApiConstants.baseUrl}/matches/$matchId/messages',
         options: Options(headers: {'Authorization': 'Bearer $token'}),
       );
-
-      return response.data; // Retorna List<dynamic>
+      return response.data;
     } catch (e) {
       print("Error cargando historial: $e");
-      // Retornamos lista vacía en caso de error para no romper la UI
       return [];
     }
   }
@@ -68,6 +64,31 @@ class ChatRepository {
       _channel!.sink.close();
       _channel = null;
       print("WebSocket desconectado");
+    }
+  }
+
+  // --- NUEVO: REPORTAR USUARIO ---
+  Future<void> reportUser({
+    required int reportedId,
+    required int matchId,
+    required String category,
+    required String description,
+  }) async {
+    try {
+      final token = await _storage.read(key: 'jwt_token');
+
+      await _dio.post(
+        '${ApiConstants.baseUrl}/report',
+        data: {
+          'reported_id': reportedId,
+          'match_id': matchId,
+          'category': category,
+          'description': description,
+        },
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+    } catch (e) {
+      throw Exception('Error enviando reporte: $e');
     }
   }
 }

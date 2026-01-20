@@ -21,7 +21,7 @@ class ChatScreen extends StatefulWidget {
   // --- FLAGS DE ESTADO ---
   final bool isPetDeleted;
   final bool isPeerLeft;
-  final bool isRescuer; // <--- NUEVO PARAMETRO
+  final bool isRescuer;
 
   const ChatScreen({
     super.key,
@@ -31,7 +31,7 @@ class ChatScreen extends StatefulWidget {
     this.peerPhotoUrl,
     this.isPetDeleted = false,
     this.isPeerLeft = false,
-    this.isRescuer = false, // Por defecto falso (para adoptantes)
+    this.isRescuer = false,
   });
 
   @override
@@ -67,13 +67,9 @@ class _ChatScreenState extends State<ChatScreen> {
     if (widget.isPetDeleted)
       initialStatus = 'pet_deleted';
     else if (widget.isPeerLeft)
-      initialStatus = widget.isRescuer
-          ? 'adopter_left'
-          : 'rescuer_left'; // Ajustamos según rol si es necesario, o usamos peer_left genérico
+      initialStatus = widget.isRescuer ? 'adopter_left' : 'rescuer_left';
 
-    // Mejor usamos el genérico 'peer_left' si no queremos ser tan específicos aquí,
-    // pero el Bloc ya maneja 'adopter_left' y 'rescuer_left' si se pasan desde el match model.
-    // Para simplificar y dado que pasamos flags booleanos:
+    // Fallback genérico para peer_left
     if (widget.isPeerLeft) initialStatus = 'peer_left';
 
     return BlocProvider(
@@ -85,129 +81,284 @@ class _ChatScreenState extends State<ChatScreen> {
             InitChat(
               widget.matchId,
               initialStatus: initialStatus,
-              isRescuer: widget.isRescuer, // <--- PASAMOS EL ROL
+              isRescuer: widget.isRescuer,
             ),
           ),
 
-      child: Scaffold(
-        appBar: AppBar(
-          backgroundColor: Colors.white,
-          elevation: 1,
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back, color: Color(0xFFE91E63)),
-            onPressed: () => Navigator.pop(context),
-          ),
-          title: Row(
-            children: [
-              CircleAvatar(
-                radius: 18,
-                backgroundColor: Colors.grey[200],
-                backgroundImage: ImageHelper.getProvider(widget.peerPhotoUrl),
-                child: (widget.peerPhotoUrl == null)
-                    ? Text(
-                        widget.peerName.isNotEmpty
-                            ? widget.peerName[0].toUpperCase()
-                            : '?',
-                      )
-                    : null,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  widget.peerName,
-                  style: const TextStyle(
-                    color: Colors.black,
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
-                  overflow: TextOverflow.ellipsis,
+      child: BlocListener<ChatBloc, ChatState>(
+        listener: (context, state) {
+          if (state is ChatLoaded) {
+            // Manejo de feedback de Reportes
+            if (state.reportStatus == ReportStatus.success) {
+              Navigator.pop(
+                context,
+              ); // Cierra el diálogo de reporte si está abierto
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text("Reporte enviado. Gracias por avisarnos."),
+                  backgroundColor: Colors.green,
                 ),
+              );
+            } else if (state.reportStatus == ReportStatus.failure) {
+              // No cerramos el diálogo para que pueda reintentar, solo mostramos error
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text("Error: ${state.error ?? 'Falló el envío'}"),
+                  backgroundColor: Colors.red,
+                ),
+              );
+            }
+          }
+        },
+        child: Scaffold(
+          appBar: AppBar(
+            backgroundColor: Colors.white,
+            elevation: 1,
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back, color: Color(0xFFE91E63)),
+              onPressed: () => Navigator.pop(context),
+            ),
+            title: Row(
+              children: [
+                CircleAvatar(
+                  radius: 18,
+                  backgroundColor: Colors.grey[200],
+                  backgroundImage: ImageHelper.getProvider(widget.peerPhotoUrl),
+                  child: (widget.peerPhotoUrl == null)
+                      ? Text(
+                          widget.peerName.isNotEmpty
+                              ? widget.peerName[0].toUpperCase()
+                              : '?',
+                        )
+                      : null,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    widget.peerName,
+                    style: const TextStyle(
+                      color: Colors.black,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              // --- MENÚ MEJORADO ---
+              BlocBuilder<ChatBloc, ChatState>(
+                builder: (context, state) {
+                  bool isLocked = (state is ChatLoaded && state.isLocked);
+                  return PopupMenuButton<String>(
+                    icon: const Icon(Icons.more_vert, color: Colors.grey),
+                    onSelected: (value) {
+                      if (value == 'report') {
+                        _showReportDialog(context);
+                      } else if (value == 'unmatch') {
+                        _confirmUnmatch(context, isLocked);
+                      }
+                    },
+                    itemBuilder: (BuildContext context) {
+                      return [
+                        // Opción 1: Reportar
+                        const PopupMenuItem(
+                          value: 'report',
+                          child: Row(
+                            children: [
+                              Icon(Icons.flag_outlined, color: Colors.orange),
+                              SizedBox(width: 8),
+                              Text("Reportar usuario"),
+                            ],
+                          ),
+                        ),
+                        // Opción 2: Eliminar/Salir
+                        PopupMenuItem(
+                          value: 'unmatch',
+                          child: Row(
+                            children: [
+                              Icon(
+                                isLocked ? Icons.delete_outline : Icons.block,
+                                color: Colors.red,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                isLocked
+                                    ? 'Eliminar de mi lista'
+                                    : 'Salir del chat',
+                                style: const TextStyle(color: Colors.red),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ];
+                    },
+                  );
+                },
               ),
             ],
           ),
-          actions: [
-            BlocBuilder<ChatBloc, ChatState>(
-              builder: (context, state) {
-                bool isLocked = (state is ChatLoaded && state.isLocked);
-                return PopupMenuButton<String>(
-                  icon: const Icon(Icons.more_vert, color: Colors.grey),
-                  onSelected: (value) {
-                    if (value == 'unmatch') {
-                      _confirmUnmatch(context, isLocked);
+          body: Column(
+            children: [
+              Expanded(
+                child: BlocBuilder<ChatBloc, ChatState>(
+                  builder: (context, state) {
+                    if (state is ChatLoading) {
+                      return const Center(child: CircularProgressIndicator());
+                    } else if (state is ChatLoaded) {
+                      if (state.messages.isEmpty) {
+                        return _buildEmptyChat();
+                      }
+                      return ListView.builder(
+                        controller: _scrollController,
+                        reverse: true,
+                        itemCount: state.messages.length,
+                        itemBuilder: (context, index) {
+                          final msg = state.messages[index];
+                          final isMe = msg.senderId == _myUserId;
+                          return _buildMessageBubble(msg, isMe);
+                        },
+                      );
+                    } else if (state is ChatError) {
+                      return Center(child: Text(state.message));
                     }
+                    return const SizedBox.shrink();
                   },
-                  itemBuilder: (BuildContext context) {
-                    return [
-                      PopupMenuItem(
-                        value: 'unmatch',
-                        child: Row(
-                          children: [
-                            Icon(
-                              isLocked ? Icons.delete_outline : Icons.block,
-                              color: Colors.red,
-                              size: 20,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              isLocked
-                                  ? 'Eliminar de mi lista'
-                                  : 'Salir del chat',
-                              style: const TextStyle(color: Colors.red),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ];
-                  },
-                );
-              },
-            ),
-          ],
-        ),
-        body: Column(
-          children: [
-            Expanded(
-              child: BlocBuilder<ChatBloc, ChatState>(
+                ),
+              ),
+              BlocConsumer<ChatBloc, ChatState>(
+                listener: (context, state) {},
                 builder: (context, state) {
-                  if (state is ChatLoading) {
-                    return const Center(child: CircularProgressIndicator());
-                  } else if (state is ChatLoaded) {
-                    if (state.messages.isEmpty) {
-                      return _buildEmptyChat();
-                    }
-                    return ListView.builder(
-                      controller: _scrollController,
-                      reverse:
-                          true, // Asumiendo mensajes nuevos al final y orden invertido visualmente o desde backend
-                      itemCount: state.messages.length,
-                      itemBuilder: (context, index) {
-                        final msg = state.messages[index];
-                        final isMe = msg.senderId == _myUserId;
-                        return _buildMessageBubble(msg, isMe);
-                      },
-                    );
-                  } else if (state is ChatError) {
-                    return Center(child: Text(state.message));
+                  if (state is ChatLoaded && state.isLocked) {
+                    return _buildLockedWidget(state.lockReason);
                   }
-                  return const SizedBox.shrink();
+                  if (state is! ChatLoaded) return const SizedBox.shrink();
+                  return _buildInputArea(context);
                 },
               ),
-            ),
-            BlocConsumer<ChatBloc, ChatState>(
-              listener: (context, state) {},
-              builder: (context, state) {
-                if (state is ChatLoaded && state.isLocked) {
-                  return _buildLockedWidget(state.lockReason);
-                }
-                if (state is! ChatLoaded) return const SizedBox.shrink();
-                return _buildInputArea(context);
-              },
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
+
+  // --- DIALOGO DE REPORTE ---
+  void _showReportDialog(BuildContext chatContext) {
+    final _formKey = GlobalKey<FormState>();
+    String selectedCategory = 'abuse'; // Default
+    String description = '';
+
+    // Mapeo de valores técnicos a texto legible
+    final Map<String, String> categories = {
+      'abuse': 'Maltrato Animal',
+      'scam': 'Estafa / Fraude',
+      'spam': 'Spam / Publicidad',
+      'hate': 'Lenguaje Ofensivo / Odio',
+      'other': 'Otro',
+    };
+
+    showDialog(
+      context: chatContext,
+      builder: (dialogContext) {
+        // Usamos BlocProvider.value para pasar el BLoC existente al diálogo
+        return BlocProvider.value(
+          value: BlocProvider.of<ChatBloc>(chatContext),
+          child: AlertDialog(
+            title: const Text("Reportar Usuario"),
+            content: SingleChildScrollView(
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      "Tu reporte es anónimo y será revisado por un administrador.",
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                    const SizedBox(height: 16),
+                    DropdownButtonFormField<String>(
+                      value: selectedCategory,
+                      decoration: const InputDecoration(
+                        labelText: "Motivo",
+                        border: OutlineInputBorder(),
+                      ),
+                      items: categories.entries.map((e) {
+                        return DropdownMenuItem(
+                          value: e.key,
+                          child: Text(e.value),
+                        );
+                      }).toList(),
+                      onChanged: (val) {
+                        if (val != null) selectedCategory = val;
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      decoration: const InputDecoration(
+                        labelText: "Detalles adicionales",
+                        border: OutlineInputBorder(),
+                        hintText: "Describe brevemente la situación...",
+                      ),
+                      maxLines: 3,
+                      onChanged: (val) => description = val,
+                      validator: (val) {
+                        if (val == null || val.trim().isEmpty) {
+                          return 'Por favor, añade detalles.';
+                        }
+                        return null;
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text(
+                  "Cancelar",
+                  style: TextStyle(color: Colors.grey),
+                ),
+              ),
+              BlocBuilder<ChatBloc, ChatState>(
+                builder: (context, state) {
+                  // Si está cargando, mostramos spinner en el botón
+                  if (state is ChatLoaded &&
+                      state.reportStatus == ReportStatus.loading) {
+                    return const CircularProgressIndicator();
+                  }
+
+                  return ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                      foregroundColor: Colors.white,
+                    ),
+                    onPressed: () {
+                      if (_formKey.currentState!.validate()) {
+                        context.read<ChatBloc>().add(
+                          ReportUserEvent(
+                            reportedId: widget.peerId,
+                            category: selectedCategory,
+                            description: description,
+                          ),
+                        );
+                        // No hacemos pop aquí, esperamos al listener de éxito
+                      }
+                    },
+                    child: const Text("Enviar Reporte"),
+                  );
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // ... (Resto de métodos existentes: _buildLockedWidget, _buildInputArea, _sendMessage, etc.) ...
 
   Widget _buildLockedWidget(String reason) {
     return Container(

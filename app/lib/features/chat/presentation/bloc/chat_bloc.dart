@@ -8,6 +8,9 @@ import '../../data/chat_repository.dart';
 import '../../domain/message_model.dart';
 import '../../../pets/data/matches_repository.dart';
 
+// --- ENUMS ---
+enum ReportStatus { initial, loading, success, failure }
+
 // --- EVENTOS ---
 abstract class ChatEvent extends Equatable {
   @override
@@ -17,10 +20,9 @@ abstract class ChatEvent extends Equatable {
 class InitChat extends ChatEvent {
   final int matchId;
   final String? initialStatus;
-  final bool isRescuer; // <--- NUEVO CAMPO
+  final bool isRescuer;
 
   InitChat(this.matchId, {this.initialStatus, this.isRescuer = false});
-
   @override
   List<Object?> get props => [matchId, initialStatus, isRescuer];
 }
@@ -28,7 +30,6 @@ class InitChat extends ChatEvent {
 class SendMessageEvent extends ChatEvent {
   final String content;
   SendMessageEvent(this.content);
-
   @override
   List<Object?> get props => [content];
 }
@@ -37,10 +38,25 @@ class UnmatchChatEvent extends ChatEvent {
   UnmatchChatEvent();
 }
 
+// NUEVO EVENTO DE REPORTE
+class ReportUserEvent extends ChatEvent {
+  final int reportedId;
+  final String category;
+  final String description;
+
+  ReportUserEvent({
+    required this.reportedId,
+    required this.category,
+    required this.description,
+  });
+
+  @override
+  List<Object?> get props => [reportedId, category, description];
+}
+
 class _ReceiveMessageEvent extends ChatEvent {
   final ChatMessage message;
   _ReceiveMessageEvent(this.message);
-
   @override
   List<Object?> get props => [message];
 }
@@ -61,6 +77,9 @@ class ChatLoaded extends ChatState {
   final String lockReason;
   final String? error;
 
+  // Nuevo campo para el estado del reporte
+  final ReportStatus reportStatus;
+
   ChatLoaded({
     required this.messages,
     required this.matchId,
@@ -68,6 +87,7 @@ class ChatLoaded extends ChatState {
     this.isLocked = false,
     this.lockReason = '',
     this.error,
+    this.reportStatus = ReportStatus.initial, // Valor por defecto
   });
 
   @override
@@ -78,6 +98,7 @@ class ChatLoaded extends ChatState {
     isLocked,
     lockReason,
     error,
+    reportStatus,
   ];
 
   ChatLoaded copyWith({
@@ -87,6 +108,7 @@ class ChatLoaded extends ChatState {
     bool? isLocked,
     String? lockReason,
     String? error,
+    ReportStatus? reportStatus,
   }) {
     return ChatLoaded(
       messages: messages ?? this.messages,
@@ -95,6 +117,7 @@ class ChatLoaded extends ChatState {
       isLocked: isLocked ?? this.isLocked,
       lockReason: lockReason ?? this.lockReason,
       error: error,
+      reportStatus: reportStatus ?? this.reportStatus,
     );
   }
 }
@@ -102,7 +125,6 @@ class ChatLoaded extends ChatState {
 class ChatError extends ChatState {
   final String message;
   ChatError(this.message);
-
   @override
   List<Object?> get props => [message];
 }
@@ -140,7 +162,6 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
 
         if (event.initialStatus != null && event.initialStatus != 'accepted') {
           isLocked = true;
-          // Lógica personalizada de mensajes de bloqueo
           if (event.initialStatus == 'pet_deleted') {
             reason = event.isRescuer
                 ? 'Has eliminado la publicación de esta mascota.'
@@ -149,7 +170,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
             reason = 'El adoptante abandonó el chat.';
           else if (event.initialStatus == 'rescuer_left')
             reason = 'El rescatista abandonó el chat.';
-          else if (event.initialStatus == 'peer_left') // Fallback genérico
+          else if (event.initialStatus == 'peer_left')
             reason = 'El otro usuario abandonó el chat.';
           else
             reason = 'Chat finalizado.';
@@ -191,7 +212,6 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       final currentState = state;
       if (currentState is ChatLoaded) {
         if (currentState.isLocked) return;
-
         try {
           chatRepository.sendMessage(_currentMatchId, event.content);
         } catch (e) {
@@ -227,6 +247,47 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
           emit(
             currentState.copyWith(
               error: "No se pudo salir del chat: ${e.toString()}",
+            ),
+          );
+        }
+      }
+    });
+
+    // --- NUEVO HANDLER DE REPORTE ---
+    on<ReportUserEvent>((event, emit) async {
+      if (state is ChatLoaded) {
+        final currentState = state as ChatLoaded;
+
+        // 1. Emitir estado de carga (sin borrar mensajes)
+        emit(currentState.copyWith(reportStatus: ReportStatus.loading));
+
+        try {
+          // 2. Llamar al repositorio
+          await chatRepository.reportUser(
+            reportedId: event.reportedId,
+            matchId: _currentMatchId,
+            category: event.category,
+            description: event.description,
+          );
+
+          // 3. Éxito
+          emit(currentState.copyWith(reportStatus: ReportStatus.success));
+
+          // Opcional: Volver a initial para limpiar el flag
+          emit(currentState.copyWith(reportStatus: ReportStatus.initial));
+        } catch (e) {
+          // 4. Error
+          emit(
+            currentState.copyWith(
+              reportStatus: ReportStatus.failure,
+              error: e.toString(),
+            ),
+          );
+          // Limpiar error después
+          emit(
+            currentState.copyWith(
+              reportStatus: ReportStatus.initial,
+              error: null,
             ),
           );
         }
