@@ -996,7 +996,6 @@ Con esto, todos los handlers usan: `userID, ok := GetUserIDSafe(c)`
 La robustez del type casting mejora R-SEC-04 (Sistema de Reportes) de dos maneras:
 
 1. **Confiabilidad**: ReportHandler nunca puedegenerar panic por type assertion
-
    - Antes: `reporterID := c.GetUint()` → potencial panic si JWT mal formado
    - Después: `reporterID, ok := GetUserIDSafe()` → respuesta 401 determinística
 
@@ -1075,12 +1074,10 @@ func TestReportHandlerWithFloatUserID(t *testing.T) {
 #### 9. Lecciones Aprendidas
 
 1. **JSON Number Ambiguity**: JSON no distingue int/uint, todo es float64
-
    - Solution: Type assertion explícita en handlers
    - Previene: Panics, comportamiento indefinido
 
 2. **Middleware Data Flow**: Lo que almacena middleware debe ser consumido con cuidado
-
    - Antes: Asumimos type
    - Después: Verificamos type
 
@@ -1955,3 +1952,84 @@ Consultar [Fase-14](Fase-14.md) para detalles completos sobre:
 - Configuración de SendGrid
 - Testing de componentes async
 - Deployment a Railway con RabbitMQ
+
+## COMPLETADO EN ETAPA 17: Sistema de Justicia Integral
+
+Etapa 17 **construye sobre** los cimientos de Fase-8 transformando auto-ban automático en un sistema de justicia donde administradores tienen control y la comunidad tiene poder de verificación.
+
+### Transición: De Auto-Ban a Justicia Administrada
+
+**Fase-8** implementaba: 3 reportes = ban automático (ciego)
+
+**Etapa 17** cambia a:
+
+1. **Discrecionalidad**: Admin revisa con evidencia congelada antes de bannear
+2. **Categorías**: 5 categorías estándar (abuse, scam, spam, hate, other)
+3. **Blacklist Pública Opcional**: Admin decide si el ban es público
+4. **Protección del Denunciante**: Silencio operativo (nunca sabe quién lo reportó)
+
+### Modelo de Datos Extendido
+
+**Tabla Report ampliada**:
+
+```go
+type Report struct {
+    ID               uint
+    ReporterID       uint       // Quién reporta
+    ReportedID       uint       // Quién es reportado
+    MatchID          uint       // Chat específico (contexto)
+
+    Category         string     // NUEVO: abuse|scam|spam|hate|other
+    Description      string     // NUEVO: Texto libre
+    EvidenceSnapshot string     // NUEVO: JSON congelado del chat
+
+    Status           string     // AMPLIADO: pending|resolved|dismissed
+    ResolvedAt       *time.Time // NUEVO: Cuándo se resolvió
+    ResolverID       *uint      // NUEVO: Admin que resolvió
+}
+```
+
+**Nueva tabla: BlacklistEntry**
+
+```go
+type BlacklistEntry struct {
+    Run    string `gorm:"uniqueIndex"` // RUT único
+    Name   string                       // Nombre al ban
+    Reason string                       // Razón pública
+}
+```
+
+### Endpoints Nuevos - Etapa 17
+
+**Administrativos (solo admin)**:
+
+```go
+GET /admin/reports              // Lista pendientes
+GET /admin/reports/:id          // Detalle con evidencia
+POST /admin/reports/:id/resolve // Ejecutar sentencia
+```
+
+**Público** (SIN autenticación):
+
+```go
+GET /blacklist/search?rut=...   // Búsqueda de antecedentes
+```
+
+### Características Clave
+
+1. **Transacción Atómica**: Ban + Blacklist se ejecutan juntos o se revierten
+2. **Evidencia Inmutable**: Chat congelado en JSON al momento del reporte
+3. **Validación Módulo 11**: RUT chileno validado matemáticamente
+4. **Silencio Operativo**: Reportado nunca sabe quién lo denunció
+5. **Categorías Estandarizadas**: Admin entiende el patrón de comportamiento
+
+### Impacto en Seguridad
+
+**Mejora frente a Fase-8**:
+
+- Admin no es ciego (ve el chat completo)
+- Justicia es informada (contexto completo)
+- Comunidad se auto-protege (verifica antes de confiar)
+- Pruebas son inmutables (evidencia legal)
+
+Para documentación completa, ver [Etapa-17](Etapa-17.md)

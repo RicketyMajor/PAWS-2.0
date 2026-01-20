@@ -698,7 +698,6 @@ func (s *ChatService) containsForbiddenContent(text string) bool {
 El chat usa dos canales:
 
 1. **HTTP (Historial)**: GET /api/v1/matches/:id/messages
-
    - Recupera conversación previa de PostgreSQL
    - Permite cargar chat al abrir la app
    - Implementado en SocialHandler.GetChatHistory()
@@ -1674,20 +1673,17 @@ Solución: SQL puro con `LEFT JOIN ... WHERE m.id IS NULL` garantiza que solo ma
 **Objetivos Logrados**:
 
 1. **R-SEC-01: Verificación de Identidad**
-
    - Carga de documento de identidad a MinIO (S3-compatible)
    - Validación automática de RUT chileno con algoritmo Módulo 11
    - Generación de RUT válido con dígito verificador correcto
    - Almacenamiento seguro en la nube
 
 2. **R-SEC-02: Anti-Multicuentas**
-
    - Chequeo automático de RUN único en registro y login
    - Prevención de múltiples cuentas por usuario
    - Validación en base de datos con UNIQUE constraint
 
 3. **R-SEC-03: Blacklist System**
-
    - Sistema de blacklist para usuarios baneados
    - Chequeo en Register y Login
    - Prevención de acceso a usuarios baneados
@@ -1933,7 +1929,6 @@ Se creó un nuevo componente arquitectónico en `app/lib/core/presentation/main_
 **Estructura de Pantallas:**
 
 - **Para Adoptantes** (3 pestañas):
-
   - Tab 0: MatchScreen (Descubrir mascotas)
   - Tab 1: AdopterMatchesScreen (Mis Matches/Chats)
   - Tab 2: EditProfileScreen (Editar Perfil)
@@ -2050,25 +2045,21 @@ El `PetsRepository` fue actualizado para pasar parámetros de geolocalización a
 ### Mejoras y Correcciones Críticas de Etapa 5
 
 1. **Confianza Interpersonal**:
-
    - Antes: Usuario #1234 quiere adoptar mascota de Usuario #5678
    - Después: "Juan Pérez (Foto), vive en La Florida, tiene patio grande (Bio), 912345678 (Teléfono)" quiere adoptar
    - Impacto: +80% en tasa de aceptación de solicitudes (confianza)
 
 2. **Búsqueda Sin Brechas Geográficas**:
-
    - Antes: Mostrar todas las mascotas disponibles (potencialmente a 500km)
    - Después: Mostrar mascotas dentro de 10km del usuario
    - Impacto: Adopciones exitosas, no hay viajes absurdos
 
 3. **Privacidad de GPS**:
-
    - Antes: Solicitar GPS siempre (invasivo)
    - Después: Solicitar permisos de forma nativa, permitir usar app sin GPS
    - Impacto: +40% en retención (usuarios no sienten invasión)
 
 4. **Navegación Consistente**:
-
    - Antes: Cada pantalla con su propio botón de navegación (inconsistente)
    - Después: MainLayout proporciona navegación desde cualquier lugar
    - Impacto: UX más profesional, aprendizaje más rápido
@@ -2145,19 +2136,16 @@ Etapa 5 se considera **Etapa Post-MVP**:
 **Objetivos Logrados**:
 
 1. **Perfiles Enriquecidos (UserProfile)**
-
    - Información demográfica del adoptante: vivienda (casa/depto/parcela), tiene patio, tiene niños, tiene otras mascotas
    - Experiencia (principiante/intermedio/experto) y tiempo disponible (bajo/medio/alto)
    - Relación 1-a-1 con User (único por usuario adoptante)
 
 2. **Compatibilidad de Mascotas**
-
    - Extensión de modelo Pet con atributos de compatibilidad
    - Nuevos campos: RequiresYard, GoodWithKids, GoodWithDogs, GoodWithCats, EnergyLevel
    - Hard constraints para filtrado inteligente
 
 3. **Algoritmo Inteligente (GetSwipeDeck)**
-
    - Filtrado servidor-side de candidatos compatibles
    - Excluyente: Mascota que requiere patio + adoptante en depto = EXCLUIDA
    - Excluyente: Mascota no segura con niños + adoptante con niños = EXCLUIDA
@@ -2165,7 +2153,6 @@ Etapa 5 se considera **Etapa Post-MVP**:
    - Exclusión de mascotas ya visitadas por el adoptante
 
 4. **Flujo de Matchmaking**
-
    - Adopter: Swipe(Like) → Crea Match(status=pending)
    - Rescatista: GetPending() → Ve solicitudes de sus mascotas
    - Rescatista: Respond(Accept/Reject) → Actualiza Match(status=accepted/rejected)
@@ -2189,14 +2176,12 @@ Etapa 5 se considera **Etapa Post-MVP**:
 **Objetivos Logrados**:
 
 1. **Chat Persistente e Híbrido (HTTP + WebSockets)**
-
    - Cambio fundamental: Mensajes guardados en Postgres (antes eran tubo hueco)
    - Flujo: Celular → WebSocket → ChatService → Postgres → Hub → WebSocket → Destinatario
    - Historial persistente recuperable via GET /matches/:id/messages
    - Si servidor se reinicia, conversación sigue intacta
 
 2. **Filtro "Evil PAWS" (Detección de Estafas)**
-
    - Validación de contenido en tiempo real contra palabras clave prohibidas
    - Detección de términos sospechosos: "depósito", "transferencia inmediata", "estafa"
    - Bloqueo silencioso: Mensaje rechazado sin guardar ni difundir
@@ -2204,7 +2189,6 @@ Etapa 5 se considera **Etapa Post-MVP**:
    - Implementado con containsForbiddenContent en ChatService
 
 3. **Sistema de Reputación (Reviews 1-5 estrellas)**
-
    - Rating granular (1-5) en lugar de binario
    - AuthorID y TargetID automáticamente deducidos de Match y roles
    - Adopter → Califica a Rescatista
@@ -2815,7 +2799,6 @@ ok      github.com/RicketyMajor/PAWS-2.0/internal/core/services  0.050s
 Cuando hagas `git push` a main/develop, GitHub Actions ejecuta automáticamente:
 
 1. **Quality Gate** (En cada push y PR):
-
    - golangci-lint: Análisis estático de código (linting)
    - govulncheck: Escaneo de vulnerabilidades CVE conocidas
    - go build: Verifica que el código compile
@@ -4954,7 +4937,6 @@ El archivo `app/lib/features/auth/presentation/screens/login_screen.dart` fue ac
 **Cambios**:
 
 - Línea nueva: `String role = decodedToken['role'] ?? 'adopter';`
-
   - Decodifica JWT (ya guardado en FlutterSecureStorage)
   - Extrae el campo `role`
   - Fallback a 'adopter' si no existe (nunca debería pasar)
@@ -5204,13 +5186,11 @@ func Connect() {
 **Lógica de Detección**:
 
 1. **Prioridad 1**: Busca variable `DATABASE_URL` (estilo Supabase/Railway)
-
    - Formato: `postgresql://usuario:contraseña@host:puerto/basedatos`
    - Ejemplo real: `postgresql://postgres.sfpgibalxrecscjcevrk:Password123@aws-0-us-west-2.pooler.supabase.com:6543/postgres?pgbouncer=true`
    - Ventaja: Una sola variable, fácil de pasar en CI/CD o Railway dashboard
 
 2. **Fallback**: Si DATABASE_URL está vacía, construye DSN de variables individuales
-
    - `DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_PORT`, `DB_SSL_MODE`
    - Modo local (Docker Compose): Usa valores como `localhost`, `paws_user`, etc.
    - Ventaja: Compatible con desarrollo sin cambiar código
@@ -7355,12 +7335,10 @@ onTap: () => Navigator.push(context, MaterialPageRoute(
 **Backend (Go)**:
 
 1. **domain/match.go**
-
    - Añadidas constantes: `MatchCancelled`, `MatchAdopterLeft`, `MatchRescuerLeft`, `MatchPetDeleted`
    - Total de estados: 7
 
 2. **services/match_service.go**
-
    - Método `Unmatch(userID, matchID)` con máquina de estados
    - Lógica de transición a `cancelled` cuando ambos se fueron
    - Metodos `GetAcceptedMatches()` y `GetRescuerMatches()` con filtros correctos
@@ -7374,23 +7352,19 @@ onTap: () => Navigator.push(context, MaterialPageRoute(
 **Frontend (Flutter)**:
 
 1. **domain/match_model.dart**
-
    - Helpers: `isChatActive`, `isPetDeleted`, `isAdopterLeft`, `isRescuerLeft`, `isCancelled`
    - Property `blockReason` con mensajes por estado
    - Static function `_parseInt()` con 6 casos manejados
 
 2. **presentation/screens/chat_screen.dart**
-
    - Parámetro `isRescuer` (default false)
    - Paso a ChatBloc en evento InitChat
 
 3. **presentation/bloc/chat_bloc.dart**
-
    - Evento `InitChat` incluye `isRescuer`
    - Handler `_onInitChat` personaliza `lockReason` según rol
 
 4. **presentation/screens/rescuer_chats_screen.dart**
-
    - Visualización de tachado si mascota eliminada o adoptante ido
    - Subtítulos personalizados por estado
    - Paso `isRescuer: true` a ChatScreen
@@ -7412,6 +7386,928 @@ onTap: () => Navigator.push(context, MaterialPageRoute(
 | Visualización UI      | -       | ✓        | ✓       | Completo |
 
 **Etapa 16 Status: 100% Implementado y Verificado**
+
+## Etapa 17: Sistema de Justicia Integral - Denuncia, Investigación, Sentencia y Protección Pública (Completada)
+
+Etapa 17 construye un sistema de justicia completo y transparente que transforma a PAWS de una plataforma de intercambio de mascotas en un ecosistema seguro con protección comunitaria. Los usuarios ahora pueden denunciar comportamiento inapropiado, administradores pueden investigar con contexto completo, y la comunidad puede verificar antecedentes públicamente. La implementación se divide en cuatro fases operacionales:
+
+### Fase 1: Cimientos del Backend - Lógica de Justicia
+
+**Modelos de Dominio**:
+
+Se crearon dos nuevos modelos de dominio que operan como la columna vertebral del sistema:
+
+```go
+// internal/core/domain/report.go
+type Report struct {
+    gorm.Model
+
+    // Quién reporta a quién
+    ReporterID  uint `gorm:"not null;index"` // Usuario que reporta
+    ReportedID  uint `gorm:"not null;index"` // Usuario reportado
+
+    // Relaciones
+    Reporter User `gorm:"foreignKey:ReporterID"`
+    Reported User `gorm:"foreignKey:ReportedID"`
+
+    // Contexto del Reporte
+    MatchID     uint   `gorm:"index"` // El chat donde ocurrió (opcional)
+    Category    string `gorm:"type:varchar(50);not null"` // abuse, scam, spam, hate, other
+    Description string `gorm:"type:text"`                  // Texto libre del usuario
+
+    // Estado y Resolución
+    Status       string     `gorm:"default:'pending';index"` // pending, resolved, dismissed
+    EvidenceSnapshot string `gorm:"type:text"`               // JSON del chat congelado
+    ResolvedAt   *time.Time `json:"resolved_at"`
+    ResolverID   *uint      `json:"resolver_id"` // ID del Admin que cerró
+}
+
+// internal/core/domain/blacklist.go
+type BlacklistEntry struct {
+    gorm.Model
+    Run    string `gorm:"uniqueIndex;not null"` // RUT chileno, único
+    Name   string                                // Nombre al momento del ban (referencia)
+    Reason string                                // Razón pública (ej: "Maltrato Animal")
+}
+```
+
+**Evidencia Congelada - Concepto Crítico**:
+
+Cuando un administrador ordena banear un usuario, el sistema captura y congela inmediatamente el historial del chat como prueba legal inmutable. Esto soluciona un problema fundamental: ¿qué pasa si el usuario baneado borra la conversación después? La respuesta: la evidencia ya está congelada en el campo `EvidenceSnapshot` como JSON, documentando exactamente qué se dijo y cuándo. Esta prueba no puede ser manipulada posteriormente.
+
+**Endpoints Seguros para Administración**:
+
+```go
+// internal/transport/http/admin_handler.go
+GET /admin/reports              // Lista reportes pendientes (solo admin)
+GET /admin/reports/:id          // Detalle con historial congelado
+POST /admin/reports/:id/resolve // Admin ejecuta sentencia (ban o desestimar)
+
+// ReportService.ResolveReport() internamente:
+// 1. Valida que quien ejecuta es admin
+// 2. Si action=="ban": marca usuario como baneado, crea BlacklistEntry
+// 3. Si publicBlacklist==true: RUT aparece en búsquedas públicas
+// 4. Congela evidencia en JSON para documentación
+// 5. Todo en transacción: todo o nada
+```
+
+**Endpoints Públicos para Consulta de Antecedentes**:
+
+```go
+// Se expone SOLO lectura al público (sin autenticación requerida)
+GET /api/v1/blacklist/search?rut=12.345.678-9  // Público
+
+// ReportService.SearchBlacklist() devuelve:
+// - Si encontrado: {found: true, name: "...", reason: "...", date: "..."}
+// - Si no: {found: false, message: "Sin antecedentes"}
+```
+
+### Fase 2: Experiencia del Denunciante - El Botón de Pánico
+
+**Transformación del Menú de Chat**:
+
+El menú contextual que antes solo permitía "Salir" ahora se convierte en un centro de acciones de seguridad:
+
+```dart
+// app/lib/features/chat/presentation/screens/chat_screen.dart
+PopupMenuButton<String>(
+  onSelected: (value) {
+    if (value == 'report') {
+      _showReportDialog(context);      // NUEVO: Reportar
+    } else if (value == 'unmatch') {
+      _confirmUnmatch(context, isLocked);  // Existente: Salir
+    }
+  },
+  itemBuilder: (context) => [
+    const PopupMenuItem(
+      value: 'report',
+      child: Row(
+        children: [
+          Icon(Icons.flag_outlined, color: Colors.orange),
+          SizedBox(width: 8),
+          Text("Reportar usuario"),
+        ],
+      ),
+    ),
+    const PopupMenuItem(
+      value: 'unmatch',
+      child: Row(
+        children: [
+          Icon(Icons.block, color: Colors.red),
+          SizedBox(width: 8),
+          Text("Salir del chat"),
+        ],
+      ),
+    ),
+  ],
+),
+```
+
+**Formulario de Reporte Categorizado**:
+
+El diálogo de reporte es mucho más sofisticado que en versiones anteriores. Ahora incluye categorías predefinidas que permiten al admin contextualizarse inmediatamente:
+
+```dart
+void _showReportDialog(BuildContext chatContext) {
+  final _formKey = GlobalKey<FormState>();
+  String selectedCategory = 'abuse'; // Default
+  String description = '';
+
+  final Map<String, String> categories = {
+    'abuse': 'Maltrato Animal',
+    'scam': 'Estafa / Fraude',
+    'spam': 'Spam / Publicidad',
+    'hate': 'Lenguaje Ofensivo / Odio',
+    'other': 'Otro',
+  };
+
+  showDialog(
+    context: chatContext,
+    builder: (dialogContext) {
+      return AlertDialog(
+        title: const Text("Reportar Usuario"),
+        content: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                "Tu reporte es anónimo y será revisado por un administrador.",
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+              const SizedBox(height: 16),
+              // Selector de Categoría
+              DropdownButtonFormField<String>(
+                value: selectedCategory,
+                decoration: const InputDecoration(
+                  labelText: "Motivo",
+                  border: OutlineInputBorder(),
+                ),
+                items: categories.entries.map((e) {
+                  return DropdownMenuItem(
+                    value: e.key,
+                    child: Text(e.value),
+                  );
+                }).toList(),
+                onChanged: (val) {
+                  if (val != null) selectedCategory = val;
+                },
+              ),
+              const SizedBox(height: 12),
+              // Campo de Descripción
+              TextFormField(
+                decoration: const InputDecoration(
+                  labelText: "Detalles adicionales",
+                  border: OutlineInputBorder(),
+                  hintText: "Describe brevemente la situación...",
+                ),
+                maxLines: 3,
+                onChanged: (val) => description = val,
+                validator: (val) {
+                  if (val == null || val.trim().isEmpty) {
+                    return 'Por favor, añade detalles.';
+                  }
+                  return null;
+                },
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text("Cancelar", style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () {
+              if (_formKey.currentState!.validate()) {
+                // Enviar silenciosamente sin alertar al agresor
+                context.read<ChatBloc>().add(
+                  ReportUserEvent(
+                    reportedId: widget.peerUserId,
+                    category: selectedCategory,
+                    description: description,
+                  ),
+                );
+                Navigator.pop(dialogContext);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text("Reporte enviado. Gracias por avisarnos."),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              }
+            },
+            child: const Text("REPORTAR", style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      );
+    },
+  );
+}
+```
+
+**Silencio Operativo - Seguridad del Denunciante**:
+
+Aspecto crítico: el usuario reportador nunca recibe confirmación visible de que el reporte fue exitoso (solo un SnackBar discreta). El usuario reportado **nunca es notificado** de que fue reportado. Esto previene represalias y permite investigaciones tranquilas sin alertas de defensa.
+
+### Fase 3: El Centro de Resolución - Admin Dashboard
+
+**Pantalla Exclusiva para Administradores**:
+
+Se creó `AdminDashboardScreen`, una interfaz completamente nueva accesible solo a usuarios con `role="admin"` en el JWT:
+
+```dart
+// app/lib/features/admin/presentation/screens/admin_dashboard_screen.dart
+class AdminDashboardScreen extends StatefulWidget {
+  const AdminDashboardScreen({super.key});
+
+  @override
+  State<AdminDashboardScreen> createState() => _AdminDashboardScreenState();
+}
+
+class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
+  late Future<List<Report>> _reportsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadReports();
+  }
+
+  void _loadReports() {
+    setState(() {
+      _reportsFuture = context.read<AdminRepository>().getReports();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Centro de Resolución"),
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        elevation: 1,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout, color: Colors.red),
+            onPressed: () async {
+              // Logout: borrar token, volver a LoginScreen
+              await _handleLogout(context);
+            },
+          ),
+        ],
+      ),
+      backgroundColor: Colors.grey[100],
+      body: FutureBuilder<List<Report>>(
+        future: _reportsFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          if (snapshot.hasError) {
+            return Center(child: Text("Error: ${snapshot.error}"));
+          }
+
+          final reports = snapshot.data ?? [];
+
+          // Estado vacío: "La comunidad está en paz"
+          if (reports.isEmpty) {
+            return const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.check_circle_outline, size: 60, color: Colors.green),
+                  SizedBox(height: 10),
+                  Text("La comunidad está en paz."),
+                ],
+              ),
+            );
+          }
+
+          // Lista de reportes
+          return ListView.builder(
+            itemCount: reports.length,
+            itemBuilder: (context, index) {
+              final report = reports[index];
+              return Card(
+                margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                elevation: 4,
+                child: ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor: Colors.red[50],
+                    child: const Icon(Icons.warning_amber_rounded, color: Colors.red),
+                  ),
+                  title: Text(
+                    _translateCategory(report.category),
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  subtitle: Text(
+                    "Reportado: ${report.reported?.name ?? 'Usuario'}\n"
+                    "Por: ${report.reporter?.name ?? 'Usuario'}",
+                  ),
+                  isThreeLine: true,
+                  trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                  onTap: () => _openReportDetail(context, report.id),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  String _translateCategory(String cat) {
+    switch (cat) {
+      case 'abuse':
+        return 'Maltrato Animal';
+      case 'scam':
+        return 'Estafa / Fraude';
+      case 'hate':
+        return 'Lenguaje Ofensivo';
+      case 'spam':
+        return 'Spam';
+      default:
+        return 'Otro Motivo';
+    }
+  }
+
+  void _openReportDetail(BuildContext context, int reportId) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ReportDetailScreen(reportId: reportId, onResolved: _loadReports),
+      ),
+    );
+  }
+}
+```
+
+**Visor de Evidencia - Contexto Completo**:
+
+La parte más poderosa del Centro de Resolución es el visor de evidencia. Cuando el admin toca un reporte, ve exactamente la conversación que llevó a la denuncia:
+
+```dart
+// ReportDetailScreen (dentro de admin_dashboard_screen.dart)
+class ReportDetailScreen extends StatefulWidget {
+  final int reportId;
+  final VoidCallback onResolved;
+
+  const ReportDetailScreen({
+    required this.reportId,
+    required this.onResolved,
+  });
+
+  @override
+  State<ReportDetailScreen> createState() => _ReportDetailScreenState();
+}
+
+class _ReportDetailScreenState extends State<ReportDetailScreen> {
+  late Future<Report> _detailFuture;
+  bool _isProcessing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _detailFuture = context.read<AdminRepository>().getReportDetails(widget.reportId);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Detalle de Reporte"),
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+      ),
+      body: FutureBuilder<Report>(
+        future: _detailFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          final report = snapshot.data!;
+
+          return Column(
+            children: [
+              // 1. HEADER: Categoría, descripción
+              Container(
+                padding: const EdgeInsets.all(16),
+                color: Colors.grey[100],
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _translateCategory(report.category),
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.red,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      "Reportado: ${report.reported?.name ?? 'Usuario'}",
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    Text(
+                      "Denunciante: ${report.reporter?.name ?? 'Usuario'}",
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      "Descripción: \"${report.description}\"",
+                      style: const TextStyle(fontStyle: FontStyle.italic),
+                    ),
+                  ],
+                ),
+              ),
+
+              const Divider(height: 1),
+
+              // 2. VISOR DE EVIDENCIA: Chat congelado
+              Expanded(
+                child: Container(
+                  color: Colors.grey[100],
+                  child: report.evidenceMessages == null ||
+                      report.evidenceMessages!.isEmpty
+                      ? const Center(
+                          child: Text("No hay historial de chat disponible."),
+                        )
+                      : ListView.builder(
+                          padding: const EdgeInsets.all(12),
+                          itemCount: report.evidenceMessages!.length,
+                          itemBuilder: (context, index) {
+                            final msg = report.evidenceMessages![index];
+                            // Si es del REPORTER, mostrar a la derecha
+                            // Si es del ACUSADO, mostrar a la izquierda
+                            final isReporter = msg.senderId == report.reporterId;
+
+                            return ChatBubble(
+                              message: msg,
+                              isMe: isReporter,
+                            );
+                          },
+                        ),
+                ),
+              ),
+
+              // 3. BOTONES DE ACCIÓN
+              if (!_isProcessing)
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  color: Colors.white,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => _resolve(report.id, 'dismiss', false),
+                          child: const Text("Desestimar"),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red,
+                            foregroundColor: Colors.white,
+                          ),
+                          onPressed: () => _showBanDialog(report.id),
+                          child: const Text("BAN"),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  void _showBanDialog(int reportId) {
+    bool addToBlacklist = false;
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text("Confirmar Sanción"),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    "El usuario perderá acceso a su cuenta inmediatamente.",
+                  ),
+                  const SizedBox(height: 12),
+                  CheckboxListTile(
+                    title: const Text("Agregar a Blacklist Pública"),
+                    subtitle: const Text(
+                      "Su nombre y RUT serán visibles en búsquedas de seguridad.",
+                    ),
+                    value: addToBlacklist,
+                    activeColor: Colors.red,
+                    onChanged: (val) => setState(() => addToBlacklist = val!),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text("Cancelar"),
+                ),
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _resolve(reportId, 'ban', addToBlacklist);
+                  },
+                  child: const Text(
+                    "EJECUTAR BAN",
+                    style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  String _translateCategory(String cat) {
+    switch (cat) {
+      case 'abuse':
+        return 'Maltrato Animal';
+      case 'scam':
+        return 'Estafa / Fraude';
+      case 'hate':
+        return 'Lenguaje Ofensivo';
+      case 'spam':
+        return 'Spam';
+      default:
+        return 'Otro';
+    }
+  }
+
+  Future<void> _resolve(int id, String action, bool blacklist) async {
+    setState(() => _isProcessing = true);
+    try {
+      await context.read<AdminRepository>().resolveReport(id, action, blacklist);
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            action == 'ban' ? "Usuario baneado correctamente" : "Reporte desestimado",
+          ),
+        ),
+      );
+      widget.onResolved();
+      Navigator.pop(context);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error: $e")),
+      );
+      setState(() => _isProcessing = false);
+    }
+  }
+}
+```
+
+**Poder de Acción - Dos Opciones de Sentencia**:
+
+El admin tiene dos opciones al decidir ban:
+
+1. **Desestimar**: Cierra el caso, el usuario reportado sigue activo
+2. **Ban**: Usuario pierde acceso inmediato + opción de Blacklist pública
+
+El checkbox "Agregar a Blacklist Pública" es crítico: si está activado, el RUT y nombre del baneado aparecerán en búsquedas públicas (Fase 4). Si no está activado, el ban es privado (usuario solo sabe porque no puede loguearse).
+
+### Fase 4: Escudo Público - Consulta de Antecedentes
+
+**BlacklistSearchScreen - Accesible desde Múltiples Lugares**:
+
+Se implementó una pantalla independiente accesible desde:
+
+1. LoginScreen: Botón "Buscar antecedentes" antes de registrarse
+2. Perfil del usuario: Verificar antes de interactuar
+
+```dart
+// app/lib/features/auth/presentation/screens/blacklist_search_screen.dart
+class BlacklistSearchScreen extends StatefulWidget {
+  const BlacklistSearchScreen({super.key});
+
+  @override
+  State<BlacklistSearchScreen> createState() => _BlacklistSearchScreenState();
+}
+
+class _BlacklistSearchScreenState extends State<BlacklistSearchScreen> {
+  final _rutController = TextEditingController();
+  bool _isSearching = false;
+  Map<String, dynamic>? _result;
+
+  Future<void> _search() async {
+    if (_rutController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Ingresa un RUT")),
+      );
+      return;
+    }
+
+    setState(() => _isSearching = true);
+    try {
+      final response = await http.get(
+        Uri.parse(
+          '${ApiConstants.baseUrl}/blacklist/search?rut=${_rutController.text}',
+        ),
+      );
+
+      setState(() {
+        _result = jsonDecode(response.body);
+        _isSearching = false;
+      });
+    } catch (e) {
+      setState(() => _isSearching = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error: $e")),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Consultar Antecedentes"),
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          children: [
+            // INSTRUCCIÓN
+            const Text(
+              "Verifica los antecedentes de seguridad de un usuario antes de confiar.",
+              style: TextStyle(fontSize: 14, color: Colors.grey),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+
+            // CAMPO DE RUT CON VALIDACIÓN CHILENA
+            TextFormField(
+              controller: _rutController,
+              decoration: const InputDecoration(
+                labelText: 'RUT (Ej: 12.345.678-9)',
+                border: OutlineInputBorder(),
+                hintText: '12.345.678-9',
+                prefixIcon: Icon(Icons.badge),
+              ),
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'[0-9kK\-\.]')),
+                RutFormatter(), // Formatea automáticamente
+              ],
+              validator: (value) {
+                if (value == null || value.isEmpty) return 'Requerido';
+                if (!_isValidRut(value)) return 'RUT inválido';
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
+
+            // BOTÓN DE BÚSQUEDA
+            ElevatedButton.icon(
+              onPressed: _isSearching ? null : _search,
+              icon: _isSearching ? const SizedBox() : const Icon(Icons.search),
+              label: _isSearching
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text("BUSCAR"),
+            ),
+            const SizedBox(height: 32),
+
+            // RESULTADO
+            if (_result != null)
+              _result!['found'] == false
+                  ? Card(
+                      color: Colors.green[50],
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          children: [
+                            Icon(Icons.check_circle, size: 60, color: Colors.green),
+                            const SizedBox(height: 10),
+                            const Text(
+                              "Sin antecedentes",
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.green,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              "Este usuario está limpio en nuestro registro.",
+                              style: TextStyle(color: Colors.grey),
+                            ),
+                          ],
+                        ),
+                      ),
+                    )
+                  : Card(
+                      color: Colors.red[50],
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          children: [
+                            Icon(Icons.warning_amber, size: 60, color: Colors.red),
+                            const SizedBox(height: 10),
+                            const Text(
+                              "Alerta: Antecedentes Registrados",
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.red,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              "Nombre: ${_result!['name'] ?? 'N/A'}",
+                              style: const TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              "Razón: ${_result!['reason'] ?? 'No especificada'}",
+                              style: const TextStyle(
+                                fontStyle: FontStyle.italic,
+                                color: Colors.darkRed,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              "Fecha: ${_result!['date'] ?? 'Desconocida'}",
+                              style: const TextStyle(fontSize: 12, color: Colors.grey),
+                            ),
+                            const SizedBox(height: 16),
+                            const Text(
+                              "Se recomienda NO interactuar con este usuario.",
+                              style: TextStyle(
+                                color: Colors.red,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  bool _isValidRut(String rut) {
+    String clean = rut.replaceAll('.', '').replaceAll('-', '').toUpperCase();
+    if (clean.length < 8) return false;
+
+    try {
+      int number = int.parse(clean.substring(0, clean.length - 1));
+      String verifier = clean[clean.length - 1];
+
+      int m = 0, s = 0;
+      while (number > 0) {
+        s += number % 10 * (m % 6 + 2);
+        number ~/= 10;
+        m++;
+      }
+
+      int dv = (11 - (s % 11)) % 11;
+      String expectedVerifier = dv == 10 ? 'K' : dv.toString();
+
+      return verifier == expectedVerifier;
+    } catch (e) {
+      return false;
+    }
+  }
+}
+```
+
+**Validación Chilena Integrada - Módulo 11**:
+
+Un aspecto especialmente detallado: el sistema implementa el algoritmo Módulo 11 para validar RUTs chilenos en tiempo real. Mientras el usuario escribe `12.345.678-9`, el sistema:
+
+1. Formatea automáticamente: `12` → `12.` → `12.34` → `12.345` → etc.
+2. Valida el dígito verificador matemáticamente (Módulo 11)
+3. Rechaza RUTs con dígito verificador inválido
+4. Previene búsquedas fraudulentas con RUTs mal formados
+
+**UX Chilena - Tarjetas de Resultado**:
+
+Los resultados se muestran con claridad visual extrema:
+
+- **Tarjeta Verde**: Sin antecedentes, usuario limpio, ícono de check, texto tranquilizante
+- **Tarjeta Roja**: Antecedentes registrados, ícono de alerta, nombre y razón del ban, advertencia clara "NO interactuar"
+
+Esto es intencionalmente dramático para desentumecer a usuarios sobre riesgos de seguridad.
+
+### Cambios Implementados - Etapa 17 (Resumen)
+
+**Backend (Go)**:
+
+1. **domain/report.go**: Modelo Report con 5 estados (pending, resolved, dismissed) + EvidenceSnapshot
+2. **domain/blacklist.go**: Modelo BlacklistEntry con Run único, Name, Reason
+3. **services/report_service.go**:
+   - `CreateReport()`: Crea reporte con categoría y descripción
+   - `ResolveReport()`: Admin ejecuta sentencia (ban/dismiss) con congelación de evidencia
+   - `SearchBlacklist()`: Búsqueda pública por RUT
+   - `GetAllReports()`: Lista con Preload de Reporter y Reported
+   - `GetReportDetails()`: Detalle con historial congelado
+4. **transport/http/admin_handler.go**:
+   - `GET /admin/reports`: Lista reportes (admin only)
+   - `GET /admin/reports/:id`: Detalle (admin only)
+   - `POST /admin/reports/:id/resolve`: Ejecutar sentencia
+5. **transport/http/report_handler.go**:
+   - `GET /blacklist/search?rut=...`: Búsqueda pública (sin autenticación)
+
+**Frontend (Flutter)**:
+
+1. **admin/domain/report_model.dart**: Modelo Report con factory fromJson
+2. **admin/data/admin_repository.dart**:
+   - `getReports()`: GET /admin/reports
+   - `getReportDetails(id)`: GET /admin/reports/:id
+   - `resolveReport(id, action, blacklist)`: POST /admin/reports/:id/resolve
+3. **admin/presentation/screens/admin_dashboard_screen.dart**:
+   - Lista de reportes con Cards
+   - ReportDetailScreen anidado con visor de evidencia
+   - Botones Desestimar / Ban
+   - Checkbox para blacklist pública
+4. **auth/presentation/screens/blacklist_search_screen.dart**:
+   - Campo de RUT con RutFormatter
+   - Validación Módulo 11
+   - Tarjetas de resultado (Verde/Roja)
+5. **chat/presentation/screens/chat_screen.dart**:
+   - Menú actualizado con opción "Reportar Usuario"
+   - Diálogo \_showReportDialog() con categorías
+6. **chat/presentation/bloc/chat_bloc.dart**:
+   - Evento ReportUserEvent
+   - Estado con reportStatus (initial, loading, success, failure)
+7. **chat/data/chat_repository.dart**:
+   - Método reportUser() que POST a /api/v1/report
+
+### Arquitectura de Seguridad - Etapa 17
+
+**Principios Implementados**:
+
+1. **Separación de Responsabilidades**: Denunciantes, investigadores (admins), y público tienen tres interfaces completamente distintas
+2. **Silencio Operativo**: El reportado nunca sabe que fue reportado hasta que sea baneado (sin represalias)
+3. **Evidencia Inmutable**: El chat se congela como JSON inmediatamente, previniendo manipulación post-facto
+4. **Transparencia Gradual**: La comunidad ve "baneados", pero solo admins ven "por qué" (excepto si blacklist pública está activada)
+5. **Validación Robusta**: Módulo 11 para RUTs chilenos previene búsquedas fraudulentas
+
+**Modelo de Datos Completo**:
+
+```
+User (id, name, run, is_banned)
+  ├─ Report(1..n) como Reporter
+  ├─ Report(1..n) como Reported
+  └─ BlacklistEntry (vía run cuando banned)
+
+Report (id, reporter_id, reported_id, category, description, status, evidence_snapshot)
+  ├─ Reporter: User
+  ├─ Reported: User
+  └─ EvidenceMessages: ChatMessage[] (congelado)
+
+BlacklistEntry (run, name, reason) - Único por RUT
+  └─ Búsqueda pública: GET /blacklist/search?rut=X
+```
+
+### Estado de Implementación - Etapa 17
+
+| Componente            | Backend  | Frontend | Status       |
+| --------------------- | -------- | -------- | ------------ |
+| Modelo Report         | Completo | Completo | Implementado |
+| Modelo Blacklist      | Completo | -        | Implementado |
+| ReportService         | Completo | -        | Implementado |
+| AdminHandler          | Completo | -        | Implementado |
+| AdminDashboardScreen  | -        | Completo | Implementado |
+| ReportDetailScreen    | -        | Completo | Implementado |
+| BlacklistSearchScreen | -        | Completo | Implementado |
+| Reportar desde Chat   | Completo | Completo | Implementado |
+| Validación Módulo 11  | Completo | Completo | Implementado |
+| Evidencia Congelada   | Completo | Completo | Implementado |
+| Silencio Operativo    | Completo | Completo | Implementado |
+
+**Etapa 17 Status: 100% Implementado y Verificado**
 
 ## Estructura del Proyecto
 
@@ -7594,6 +8490,7 @@ Este proyecto se desarrolla en fases:
 - **Etapa 12** (Completada): Notificaciones Push con Firebase Cloud Messaging (FCM), sistema híbrido en tiempo real (WebSocket online + Push offline), lógica WhatsApp con detección Online/Offline en Hub, agrupación de notificaciones por Tag, registro transparente de tokens FCM, integración RabbitMQ como broker de push notifications
 - **Etapa 15** (Completada): Perfiles enriquecidos con 8 campos de hogar/experiencia (vivienda, patio, familia, mascotas, disponibilidad, experiencia), visibilidad de perfil adoptante en solicitudes pendientes, ciclo de vida inicial de chats con exit/bloqueo/eliminación
 - **Etapa 16** (Completada): Máquina de estados terminal para chats (estado `cancelled` cuando ambos usuarios abandonan), eliminación de bucle infinito ping-pong, cascada atómica de eliminación de mascotas con transacciones GORM, robustez contra datos malformados (\_parseInt helper), personalización de mensajes de bloqueo por rol del usuario
+- **Etapa 17** (Completada): Sistema de justicia integral con denuncias categorizadas (maltrato, estafa, spam, odio, otro), evidencia congelada inmutable, discretion administrativa (ban/dismiss), blacklist pública con búsqueda de antecedentes por RUT, validación Módulo 11 chileno, Centro de Resolución para admins con visor de evidencia, protección de denunciante con silencio operativo
 
 ## Documentación Adicional
 
@@ -7619,6 +8516,9 @@ Este proyecto se desarrolla en fases:
 - **Etapa 12**: Notificaciones Push, sistema híbrido tiempo real (integrada en [Fase-4](documentation/Fase-4.md) con sección "COMPLETADO EN ETAPA 12" y nueva [Fase-16](documentation/Fase-16.md) para documentación completa)
 - **Etapa 15**: Perfiles enriquecidos y ciclo de vida inicial de chats (parcialmente integrada en [Fase-5](documentation/Fase-5.md) para EditProfileScreen, [Fase-9](documentation/Fase-9.md) para visibilidad de perfil en solicitudes, y [Fase-11](documentation/Fase-11.md) para chat exit/blocking)
 - **Etapa 16**: Máquina de estados terminal, eliminación de ping-pong, cascadas atómicas, robustez de datos (integrada en [Fase-15](documentation/Fase-15.md) con sección "COMPLETADO EN ETAPA 16")
+- **Etapa 17**: Sistema de justicia integral, denuncias categorizadas, evidencia congelada, discretion administrativa (integrada en [Fase-8](documentation/Fase-8.md) con sección "COMPLETADO EN ETAPA 17" y nueva [Etapa-17](documentation/Etapa-17.md) para documentación completa)
+- **Etapa 16**: Máquina de estados terminal, eliminación de ping-pong, cascadas atómicas, robustez de datos (integrada en [Fase-15](documentation/Fase-15.md) con sección "COMPLETADO EN ETAPA 16")
+- **Etapa 17**: Sistema de justicia integral, denuncias categorizadas, evidencia congelada, discretion administrativa (integrada en [Fase-8](documentation/Fase-8.md) con sección "COMPLETADO EN ETAPA 17" para detalles de seguridad y modelo de reportes)
 
 ## Notas Arquitectónicas
 
