@@ -195,6 +195,7 @@ func main() {
 			}
 
 			protected.POST("/reviews", socialHandler.CreateReview)
+			protected.GET("/users/:id/reviews", socialHandler.GetUserReviews)
 			protected.POST("/report", reportHandler.Create)
 
 			protected.GET("/ws", wsHandler.HandleConnections)

@@ -21,6 +21,11 @@ type User struct {
 	Bio      string `gorm:"type:text" json:"bio"`
 	Phone    string `json:"phone"`
 
+	// --- REPUTACIÓN (CACHÉ) ---
+	// Estos campos se actualizan automáticamente cada vez que alguien califica.
+	AverageRating float64 `gorm:"default:0" json:"average_rating"` // Promedio (ej: 4.5)
+	ReviewCount   int     `gorm:"default:0" json:"review_count"`   // Total de reseñas (ej: 300)
+
 	// --- NUEVOS DATOS: VIVIENDA (Para Evaluar Adopción) ---
 	HousingType      string `json:"housing_type"`      // House, Apartment, Parcel
 	HousingOwnership string `json:"housing_ownership"` // Owned, Rented

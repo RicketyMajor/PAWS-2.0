@@ -35,6 +35,50 @@ func getUserIDSafe(c *gin.Context) (uint, bool) {
 	}
 }
 
+// CreateReview (POST /reviews)
+func (h *SocialHandler) CreateReview(c *gin.Context) {
+	// Seguridad: Obtener ID del usuario autenticado
+	idVal, exists := c.Get("userID")
+	if !exists { c.JSON(http.StatusUnauthorized, gin.H{"error": "Auth required"}); return }
+	
+	// Conversión segura de tipo
+	var userID uint
+	if v, ok := idVal.(float64); ok { userID = uint(v) } else { userID = idVal.(uint) }
+
+	var req struct {
+		MatchID uint    `json:"match_id" binding:"required"`
+		Rating  float64 `json:"rating" binding:"required"` // Ahora es Float
+		Comment string  `json:"comment"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Llamamos al servicio de Upsert
+	if err := h.reviewService.CreateOrUpdateReview(req.MatchID, userID, req.Rating, req.Comment); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Calificación guardada exitosamente"})
+}
+
+// GetUserReviews (GET /users/:id/reviews) -> NUEVO
+func (h *SocialHandler) GetUserReviews(c *gin.Context) {
+	targetIDStr := c.Param("id")
+	targetID, _ := strconv.Atoi(targetIDStr)
+
+	reviews, err := h.reviewService.GetReviewsByTarget(uint(targetID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error cargando reseñas"})
+		return
+	}
+
+	c.JSON(http.StatusOK, reviews)
+}
+
 // GetChatHistory (GET /matches/:id/messages)
 func (h *SocialHandler) GetChatHistory(c *gin.Context) {
 	matchIDStr := c.Param("id")
@@ -47,32 +91,4 @@ func (h *SocialHandler) GetChatHistory(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, messages)
-}
-
-// CreateReview (POST /reviews)
-func (h *SocialHandler) CreateReview(c *gin.Context) {
-	// CORRECCIÓN DE SEGURIDAD
-	userID, ok := getUserIDSafe(c)
-	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Usuario no identificado"})
-		return
-	}
-
-	var req struct {
-		MatchID uint   `json:"match_id" binding:"required"`
-		Rating  int    `json:"rating" binding:"required"`
-		Comment string `json:"comment"`
-	}
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	if err := h.reviewService.CreateReview(req.MatchID, userID, req.Rating, req.Comment); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusCreated, gin.H{"message": "Reseña guardada"})
 }
