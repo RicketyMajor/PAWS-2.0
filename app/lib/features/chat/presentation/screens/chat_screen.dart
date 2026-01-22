@@ -3,23 +3,21 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
-// Imports de Capa de Datos y Dominio
 import '../../data/chat_repository.dart';
 import '../../domain/message_model.dart';
 import '../../../pets/data/matches_repository.dart';
+import '../../../reviews/data/reviews_repository.dart'; // Asegúrate de que la ruta sea correcta según tu estructura
 
-// Imports de Presentación (Blocs y Widgets)
 import '../bloc/chat_bloc.dart';
 import '../../../../core/utils/image_helper.dart';
 import '../widgets/chat_bubble.dart';
+import '../../../reviews/presentation/widgets/star_rating_input.dart'; // <--- IMPORTAR
 
 class ChatScreen extends StatefulWidget {
   final int matchId;
   final String peerName;
   final int peerId;
   final String? peerPhotoUrl;
-
-  // --- FLAGS DE ESTADO ---
   final bool isPetDeleted;
   final bool isPeerLeft;
   final bool isRescuer;
@@ -63,14 +61,11 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Determinamos el estado inicial
     String? initialStatus;
     if (widget.isPetDeleted)
       initialStatus = 'pet_deleted';
     else if (widget.isPeerLeft)
       initialStatus = widget.isRescuer ? 'adopter_left' : 'rescuer_left';
-
-    // Fallback genérico para peer_left
     if (widget.isPeerLeft) initialStatus = 'peer_left';
 
     return BlocProvider(
@@ -78,6 +73,7 @@ class _ChatScreenState extends State<ChatScreen> {
           ChatBloc(
             chatRepository: context.read<ChatRepository>(),
             matchesRepository: context.read<MatchesRepository>(),
+            reviewsRepository: context.read<ReviewsRepository>(),
           )..add(
             InitChat(
               widget.matchId,
@@ -89,22 +85,37 @@ class _ChatScreenState extends State<ChatScreen> {
       child: BlocListener<ChatBloc, ChatState>(
         listener: (context, state) {
           if (state is ChatLoaded) {
-            // Manejo de feedback de Reportes
+            // Feedback Reportes
             if (state.reportStatus == ReportStatus.success) {
-              Navigator.pop(
-                context,
-              ); // Cierra el diálogo de reporte si está abierto
+              Navigator.pop(context);
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                  content: Text("Reporte enviado. Gracias por avisarnos."),
+                  content: Text("Reporte enviado."),
                   backgroundColor: Colors.green,
                 ),
               );
             } else if (state.reportStatus == ReportStatus.failure) {
-              // No cerramos el diálogo para que pueda reintentar, solo mostramos error
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text("Error: ${state.error ?? 'Falló el envío'}"),
+                  content: Text("Error reporte: ${state.error}"),
+                  backgroundColor: Colors.red,
+                ),
+              );
+            }
+
+            // Feedback Reseñas (NUEVO)
+            if (state.reviewStatus == ReviewStatus.success) {
+              Navigator.pop(context); // Cerrar diálogo de estrellas
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text("¡Calificación enviada! ⭐"),
+                  backgroundColor: Colors.green,
+                ),
+              );
+            } else if (state.reviewStatus == ReviewStatus.failure) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text("Error al calificar: ${state.error}"),
                   backgroundColor: Colors.red,
                 ),
               );
@@ -148,14 +159,18 @@ class _ChatScreenState extends State<ChatScreen> {
               ],
             ),
             actions: [
-              // --- MENÚ MEJORADO ---
               BlocBuilder<ChatBloc, ChatState>(
                 builder: (context, state) {
                   bool isLocked = (state is ChatLoaded && state.isLocked);
+                  // Si el chat está eliminado (PetDeleted), no se puede calificar (según tu lógica)
+                  bool canRate = !widget.isPetDeleted;
+
                   return PopupMenuButton<String>(
                     icon: const Icon(Icons.more_vert, color: Colors.grey),
                     onSelected: (value) {
-                      if (value == 'report') {
+                      if (value == 'rate') {
+                        _showRatingDialog(context);
+                      } else if (value == 'report') {
                         _showReportDialog(context);
                       } else if (value == 'unmatch') {
                         _confirmUnmatch(context, isLocked);
@@ -163,7 +178,22 @@ class _ChatScreenState extends State<ChatScreen> {
                     },
                     itemBuilder: (BuildContext context) {
                       return [
-                        // Opción 1: Reportar
+                        // Opción 1: Calificar (NUEVA)
+                        if (canRate)
+                          const PopupMenuItem(
+                            value: 'rate',
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.star_rate_rounded,
+                                  color: Colors.amber,
+                                ),
+                                SizedBox(width: 8),
+                                Text("Calificar"),
+                              ],
+                            ),
+                          ),
+                        // Opción 2: Reportar
                         const PopupMenuItem(
                           value: 'report',
                           child: Row(
@@ -174,7 +204,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             ],
                           ),
                         ),
-                        // Opción 2: Eliminar/Salir
+                        // Opción 3: Eliminar
                         PopupMenuItem(
                           value: 'unmatch',
                           child: Row(
@@ -183,7 +213,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 isLocked ? Icons.delete_outline : Icons.block,
                                 color: Colors.red,
                               ),
-                              const SizedBox(width: 8),
+                              SizedBox(width: 8),
                               Text(
                                 isLocked
                                     ? 'Eliminar de mi lista'
@@ -205,12 +235,10 @@ class _ChatScreenState extends State<ChatScreen> {
               Expanded(
                 child: BlocBuilder<ChatBloc, ChatState>(
                   builder: (context, state) {
-                    if (state is ChatLoading) {
+                    if (state is ChatLoading)
                       return const Center(child: CircularProgressIndicator());
-                    } else if (state is ChatLoaded) {
-                      if (state.messages.isEmpty) {
-                        return _buildEmptyChat();
-                      }
+                    if (state is ChatLoaded) {
+                      if (state.messages.isEmpty) return _buildEmptyChat();
                       return ListView.builder(
                         controller: _scrollController,
                         reverse: true,
@@ -218,14 +246,12 @@ class _ChatScreenState extends State<ChatScreen> {
                         itemBuilder: (context, index) {
                           final msg = state.messages[index];
                           final isMe = msg.senderId == _myUserId;
-
-                          // USAMOS EL WIDGET REUTILIZABLE
                           return ChatBubble(message: msg, isMe: isMe);
                         },
                       );
-                    } else if (state is ChatError) {
-                      return Center(child: Text(state.message));
                     }
+                    if (state is ChatError)
+                      return Center(child: Text(state.message));
                     return const SizedBox.shrink();
                   },
                 ),
@@ -233,9 +259,8 @@ class _ChatScreenState extends State<ChatScreen> {
               BlocConsumer<ChatBloc, ChatState>(
                 listener: (context, state) {},
                 builder: (context, state) {
-                  if (state is ChatLoaded && state.isLocked) {
+                  if (state is ChatLoaded && state.isLocked)
                     return _buildLockedWidget(state.lockReason);
-                  }
                   if (state is! ChatLoaded) return const SizedBox.shrink();
                   return _buildInputArea(context);
                 },
@@ -244,6 +269,111 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  // --- DIALOGO DE CALIFICACIÓN (NUEVO) ---
+  void _showRatingDialog(BuildContext chatContext) {
+    double _currentRating = 0.0;
+    String _comment = "";
+
+    showDialog(
+      context: chatContext,
+      builder: (dialogContext) {
+        // Necesario pasar el BLoC al diálogo
+        return BlocProvider.value(
+          value: BlocProvider.of<ChatBloc>(chatContext),
+          child: StatefulBuilder(
+            // StatefulBuilder para actualizar las estrellas visualmente
+            builder: (context, setState) {
+              return AlertDialog(
+                title: const Text(
+                  "Calificar Experiencia",
+                  textAlign: TextAlign.center,
+                ),
+                content: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        "Toca las estrellas para calificar",
+                        style: TextStyle(color: Colors.grey, fontSize: 12),
+                      ),
+                      const SizedBox(height: 16),
+
+                      // WIDGET INTERACTIVO DE ESTRELLAS
+                      StarRatingInput(
+                        rating: _currentRating,
+                        size: 40,
+                        onChanged: (val) {
+                          setState(() => _currentRating = val);
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _currentRating > 0
+                            ? "$_currentRating Estrellas"
+                            : "Selecciona una calificación",
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: _currentRating > 0
+                              ? Colors.amber[800]
+                              : Colors.grey,
+                        ),
+                      ),
+
+                      const SizedBox(height: 24),
+                      TextField(
+                        decoration: const InputDecoration(
+                          labelText: "Reseña (Opcional)",
+                          hintText: "¿Cómo fue tu experiencia?",
+                          border: OutlineInputBorder(),
+                        ),
+                        maxLines: 3,
+                        onChanged: (val) => _comment = val,
+                      ),
+                    ],
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    child: const Text(
+                      "Cancelar",
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                  ),
+                  BlocBuilder<ChatBloc, ChatState>(
+                    builder: (context, state) {
+                      if (state is ChatLoaded &&
+                          state.reviewStatus == ReviewStatus.loading) {
+                        return const CircularProgressIndicator();
+                      }
+                      return ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFE91E63),
+                          foregroundColor: Colors.white,
+                        ),
+                        onPressed: _currentRating > 0
+                            ? () {
+                                context.read<ChatBloc>().add(
+                                  SendReviewEvent(
+                                    rating: _currentRating,
+                                    comment: _comment,
+                                  ),
+                                );
+                              }
+                            : null, // Deshabilitado si no hay estrellas
+                        child: const Text("Enviar Calificación"),
+                      );
+                    },
+                  ),
+                ],
+              );
+            },
+          ),
+        );
+      },
     );
   }
 

@@ -45,6 +45,7 @@ dependencies:
   cached_network_image: ^3.4.1
   web_socket_channel: ^3.0.3
   image_picker: ^1.2.1
+  intl: ^0.19.0
   lottie: ^3.1.0           # Animaciones (como el check de éxito)
   # --- State Management ---
   provider: ^6.1.1         # Simple y efectivo para este nivel

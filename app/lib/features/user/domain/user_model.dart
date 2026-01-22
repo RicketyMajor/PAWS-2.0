@@ -7,17 +7,21 @@ class User {
   final String phone;
   final String role;
 
+  // --- REPUTACIÓN (NUEVO) ---
+  final double averageRating;
+  final int reviewCount;
+
   // --- DATOS DE VIVIENDA ---
-  final String housingType; // House, Apartment, Parcel
-  final String housingOwnership; // Owned, Rented
+  final String housingType;
+  final String housingOwnership;
   final bool hasYard;
   final bool hasFence;
 
   // --- ESTILO DE VIDA ---
-  final String familyComposition; // Single, Couple, Family w/Kids
-  final String otherPets; // None, Dogs, Cats
-  final String timeAvailability; // Low, Medium, High
-  final String experience; // Beginner, Intermediate, Expert
+  final String familyComposition;
+  final String otherPets;
+  final String timeAvailability;
+  final String experience;
 
   User({
     required this.id,
@@ -27,6 +31,11 @@ class User {
     required this.bio,
     required this.phone,
     required this.role,
+
+    // Valores por defecto para reputación
+    this.averageRating = 0.0,
+    this.reviewCount = 0,
+
     this.housingType = 'House',
     this.housingOwnership = 'Owned',
     this.hasYard = false,
@@ -47,7 +56,10 @@ class User {
       phone: json['phone'] ?? '',
       role: json['role'] ?? 'adopter',
 
-      // Mapeo seguro de los nuevos campos (con valores por defecto)
+      // Parseo seguro para rating (puede venir como int o double)
+      averageRating: (json['average_rating'] ?? 0).toDouble(),
+      reviewCount: json['review_count'] ?? 0,
+
       housingType: json['housing_type'] ?? 'House',
       housingOwnership: json['housing_ownership'] ?? 'Owned',
       hasYard: json['has_yard'] ?? false,

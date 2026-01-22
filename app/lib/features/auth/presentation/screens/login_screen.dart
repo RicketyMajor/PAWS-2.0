@@ -9,6 +9,7 @@ import '../../../../core/presentation/main_layout_screen.dart';
 import '../../../admin/presentation/screens/admin_dashboard_screen.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import '../../../../features/user/data/user_repository.dart';
+import '../../../../features/security/presentation/screens/blacklist_search_screen.dart'; // <--- IMPORTAR
 
 class LoginScreen extends StatelessWidget {
   const LoginScreen({super.key});
@@ -220,6 +221,30 @@ class _LoginFormState extends State<_LoginForm> {
                       style: TextButton.styleFrom(foregroundColor: Colors.grey),
                       child: const Text("¿Olvidaste tu contraseña?"),
                     ),
+                    // Botón Seguridad (Blacklist)
+                    const SizedBox(height: 20),
+                    OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const BlacklistSearchScreen(),
+                          ),
+                        );
+                      },
+                      icon: const Icon(
+                        Icons.shield_outlined,
+                        color: Colors.blueGrey,
+                      ),
+                      label: const Text(
+                        "Consulta de Antecedentes (Público)",
+                        style: TextStyle(color: Colors.blueGrey),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Colors.blueGrey),
+                      ),
+                    ),
+                    const SizedBox(height: 20), // Espacio final
                   ],
                 ),
               ),

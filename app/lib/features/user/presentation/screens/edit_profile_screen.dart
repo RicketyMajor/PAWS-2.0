@@ -4,6 +4,9 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../../../core/utils/image_helper.dart';
 import '../../data/user_repository.dart';
+import '../../domain/user_model.dart';
+import '../../../security/presentation/screens/blacklist_search_screen.dart';
+import '../../../reviews/presentation/screens/user_reviews_screen.dart';
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
@@ -20,21 +23,47 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   final _bioCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
 
-  // --- ESTADO NUEVOS CAMPOS (Valores por defecto) ---
-  String _housingType = 'House';
-  String _housingOwnership = 'Owned';
+  // --- OPCIONES VÁLIDAS (Constantes para evitar errores de Dropdown) ---
+  static const List<String> _housingTypesOptions = [
+    "House",
+    "Apartment",
+    "Parcel",
+  ];
+  static const List<String> _ownershipOptions = ["Owned", "Rented"];
+  static const List<String> _familyOptions = [
+    "Single",
+    "Couple",
+    "Family w/Kids",
+    "Seniors",
+  ];
+  static const List<String> _petsOptions = ["None", "Dogs", "Cats", "Both"];
+  static const List<String> _timeOptions = ["Low", "Medium", "High"];
+  static const List<String> _expOptions = [
+    "Beginner",
+    "Intermediate",
+    "Expert",
+  ];
+
+  // --- ESTADO NUEVOS CAMPOS (Inicializados con valores seguros) ---
+  String _housingType = _housingTypesOptions[0];
+  String _housingOwnership = _ownershipOptions[0];
   bool _hasYard = false;
   bool _hasFence = false;
-  String _familyComposition = 'Single';
-  String _otherPets = 'None';
-  String _timeAvailability = 'Medium';
-  String _experience = 'Beginner';
+  String _familyComposition = _familyOptions[0];
+  String _otherPets = _petsOptions[0];
+  String _timeAvailability = _timeOptions[1]; // Medium
+  String _experience = _expOptions[0];
+
+  // --- ESTADO DE REPUTACIÓN ---
+  double _averageRating = 0.0;
+  int _reviewCount = 0;
+  int _userId = 0;
 
   String? _currentPhotoUrl;
   File? _newPhotoFile;
 
   bool _isLoading = true;
-  bool _isEditing = false; // Modo Lectura/Edición
+  bool _isEditing = false;
 
   @override
   void initState() {
@@ -42,42 +71,56 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _loadProfile();
   }
 
+  // Función auxiliar para asegurar que el valor exista en la lista
+  String _validateOption(String? value, List<String> options) {
+    if (value != null && options.contains(value)) {
+      return value;
+    }
+    return options[0]; // Retorna el default si el valor no es válido
+  }
+
   Future<void> _loadProfile() async {
     try {
       final repo = context.read<UserRepository>();
       final data = await repo.getProfile();
+      final user = User.fromJson(data);
 
       if (mounted) {
         setState(() {
-          // Datos Básicos
-          _nameCtrl.text = data['name'] ?? '';
-          _bioCtrl.text = data['bio'] ?? '';
-          _phoneCtrl.text = data['phone'] ?? '';
-          _currentPhotoUrl = data['photo_url'];
+          // Datos Identificación
+          _userId = user.id;
+          _averageRating = user.averageRating;
+          _reviewCount = user.reviewCount;
 
-          // Datos Vivienda (Con validación de nulos)
-          _housingType = (data['housing_type']?.isNotEmpty ?? false)
-              ? data['housing_type']
-              : 'House';
-          _housingOwnership = (data['housing_ownership']?.isNotEmpty ?? false)
-              ? data['housing_ownership']
-              : 'Owned';
-          _hasYard = data['has_yard'] ?? false;
-          _hasFence = data['has_fence'] ?? false;
+          // Datos Básicos
+          _nameCtrl.text = user.name;
+          _bioCtrl.text = user.bio;
+          _phoneCtrl.text = user.phone;
+          _currentPhotoUrl = user.photoUrl;
+
+          // Datos Vivienda (Validamos contra las listas permitidas)
+          _housingType = _validateOption(
+            user.housingType,
+            _housingTypesOptions,
+          );
+          _housingOwnership = _validateOption(
+            user.housingOwnership,
+            _ownershipOptions,
+          );
+          _hasYard = user.hasYard;
+          _hasFence = user.hasFence;
 
           // Datos Estilo de Vida
-          _familyComposition = (data['family_composition']?.isNotEmpty ?? false)
-              ? data['family_composition']
-              : 'Single';
-          _otherPets = (data['other_pets']?.isNotEmpty ?? false)
-              ? data['other_pets']
-              : 'None';
-          _timeAvailability = (data['time_availability']?.isNotEmpty ?? false)
-              ? data['time_availability']
-              : 'Medium';
-          _experience = (data['experience']?.isNotEmpty ?? false)
-              ? data['experience']
-              : 'Beginner';
+          _familyComposition = _validateOption(
+            user.familyComposition,
+            _familyOptions,
+          );
+          _otherPets = _validateOption(user.otherPets, _petsOptions);
+          _timeAvailability = _validateOption(
+            user.timeAvailability,
+            _timeOptions,
+          );
+          _experience = _validateOption(user.experience, _expOptions);
 
           _isLoading = false;
         });
@@ -85,9 +128,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("Error: $e")));
+        // Usamos print para debuggear, a veces el SnackBar en initState puede fallar si el contexto no está listo
+        print("Error cargando perfil: $e");
       }
     }
   }
@@ -118,7 +160,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         bio: _bioCtrl.text,
         phone: _phoneCtrl.text,
         photoUrl: finalPhotoUrl,
-        // Nuevos Campos
         housingType: _housingType,
         housingOwnership: _housingOwnership,
         hasYard: _hasYard,
@@ -159,6 +200,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       appBar: AppBar(
         title: const Text("Mi Perfil"),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.security, color: Colors.blueGrey),
+            tooltip: "Consultar Blacklist",
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const BlacklistSearchScreen(),
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: Icon(_isEditing ? Icons.check : Icons.edit),
             onPressed: _isLoading
@@ -206,9 +259,66 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 16),
 
-                    // --- DATOS BÁSICOS ---
+                    // --- BOTÓN DE REPUTACIÓN ---
+                    Center(
+                      child: InkWell(
+                        onTap: () {
+                          if (_userId != 0) {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => UserReviewsScreen(
+                                  userId: _userId,
+                                  userName: "Mí",
+                                ),
+                              ),
+                            );
+                          }
+                        },
+                        borderRadius: BorderRadius.circular(20),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.amber[50],
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: Colors.amber.shade200),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.star,
+                                color: Colors.amber,
+                                size: 20,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                _reviewCount > 0
+                                    ? "${_averageRating.toStringAsFixed(1)}/5 ($_reviewCount Op)"
+                                    : "Sin calificaciones aún",
+                                style: TextStyle(
+                                  color: Colors.amber[900],
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              Icon(
+                                Icons.chevron_right,
+                                size: 16,
+                                color: Colors.amber[900],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 24),
                     const Text(
                       "Información Personal",
                       style: TextStyle(
@@ -235,7 +345,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
                     const Divider(height: 40),
 
-                    // --- VIVIENDA ---
                     const Text(
                       "Hogar y Entorno",
                       style: TextStyle(
@@ -250,7 +359,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           child: _buildDropdown(
                             "Tipo de Vivienda",
                             _housingType,
-                            ["House", "Apartment", "Parcel"],
+                            _housingTypesOptions, // Usamos la lista constante
                             (v) => setState(() => _housingType = v!),
                           ),
                         ),
@@ -259,7 +368,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           child: _buildDropdown(
                             "Tenencia",
                             _housingOwnership,
-                            ["Owned", "Rented"],
+                            _ownershipOptions, // Usamos la lista constante
                             (v) => setState(() => _housingOwnership = v!),
                           ),
                         ),
@@ -282,7 +391,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
                     const Divider(height: 40),
 
-                    // --- ESTILO DE VIDA ---
                     const Text(
                       "Familia y Rutina",
                       style: TextStyle(
@@ -294,14 +402,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     _buildDropdown(
                       "Composición Familiar",
                       _familyComposition,
-                      ["Single", "Couple", "Family w/Kids", "Seniors"],
+                      _familyOptions, // Usamos la lista constante
                       (v) => setState(() => _familyComposition = v!),
                     ),
                     const SizedBox(height: 16),
                     _buildDropdown(
                       "Otras Mascotas",
                       _otherPets,
-                      ["None", "Dogs", "Cats", "Both"],
+                      _petsOptions, // Usamos la lista constante
                       (v) => setState(() => _otherPets = v!),
                     ),
                     const SizedBox(height: 16),
@@ -311,7 +419,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           child: _buildDropdown(
                             "Tiempo Libre",
                             _timeAvailability,
-                            ["Low", "Medium", "High"],
+                            _timeOptions, // Usamos la lista constante
                             (v) => setState(() => _timeAvailability = v!),
                           ),
                         ),
@@ -320,7 +428,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           child: _buildDropdown(
                             "Experiencia",
                             _experience,
-                            ["Beginner", "Intermediate", "Expert"],
+                            _expOptions, // Usamos la lista constante
                             (v) => setState(() => _experience = v!),
                           ),
                         ),
@@ -366,7 +474,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     List<String> items,
     ValueChanged<String?> onChanged,
   ) {
-    // Traducción simple para visualización
     String translate(String val) {
       switch (val) {
         case 'House':
@@ -419,7 +526,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       items: items
           .map((e) => DropdownMenuItem(value: e, child: Text(translate(e))))
           .toList(),
-      onChanged: _isEditing ? onChanged : null, // Deshabilitar si no se edita
+      onChanged: _isEditing ? onChanged : null,
     );
   }
 }

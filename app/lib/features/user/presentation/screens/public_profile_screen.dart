@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../../core/utils/image_helper.dart';
 import '../../domain/user_model.dart';
+import '../../../reviews/presentation/screens/user_reviews_screen.dart'; // <--- IMPORTAR
 
 class PublicProfileScreen extends StatelessWidget {
   final User user;
@@ -38,9 +39,11 @@ class PublicProfileScreen extends StatelessWidget {
                       fontWeight: FontWeight.bold,
                     ),
                   ),
+
+                  // --- BADGE DE ROL ---
                   if (user.role == 'rescuer')
                     Container(
-                      margin: const EdgeInsets.only(top: 4),
+                      margin: const EdgeInsets.only(top: 4, bottom: 8),
                       padding: const EdgeInsets.symmetric(
                         horizontal: 8,
                         vertical: 4,
@@ -58,6 +61,57 @@ class PublicProfileScreen extends StatelessWidget {
                         ),
                       ),
                     ),
+
+                  const SizedBox(height: 8),
+
+                  // --- BOTÓN DE REPUTACIÓN (NUEVO) ---
+                  InkWell(
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => UserReviewsScreen(
+                            userId: user.id,
+                            userName: user.name,
+                          ),
+                        ),
+                      );
+                    },
+                    borderRadius: BorderRadius.circular(20),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.amber[50],
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: Colors.amber.shade200),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.star, color: Colors.amber, size: 20),
+                          const SizedBox(width: 6),
+                          Text(
+                            user.reviewCount > 0
+                                ? "${user.averageRating.toStringAsFixed(1)}/5 (${user.reviewCount} Op)"
+                                : "Nuevo en PAWS",
+                            style: TextStyle(
+                              color: Colors.amber[900],
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Icon(
+                            Icons.chevron_right,
+                            size: 16,
+                            color: Colors.amber[900],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),

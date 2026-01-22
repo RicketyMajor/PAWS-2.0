@@ -13,6 +13,8 @@ import 'features/pets/data/matches_repository.dart'; // <--- NUEVO IMPORT
 import 'features/auth/presentation/screens/login_screen.dart';
 
 import 'features/admin/data/admin_repository.dart';
+import 'features/security/data/security_repository.dart';
+import 'features/reviews/data/reviews_repository.dart';
 
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   print("Notificación en Segundo Plano: ${message.messageId}");
@@ -73,6 +75,10 @@ class _PawsAppState extends State<PawsApp> {
           create: (context) => MatchesRepository(),
         ), // <--- INYECCIÓN AGREGADA
         RepositoryProvider(create: (context) => AdminRepository()),
+        RepositoryProvider(create: (context) => SecurityRepository()),
+        RepositoryProvider(
+          create: (context) => ReviewsRepository(),
+        ), // <--- NUEVO REPO GLOBAL
       ],
       child: MaterialApp(
         title: 'PAWS',

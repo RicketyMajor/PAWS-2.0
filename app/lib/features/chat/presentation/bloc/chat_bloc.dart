@@ -7,9 +7,12 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../data/chat_repository.dart';
 import '../../domain/message_model.dart';
 import '../../../pets/data/matches_repository.dart';
+import '../../../reviews/data/reviews_repository.dart'; // <--- IMPORTANTE
 
 // --- ENUMS ---
 enum ReportStatus { initial, loading, success, failure }
+
+enum ReviewStatus { initial, loading, success, failure } // <--- NUEVO
 
 // --- EVENTOS ---
 abstract class ChatEvent extends Equatable {
@@ -38,7 +41,6 @@ class UnmatchChatEvent extends ChatEvent {
   UnmatchChatEvent();
 }
 
-// NUEVO EVENTO DE REPORTE
 class ReportUserEvent extends ChatEvent {
   final int reportedId;
   final String category;
@@ -49,9 +51,19 @@ class ReportUserEvent extends ChatEvent {
     required this.category,
     required this.description,
   });
-
   @override
   List<Object?> get props => [reportedId, category, description];
+}
+
+// --- NUEVO EVENTO DE RESEÑA ---
+class SendReviewEvent extends ChatEvent {
+  final double rating;
+  final String comment;
+
+  SendReviewEvent({required this.rating, required this.comment});
+
+  @override
+  List<Object?> get props => [rating, comment];
 }
 
 class _ReceiveMessageEvent extends ChatEvent {
@@ -77,8 +89,8 @@ class ChatLoaded extends ChatState {
   final String lockReason;
   final String? error;
 
-  // Nuevo campo para el estado del reporte
   final ReportStatus reportStatus;
+  final ReviewStatus reviewStatus; // <--- NUEVO CAMPO
 
   ChatLoaded({
     required this.messages,
@@ -87,7 +99,8 @@ class ChatLoaded extends ChatState {
     this.isLocked = false,
     this.lockReason = '',
     this.error,
-    this.reportStatus = ReportStatus.initial, // Valor por defecto
+    this.reportStatus = ReportStatus.initial,
+    this.reviewStatus = ReviewStatus.initial,
   });
 
   @override
@@ -99,6 +112,7 @@ class ChatLoaded extends ChatState {
     lockReason,
     error,
     reportStatus,
+    reviewStatus,
   ];
 
   ChatLoaded copyWith({
@@ -109,6 +123,7 @@ class ChatLoaded extends ChatState {
     String? lockReason,
     String? error,
     ReportStatus? reportStatus,
+    ReviewStatus? reviewStatus,
   }) {
     return ChatLoaded(
       messages: messages ?? this.messages,
@@ -118,6 +133,7 @@ class ChatLoaded extends ChatState {
       lockReason: lockReason ?? this.lockReason,
       error: error,
       reportStatus: reportStatus ?? this.reportStatus,
+      reviewStatus: reviewStatus ?? this.reviewStatus,
     );
   }
 }
@@ -133,14 +149,18 @@ class ChatError extends ChatState {
 class ChatBloc extends Bloc<ChatEvent, ChatState> {
   final ChatRepository chatRepository;
   final MatchesRepository matchesRepository;
+  final ReviewsRepository reviewsRepository; // <--- INYECCIÓN
   final _storage = const FlutterSecureStorage();
 
   StreamSubscription? _messagesSubscription;
   int _currentMatchId = 0;
   int _myUserId = 0;
 
-  ChatBloc({required this.chatRepository, required this.matchesRepository})
-    : super(ChatLoading()) {
+  ChatBloc({
+    required this.chatRepository,
+    required this.matchesRepository,
+    required this.reviewsRepository, // <--- REQUERIDO
+  }) : super(ChatLoading()) {
     on<InitChat>((event, emit) async {
       emit(ChatLoading());
       _currentMatchId = event.matchId;
@@ -287,6 +307,37 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
           emit(
             currentState.copyWith(
               reportStatus: ReportStatus.initial,
+              error: null,
+            ),
+          );
+        }
+      }
+    });
+    // --- HANDLER DE RESEÑAS (NUEVO) ---
+    on<SendReviewEvent>((event, emit) async {
+      if (state is ChatLoaded) {
+        final currentState = state as ChatLoaded;
+        emit(currentState.copyWith(reviewStatus: ReviewStatus.loading));
+
+        try {
+          await reviewsRepository.createReview(
+            matchId: _currentMatchId,
+            rating: event.rating,
+            comment: event.comment,
+          );
+          emit(currentState.copyWith(reviewStatus: ReviewStatus.success));
+          // Reset status
+          emit(currentState.copyWith(reviewStatus: ReviewStatus.initial));
+        } catch (e) {
+          emit(
+            currentState.copyWith(
+              reviewStatus: ReviewStatus.failure,
+              error: e.toString(),
+            ),
+          );
+          emit(
+            currentState.copyWith(
+              reviewStatus: ReviewStatus.initial,
               error: null,
             ),
           );

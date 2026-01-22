@@ -15,13 +15,17 @@ class ApiConstants {
   // Endpoints Match
   static const String swipeDeck = '/matches/candidates';
   static const String swipeAction = '/matches/swipe';
-  static const String pendingRequests =
-      '/matches/requests'; // Ajustado para consistencia
+  static const String pendingRequests = '/matches/requests';
 
   // Endpoints Reportes (Usuario)
   static const String reportUser = '/report';
 
-  // --- ENDPOINTS ADMIN ---
-  static const String adminReports = '/admin/reports'; // GET (Lista)
-  static const String adminResolve = '/admin/reports'; // + /:id/resolve (POST)
+  // --- ENDPOINTS RESEÑAS (NUEVO) ---
+  static const String reviews = '/reviews'; // POST (Crear/Editar)
+  static const String userReviews = '/users'; // GET /users/:id/reviews
+
+  // Endpoints Admin
+  static const String adminReports = '/admin/reports';
+  static const String adminResolve = '/admin/reports';
+  static const String blacklistSearch = '/blacklist/search';
 }
