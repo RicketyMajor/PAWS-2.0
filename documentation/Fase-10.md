@@ -1732,3 +1732,98 @@ type Block struct {
 ```
 
 Impedir mensajes y matches futuros.
+
+## COMPLETADO EN ETAPA 18: Calificación Avanzada - Decimales, UPSERT y Triggers
+
+### Problema Resuelto: De Enteros Simples a Precisión Decimal + Atomicidad
+
+**Etapa 6 implementó**:
+- Ratings 1-5 enteros
+- Sin validación UPSERT (duplicados posibles)
+- Promedios calculados al leer (queries caras)
+
+**Etapa 18 evoluciona a**:
+- Ratings 0.5-5.0 decimales (Letterboxd-style)
+- UPSERT atómico (no duplicados)
+- Promedios calculados al escribir (trigger pattern)
+
+### Cambios Técnicos
+
+#### 1. Review Model - Migración a float64
+
+El campo `Rating` se migra de `int` a `float64`:
+
+```go
+type Review struct {
+    ID        uint           `gorm:"primaryKey" json:"id"`
+    MatchID   uint           `gorm:"index;not null" json:"match_id"`
+    AuthorID  uint           `gorm:"index;not null" json:"author_id"`
+    TargetID  uint           `gorm:"index;not null" json:"target_id"`
+    
+    Author    User           `gorm:"foreignKey:AuthorID" json:"author,omitempty"`
+    
+    Rating    float64        `gorm:"not null" json:"rating"` // CAMBIO: int → float64
+    Comment   string         `gorm:"type:text" json:"comment"`
+    CreatedAt time.Time      `json:"created_at"`
+}
+```
+
+#### 2. ReviewService.CreateOrUpdateReview() - UPSERT Atómico
+
+La nueva firma reemplaza `CreateReview()` con lógica UPSERT dentro de transacción:
+
+- Valida rango 0.5 ≤ rating ≤ 5.0
+- Deduce targetID del match y roles
+- Busca si existe: WHERE match_id = ? AND author_id = ?
+- Si existe: UPDATE rating, comment
+- Si no existe: INSERT nuevo
+- Llama trigger updateUserReputation()
+- TODO en Transaction() para garantizar atomicidad
+
+#### 3. Trigger Function - updateUserReputation()
+
+Se ejecuta después de cada INSERT/UPDATE en reviews:
+
+```sql
+SELECT AVG(rating), COUNT(*) FROM reviews WHERE target_id = userID
+UPDATE users SET average_rating, review_count WHERE id = userID
+```
+
+Patrón: **Cálculo al escribir, no al leer** → O(1) en lecturas de perfil.
+
+#### 4. User Model - Nuevos Campos
+
+```go
+AverageRating float64 `gorm:"default:0" json:"average_rating"`
+ReviewCount   int     `gorm:"default:0" json:"review_count"`
+```
+
+Estos campos se actualizan automáticamente por el trigger.
+
+#### 5. Frontend - StarRatingInput Widget
+
+Soporta increments de 0.5 estrellas con lógica Letterboxd:
+- 1 tap en estrella llena → Baja a media (0.5)
+- 1 tap en estrella vacía → Sube a llena
+- 2 taps en misma estrella → Toggle media
+
+Visualización: Icons.star (llena), Icons.star_half (media), Icons.star_border (vacía)
+
+#### 6. ChatBloc Integration
+
+Nuevo `ReviewStatus` enum y `SendReviewEvent` para state management sin salir de chat.
+
+Handler emite eventos de carga/éxito/error que la UI reacciona automáticamente.
+
+### Resumen Comparativo
+
+| Aspecto | Etapa 6 | Etapa 18 |
+|--------|---------|---------|
+| Rating | int (1-5) | float64 (0.5-5.0) |
+| Duplicados | Posibles | Prevenidos (UPSERT) |
+| Promedio | Read-time O(N) | Write-time O(1) cache |
+| Widget | Star picker básico | StarRatingInput Letterboxd |
+| Integración | Dialog separado | ChatBloc sin salir chat |
+| User Fields | Sin reputación | AverageRating + ReviewCount |
+
+**Etapa 18 Status: 100% Completada**

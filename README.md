@@ -8309,6 +8309,957 @@ BlacklistEntry (run, name, reason) - Único por RUT
 
 **Etapa 17 Status: 100% Implementado y Verificado**
 
+## Etapa 18: Módulo de Calificación - Precisión Decimal, Upsert Inteligente y Triggers de Reputación (Completada)
+
+Etapa 18 evoluciona significativamente el sistema de reviews iniciado en Etapa 6. Mientras que Etapa 6 introdujo calificaciones enteras (1-5) con participación manual, Etapa 18 implementa precisión decimal (0.5-5.0), prevención automática de duplicados mediante UPSERT, y recalcación de promedios en tiempo de escritura mediante triggers. El resultado es una experiencia de usuario más intuitiva (Letterboxd-style con medias estrellas), data más íntegra (sin reviews duplicadas), y mejor rendimiento en lectura de perfiles (promedios ya calculados).
+
+### Componente 1: Backend - Cerebro Matemático (Precisión Decimal, UPSERT, Trigger)
+
+#### Problema Resuelto en Etapa 6
+
+Etapa 6 implementó calificaciones 1-5 estrellas básicas con estos límites:
+
+1. **Sin Precisión Decimal**: Solo enteros (1, 2, 3, 4, 5) → imposible representar "4.5 estrellas" o "3.5 estrellas"
+2. **Permitía Duplicados**: Mismo usuario, mismo match → podría crear múltiples reviews (sin validación UPSERT)
+3. **Cálculo Manual en Lectura**: El promedio se calculaba al consultar perfil (SELECT AVG) en cada lectura, no en escritura
+
+**Impacto**: Usuarios deseaban precisión (ratings como 4.5, 3.5), pero la arquitectura solo soportaba enteros. Perfiles eran lentos porque cada lectura ejecutaba aggregation query. Sin prevención de duplicados, usuarios confundidos podían enviar múltiples ratings.
+
+#### Solución Implementada en Etapa 18
+
+**1. Migración a float64 para Precisión Decimal**
+
+Archivo: [internal/core/domain/review.go](internal/core/domain/review.go)
+
+```go
+type Review struct {
+	ID        uint           `gorm:"primaryKey" json:"id"`
+
+	// Contexto: A qué adopción pertenece
+	MatchID   uint           `gorm:"index;not null" json:"match_id"`
+
+	// Quién califica a quién
+	AuthorID  uint           `gorm:"index;not null" json:"author_id"`
+	TargetID  uint           `gorm:"index;not null" json:"target_id"`
+
+	// Relaciones (para Preload eficiente)
+	Author    User           `gorm:"foreignKey:AuthorID" json:"author,omitempty"`
+
+	// Datos de Calificación - AHORA ES FLOAT64
+	Rating    float64        `gorm:"not null" json:"rating"` // Permite 0.5, 1.5, 2.5, 3.5, 4.5, 5.0
+	Comment   string         `gorm:"type:text" json:"comment"`
+
+	CreatedAt time.Time      `json:"created_at"`
+}
+```
+
+**Cambio**: `Rating int` → `Rating float64`
+
+**Beneficio**: Soporta incrementos de 0.5, alineado con UX de Letterboxd. Base de datos no cambia de estructura, solo semántica del campo.
+
+**2. Método CreateOrUpdateReview() - UPSERT Inteligente**
+
+Archivo: [internal/core/services/review_service.go](internal/core/services/review_service.go#L17)
+
+```go
+func (s *ReviewService) CreateOrUpdateReview(matchID, authorID uint, rating float64, comment string) error {
+	// PASO 1: VALIDACIÓN DE RANGO
+	// Solo acepta ratings entre 0.5 y 5.0 (medias estrellas soportadas)
+	if rating < 0.5 || rating > 5.0 {
+		return errors.New("la calificación debe ser entre 0.5 y 5.0")
+	}
+
+	// PASO 2: TRANSACTION (Atomicidad garantizada)
+	// Si algo falla, TODO se revierte. No parciales.
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		// PASO 3: OBTENER MATCH Y DEDUCIR TARGET
+		var match domain.Match
+		if err := tx.First(&match, matchID).Error; err != nil {
+			return errors.New("match no válido")
+		}
+
+		// Lógica: Si soy el adoptante, califico al rescatista.
+		// Si soy el rescatista, califico al adoptante.
+		targetID := match.AdopterID
+		if authorID == match.AdopterID {
+			var pet domain.Pet
+			tx.First(&pet, match.PetID)
+			targetID = pet.UserID  // Owner del pet (rescatista)
+		}
+
+		// PASO 4: UPSERT - BUSCAR SI YA EXISTE
+		var existingReview domain.Review
+		err := tx.Where("match_id = ? AND author_id = ?", matchID, authorID).
+			First(&existingReview).Error
+
+		if err == nil {
+			// CASO A: EXISTE → ACTUALIZAR
+			// Usuario envía calificación nuevamente, REEMPLAZAMOS la anterior
+			existingReview.Rating = rating
+			existingReview.Comment = comment
+			if err := tx.Save(&existingReview).Error; err != nil {
+				return err
+			}
+		} else {
+			// CASO B: NO EXISTE → CREAR NUEVA
+			newReview := domain.Review{
+				MatchID:  matchID,
+				AuthorID: authorID,
+				TargetID: targetID,
+				Rating:   rating,
+				Comment:  comment,
+			}
+			if err := tx.Create(&newReview).Error; err != nil {
+				return err
+			}
+		}
+
+		// PASO 5: TRIGGER - RECALCULAR REPUTACIÓN DEL TARGET
+		// Llamamos a updateUserReputation() para actualizar el promedio
+		return s.updateUserReputation(tx, targetID)
+	})
+}
+```
+
+**Característica UPSERT**:
+
+- `WHERE match_id = ? AND author_id = ?` → Identifica si este usuario ya calificó este match
+- Si existe: `UPDATE Rating, Comment` (sin duplicar)
+- Si no existe: `INSERT` (crear nuevo)
+- Toda la lógica dentro de `Transaction()` → Si falla cualquier paso, TODO se revierte
+
+**Impacto**: No más reviews duplicadas. Usuario puede cambiar su calificación sin crear registros fantasma.
+
+**3. Función updateUserReputation() - Trigger de Cálculo**
+
+Archivo: [internal/core/services/review_service.go](internal/core/services/review_service.go#L70)
+
+```go
+func (s *ReviewService) updateUserReputation(tx *gorm.DB, userID uint) error {
+	// PASO 1: AGREGAR REVIEWS DEL USUARIO
+	// SELECT AVG(rating) y COUNT(*) de TODAS las reviews donde target_id = userID
+	type Result struct {
+		AvgRating float64  // Promedio de ratings
+		Total     int      // Total de reviews recibidas
+	}
+	var res Result
+
+	err := tx.Model(&domain.Review{}).
+		Select("AVG(rating) as avg_rating, COUNT(*) as total").
+		Where("target_id = ?", userID).
+		Scan(&res).Error
+
+	if err != nil {
+		return err
+	}
+
+	// PASO 2: ACTUALIZAR USUARIO CON NUEVOS PROMEDIOS
+	// Estos valores se almacenan como CACHÉ en la tabla users
+	// Lectura rápida: GET /users/{id} retorna promedios instant
+	return tx.Model(&domain.User{}).
+		Where("id = ?", userID).
+		Updates(map[string]interface{}{
+			"average_rating": res.AvgRating,
+			"review_count":   res.Total,
+		}).Error
+}
+```
+
+**Patrón Trigger**:
+
+- **Escritura (TRIGGER)**: Después de INSERT/UPDATE en reviews, recalcular y cachear promedios en users
+- **Lectura (RÁPIDA)**: GET /users/{id} solo lee el campo cached `average_rating` de la tabla users
+
+**SQL Internamente**:
+
+```sql
+-- TRIGGER: Al crear o actualizar review
+BEGIN TRANSACTION;
+  INSERT INTO reviews (..., rating=4.5, ...);  -- INSERT/UPDATE
+  UPDATE users SET average_rating = (SELECT AVG(rating) FROM reviews WHERE target_id=5),
+                   review_count = (SELECT COUNT(*) FROM reviews WHERE target_id=5)
+         WHERE id = 5;  -- TARGET recibe rating
+COMMIT;
+
+-- LECTURA: Sin TRIGGER, rápida
+SELECT id, name, average_rating, review_count FROM users WHERE id=5;
+-- Retorna: {average_rating: 4.2, review_count: 15} (instant)
+```
+
+**Beneficio**: Operación de lectura O(1) en lugar de O(N) donde N = número de reviews. Perfiles cargan al instante.
+
+#### Cambios en Backend API
+
+**Endpoint Actualizado**: POST /reviews
+
+**Request Antes (Etapa 6)**:
+
+```json
+{
+  "match_id": 5,
+  "rating": 4,
+  "comment": "Bien"
+}
+```
+
+**Request Después (Etapa 18)**:
+
+```json
+{
+  "match_id": 5,
+  "rating": 4.5,
+  "comment": "Bien, pero llegó un poco tarde"
+}
+```
+
+**Handler**: [internal/transport/http/social_handler.go](internal/transport/http/social_handler.go#L15)
+
+```go
+func (h *SocialHandler) CreateReview(c *gin.Context) {
+	// Obtener usuario autenticado
+	userID := c.MustGet("userID").(uint)
+
+	var req struct {
+		MatchID uint    `json:"match_id" binding:"required"`
+		Rating  float64 `json:"rating" binding:"required"` // AHORA ES FLOAT64
+		Comment string  `json:"comment"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Llamamos al servicio UPSERT
+	if err := h.reviewService.CreateOrUpdateReview(
+		req.MatchID,
+		userID,
+		req.Rating,
+		req.Comment,
+	); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Calificación guardada exitosamente"})
+}
+```
+
+**Cambio**: Request struct `Rating int` → `Rating float64`
+
+**Respuesta (200 OK)**:
+
+```json
+{
+  "message": "Calificación guardada exitosamente"
+}
+```
+
+#### Cambios en User Model
+
+Archivo: [internal/core/domain/user.go](internal/core/domain/user.go#L30)
+
+```go
+type User struct {
+	gorm.Model
+	Name       string `gorm:"not null" json:"name"`
+	Email      string `gorm:"uniqueIndex;not null" json:"email"`
+	Run        string `gorm:"uniqueIndex;not null" json:"run"`
+	Password   string `gorm:"not null" json:"-"`
+	Role       string `gorm:"default:'adopter'" json:"role"`
+	IsVerified bool   `gorm:"default:false" json:"is_verified"`
+	IsBanned   bool   `gorm:"default:false" json:"is_banned"`
+
+	PhotoURL string `json:"photo_url"`
+	Bio      string `gorm:"type:text" json:"bio"`
+	Phone    string `json:"phone"`
+
+	// --- REPUTACIÓN (CACHÉ ACTUALIZADO POR TRIGGER) ---
+	AverageRating float64 `gorm:"default:0" json:"average_rating"`  // Promedio de reviews recibidas
+	ReviewCount   int     `gorm:"default:0" json:"review_count"`     // Total de reviews recibidas
+
+	// ... campos existentes ...
+}
+```
+
+**Campos NUEVOS en Etapa 18**: `AverageRating float64` y `ReviewCount int`
+
+**Semántica**:
+
+- `AverageRating`: Promedio calculado al escribir, leído al consultar perfil
+- `ReviewCount`: Total de reviews recibidas (meta para determinar credibilidad)
+
+**Ejemplo**:
+
+- Usuario María tiene 5 reviews: [5, 4, 4.5, 3, 5]
+- `AverageRating = (5+4+4.5+3+5)/5 = 4.3`
+- `ReviewCount = 5`
+- GET /users/maria retorna: `{"average_rating": 4.3, "review_count": 5}`
+
+### Componente 2: Frontend - Arquitectura Limpia (ChatBloc Integration, StarRatingInput, User Robustness)
+
+#### 1. StarRatingInput Widget - Precisión Letterboxd
+
+Archivo: [app/lib/features/reviews/presentation/widgets/star_rating_input.dart](app/lib/features/reviews/presentation/widgets/star_rating_input.dart)
+
+```dart
+import 'package:flutter/material.dart';
+
+class StarRatingInput extends StatelessWidget {
+  final double rating;
+  final ValueChanged<double> onChanged;
+  final double size;
+  final Color color;
+
+  const StarRatingInput({
+    super.key,
+    required this.rating,
+    required this.onChanged,
+    this.size = 36,
+    this.color = const Color(0xFFFFC107), // Amber/Gold
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: List.generate(5, (index) {
+        final starValue = index + 1;
+
+        // LÓGICA DE VISUALIZACIÓN
+        IconData iconData;
+        if (rating >= starValue) {
+          // Estrella completa (ej: rating=4.5, starValue=3 → llena)
+          iconData = Icons.star;
+        } else if (rating >= starValue - 0.5) {
+          // Media estrella (ej: rating=3.5, starValue=4 → media)
+          iconData = Icons.star_half;
+        } else {
+          // Vacía (ej: rating=2.0, starValue=4 → vacía)
+          iconData = Icons.star_border;
+        }
+
+        return GestureDetector(
+          onTap: () {
+            // LÓGICA LETTERBOXD (Precisión):
+            // 1. Si toco una estrella llena → Baja media estrella
+            //    Ej: rating=4.0, toco estrella 4 → rating=3.5
+            // 2. Si toco una media estrella → Sube a llena
+            //    Ej: rating=3.5, toco estrella 4 → rating=4.0
+            // 3. Si toco otra estrella → Salta a valor lleno
+            //    Ej: rating=2.0, toco estrella 4 → rating=4.0
+
+            double newRating;
+            if (rating == starValue.toDouble()) {
+              // Caso 1: Ya está llena, bajar a media
+              newRating = starValue - 0.5;
+            } else {
+              // Caso 2 & 3: Crear nueva o saltar
+              newRating = starValue.toDouble();
+            }
+            onChanged(newRating);
+          },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2.0),
+            child: Icon(iconData, color: color, size: size),
+          ),
+        );
+      }),
+    );
+  }
+}
+```
+
+**Características del Widget**:
+
+- **Input Precision**: Soporta 0.5 increments (0.5, 1.0, 1.5, 2.0, ..., 5.0)
+- **Visual Feedback**: Icons.star (llena), Icons.star_half (media), Icons.star_border (vacía)
+- **Letterboxd UX**:
+  - 1 tap en estrella limpia = llena la estrella
+  - 2 taps en misma estrella = media estrella
+  - 1 tap en otra estrella = salta a esa
+- **Color**: Amber (dorado, estándar de ratings universalmente)
+
+**Ejemplo de Interacción**:
+
+1. Usuario toca estrella 4 → rating=4.0 (4 estrellas llenas)
+2. Usuario toca estrella 4 nuevamente → rating=3.5 (3 llenas + 1 media)
+3. Usuario toca estrella 5 → rating=5.0 (5 estrellas llenas)
+
+#### 2. ChatBloc Integration - State Management Híbrido
+
+Archivo: [app/lib/features/chat/presentation/bloc/chat_bloc.dart](app/lib/features/chat/presentation/bloc/chat_bloc.dart)
+
+**Cambios**:
+
+1. **Import ReviewsRepository**:
+
+```dart
+import '../../../reviews/data/reviews_repository.dart';
+```
+
+2. **Nuevo Enum ReviewStatus**:
+
+```dart
+enum ReviewStatus { initial, loading, success, failure }
+```
+
+3. **Nuevo Event SendReviewEvent**:
+
+```dart
+class SendReviewEvent extends ChatEvent {
+  final double rating;
+  final String comment;
+
+  SendReviewEvent({required this.rating, required this.comment});
+
+  @override
+  List<Object?> get props => [rating, comment];
+}
+```
+
+4. **Estado ChatLoaded extendido**:
+
+```dart
+class ChatLoaded extends ChatState {
+  final List<ChatMessage> messages;
+  final int matchId;
+  final int myUserId;
+  final bool isLocked;
+  final String lockReason;
+  final String? error;
+
+  final ReportStatus reportStatus;
+  final ReviewStatus reviewStatus;  // <--- NUEVO
+
+  ChatLoaded({
+    required this.messages,
+    required this.matchId,
+    required this.myUserId,
+    this.isLocked = false,
+    this.lockReason = '',
+    this.error,
+    this.reportStatus = ReportStatus.initial,
+    this.reviewStatus = ReviewStatus.initial,  // <--- NUEVO
+  });
+  // ... copyWith() también actualizado ...
+}
+```
+
+5. **Handler para SendReviewEvent**:
+
+```dart
+on<SendReviewEvent>((event, emit) async {
+  if (state is ChatLoaded) {
+    final currentState = state as ChatLoaded;
+    emit(currentState.copyWith(reviewStatus: ReviewStatus.loading));
+
+    try {
+      // Llamar a repository para enviar review
+      await reviewsRepository.createReview(
+        matchId: _currentMatchId,
+        rating: event.rating,
+        comment: event.comment,
+      );
+
+      // Éxito
+      emit(currentState.copyWith(reviewStatus: ReviewStatus.success));
+
+      // Limpiar estado
+      emit(currentState.copyWith(reviewStatus: ReviewStatus.initial));
+    } catch (e) {
+      // Error
+      emit(currentState.copyWith(
+        reviewStatus: ReviewStatus.failure,
+        error: e.toString(),
+      ));
+      emit(currentState.copyWith(
+        reviewStatus: ReviewStatus.initial,
+        error: null,
+      ));
+    }
+  }
+});
+```
+
+**Flujo**:
+
+1. Usuario abre diálogo de calificación
+2. Selecciona rating con StarRatingInput
+3. Click "Enviar Calificación"
+4. ChatBloc emite `SendReviewEvent(rating, comment)`
+5. Handler cambia estado a `ReviewStatus.loading`
+6. `reviewsRepository.createReview()` envía POST /reviews
+7. Backend valida (0.5-5.0), ejecuta UPSERT + trigger
+8. Si success: `ReviewStatus.success` + cierra diálogo
+9. Si error: `ReviewStatus.failure` + muestra SnackBar con error
+
+**Beneficio**: Sin salir de ChatScreen, usuario califica. BLoC maneja estado, UI reacciona automáticamente.
+
+#### 3. ReviewsRepository - Capa de Datos
+
+Archivo: [app/lib/features/reviews/data/reviews_repository.dart](app/lib/features/reviews/data/reviews_repository.dart)
+
+```dart
+import 'package:dio/dio.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import '../../../core/constants/api_constants.dart';
+
+class ReviewsRepository {
+  final Dio _dio = Dio();
+  final FlutterSecureStorage _storage = const FlutterSecureStorage();
+
+  // Crear o Actualizar Reseña (UPSERT)
+  Future<void> createReview({
+    required int matchId,
+    required double rating,
+    required String comment,
+  }) async {
+    try {
+      // 1. Obtener JWT token del almacenamiento seguro
+      final token = await _storage.read(key: 'jwt_token');
+
+      // 2. POST /reviews con rating como double
+      await _dio.post(
+        '${ApiConstants.baseUrl}${ApiConstants.reviews}',
+        data: {
+          'match_id': matchId,
+          'rating': rating,          // Ahora es double (4.5, 3.5, etc.)
+          'comment': comment,
+        },
+        options: Options(
+          headers: {'Authorization': 'Bearer $token'},
+        ),
+      );
+
+      // 3. Success (no retorna datos, solo verifica 200-299)
+    } catch (e) {
+      throw Exception('Error enviando reseña: $e');
+    }
+  }
+
+  // Obtener reseñas de un usuario (para mostrar reputación)
+  Future<List<Review>> getUserReviews(int userId) async {
+    try {
+      final response = await _dio.get(
+        '${ApiConstants.baseUrl}/users/$userId/reviews',
+      );
+      return (response.data as List)
+          .map((json) => Review.fromJson(json))
+          .toList();
+    } catch (e) {
+      throw Exception('Error obteniendo reseñas: $e');
+    }
+  }
+
+  // Obtener rating promedio de un usuario
+  Future<double> getUserAverageRating(int userId) async {
+    try {
+      final response = await _dio.get(
+        '${ApiConstants.baseUrl}/users/$userId/rating',
+      );
+      return (response.data['average_rating'] as num).toDouble();
+    } catch (e) {
+      throw Exception('Error obteniendo rating: $e');
+    }
+  }
+}
+```
+
+**Métodos**:
+
+- `createReview()`: POST /reviews con JWT, envía rating como double
+- `getUserReviews()`: GET /users/{id}/reviews (para pantalla de reputación)
+- `getUserAverageRating()`: GET /users/{id}/rating (para mostrar estrellas rápido)
+
+#### 4. ChatScreen Cambios - Integración del Diálogo
+
+Archivo: [app/lib/features/chat/presentation/screens/chat_screen.dart](app/lib/features/chat/presentation/screens/chat_screen.dart#L275)
+
+```dart
+// --- DIÁLOGO DE CALIFICACIÓN (NUEVO EN ETAPA 18) ---
+void _showRatingDialog(BuildContext chatContext) {
+  double _currentRating = 0.0;
+  String _comment = "";
+
+  showDialog(
+    context: chatContext,
+    builder: (dialogContext) {
+      return BlocProvider.value(
+        value: BlocProvider.of<ChatBloc>(chatContext),
+        child: StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text(
+                "Calificar Experiencia",
+                textAlign: TextAlign.center,
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      "Toca las estrellas para calificar",
+                      style: TextStyle(color: Colors.grey, fontSize: 12),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // WIDGET LETTERBOXD
+                    StarRatingInput(
+                      rating: _currentRating,
+                      size: 40,
+                      onChanged: (val) {
+                        setState(() => _currentRating = val);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _currentRating > 0
+                          ? "$_currentRating Estrellas"
+                          : "Selecciona una calificación",
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: _currentRating > 0
+                            ? Colors.amber[800]
+                            : Colors.grey,
+                      ),
+                    ),
+
+                    const SizedBox(height: 24),
+                    // COMENTARIO OPCIONAL
+                    TextField(
+                      decoration: const InputDecoration(
+                        labelText: "Reseña (Opcional)",
+                        hintText: "¿Cómo fue tu experiencia?",
+                        border: OutlineInputBorder(),
+                      ),
+                      maxLines: 3,
+                      onChanged: (val) => _comment = val,
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text(
+                    "Cancelar",
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                ),
+                BlocBuilder<ChatBloc, ChatState>(
+                  builder: (context, state) {
+                    // Mostrar spinner si está enviando
+                    if (state is ChatLoaded &&
+                        state.reviewStatus == ReviewStatus.loading) {
+                      return const CircularProgressIndicator();
+                    }
+
+                    return ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFE91E63),
+                        foregroundColor: Colors.white,
+                      ),
+                      // Deshabilitar si no hay rating seleccionado
+                      onPressed: _currentRating > 0
+                          ? () {
+                              context.read<ChatBloc>().add(
+                                SendReviewEvent(
+                                  rating: _currentRating,
+                                  comment: _comment,
+                                ),
+                              );
+                            }
+                          : null,
+                      child: const Text("Enviar Calificación"),
+                    );
+                  },
+                ),
+              ],
+            );
+          },
+        ),
+      );
+    },
+  );
+}
+```
+
+**Flujo UX**:
+
+1. Usuario abre chat → Menú (3-dots) → "Dejar Reseña"
+2. Diálogo aparece con StarRatingInput (5 estrellas)
+3. Usuario toca estrellas para seleccionar (soporta medias)
+4. Usuario escribe comentario opcional
+5. Click "Enviar Calificación"
+6. BLoC emite SendReviewEvent
+7. Spinner aparece mientras se envía
+8. En backend: UPSERT si no existe, UPDATE si existe
+9. Trigger recalcula promedio del target
+10. Diálogo cierra, SnackBar confirma
+
+#### 5. User Model - Blindsiding Contra Inconsistencias
+
+Archivo: [app/lib/features/user/domain/user_model.dart](app/lib/features/user/domain/user_model.dart#L42)
+
+```dart
+class User {
+  final int id;
+  final String name;
+  final String email;
+  final String photoUrl;
+  final String bio;
+  final String phone;
+  final String role;
+
+  // --- REPUTACIÓN (NUEVO EN ETAPA 18) ---
+  final double averageRating;
+  final int reviewCount;
+
+  // ... otros campos ...
+
+  User({
+    required this.id,
+    required this.name,
+    required this.email,
+    required this.photoUrl,
+    required this.bio,
+    required this.phone,
+    required this.role,
+
+    // Valores por defecto para reputación
+    this.averageRating = 0.0,
+    this.reviewCount = 0,
+
+    // ... otros con defaults ...
+  });
+
+  factory User.fromJson(Map<String, dynamic> json) {
+    return User(
+      // BLINDSIDING: Manejo de inconsistencias de mayúsculas (ID vs id)
+      id: json['ID'] ?? json['id'] ?? 0,
+      name: json['name'] ?? 'Usuario',
+      email: json['email'] ?? '',
+      photoUrl: json['photo_url'] ?? '',
+      bio: json['bio'] ?? '',
+      phone: json['phone'] ?? '',
+      role: json['role'] ?? 'adopter',
+
+      // PARSEO SEGURO para rating (puede venir como int o double del backend)
+      averageRating: (json['average_rating'] ?? 0).toDouble(),
+      reviewCount: json['review_count'] ?? 0,
+
+      // ... otros campos ...
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'email': email,
+      'photo_url': photoUrl,
+      'bio': bio,
+      'phone': phone,
+      'role': role,
+      'average_rating': averageRating,
+      'review_count': reviewCount,
+      // ... otros ...
+    };
+  }
+}
+```
+
+**Blindsiding Implementado**:
+
+1. **Case Insensitivity**: `json['ID'] ?? json['id']` → Maneja ambos formatos
+2. **Null Safety**: `?? 0`, `?? ''` → Valores por defecto si falta el campo
+3. **Type Conversion**: `(json['average_rating'] ?? 0).toDouble()` → Convierte int/double a double seguramente
+
+**Ejemplo**:
+
+```json
+// Backend envía (Etapa 18 correcto):
+{"id": 5, "average_rating": 4.5, "review_count": 15}
+
+// Backend envía (legacy):
+{"ID": 5, "average_rating": null, "review_count": null}
+
+// Parseo con blindsiding:
+User.fromJson(...) → id=5, averageRating=0.0, reviewCount=0 (NO crash)
+```
+
+### Componente 3: UX/Experiencia de Usuario (Letterboxd-Style, Dual Visibility)
+
+#### Precisión Letterboxd
+
+El widget StarRatingInput implementa el patrón de Letterboxd (sitio de social networking de películas):
+
+- **1 toque**: Selecciona estrella completa (1.0, 2.0, 3.0, 4.0, 5.0)
+- **2 toques**: Reduce a media estrella (0.5, 1.5, 2.5, 3.5, 4.5)
+- **Toque en otra**: Salta al valor completo de esa estrella
+
+**Ejemplo secuencia**:
+
+```
+Inicial: ⭐☆☆☆☆ (0.0)
+Toco 4: ⭐⭐⭐⭐☆ (4.0)
+Toco 4 nuevamente: ⭐⭐⭐◐☆ (3.5)
+Toco 5: ⭐⭐⭐⭐⭐ (5.0)
+Toco 2: ⭐⭐☆☆☆ (2.0)
+```
+
+**Impacto UX**: Usuarios pueden expresar opiniones más matizadas. No es binario (bueno/malo), es espectro.
+
+#### Visibilidad Dual: Pública + Privada
+
+**Pública (Visible en Perfil de Cualquiera)**:
+
+Cuando abres el perfil de otro usuario, ves:
+
+- `AverageRating` (ej: 4.3/5)
+- `ReviewCount` (ej: 15 opiniones)
+- Opcionalmente: Historial de reviews (last 5) en pantalla de reputación
+
+**SQL que se ejecuta**:
+
+```sql
+GET /users/5
+SELECT id, name, photo_url, average_rating, review_count, ...
+FROM users WHERE id=5;
+```
+
+**Privada (Visible solo en "Mi Perfil" del usuario)**:
+
+Cuando abres tu propio perfil desde "Mi Perfil":
+
+- Ves TODAS tus reviews enviadas (las que TÚ escribiste)
+- Pantalla de autoevaluación: "Cómo otros me ven" + "Cómo yo califiqué a otros"
+
+**SQL que se ejecuta**:
+
+```sql
+GET /users/me/reviews-sent
+SELECT * FROM reviews WHERE author_id = ?;  -- Reviews que ESCRIBÍ
+
+GET /users/me/reviews-received
+SELECT * FROM reviews WHERE target_id = ?;  -- Reviews que RECIBÍ
+```
+
+**Archivo**: [app/lib/features/reviews/presentation/screens/user_reviews_screen.dart](app/lib/features/reviews/presentation/screens/user_reviews_screen.dart)
+
+```dart
+class UserReviewsScreen extends StatefulWidget {
+  final int userId;
+  final String userName;
+
+  const UserReviewsScreen({
+    super.key,
+    required this.userId,
+    required this.userName,
+  });
+
+  @override
+  State<UserReviewsScreen> createState() => _UserReviewsScreenState();
+}
+
+class _UserReviewsScreenState extends State<UserReviewsScreen> {
+  late Future<List<Review>> _reviewsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _reviewsFuture = context.read<ReviewsRepository>().getUserReviews(
+      widget.userId,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text("Reseñas de ${widget.userName}"),
+      ),
+      body: FutureBuilder<List<Review>>(
+        future: _reviewsFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          } else if (snapshot.hasError) {
+            return Center(child: Text("Error: ${snapshot.error}"));
+          } else {
+            final reviews = snapshot.data ?? [];
+            return ListView.builder(
+              itemCount: reviews.length,
+              itemBuilder: (context, index) {
+                final review = reviews[index];
+                return _buildReviewCard(review);
+              },
+            );
+          }
+        },
+      ),
+    );
+  }
+
+  Widget _buildReviewCard(Review review) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Autor de la review
+            Text(
+              review.author.name,
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+
+            // Rating con estrellas
+            Row(
+              children: [
+                Icon(Icons.star, color: Colors.amber),
+                Text(review.rating.toString()),
+              ],
+            ),
+
+            // Comentario
+            Text(review.comment),
+
+            // Fecha
+            Text(
+              "hace ${DateTime.now().difference(review.createdAt).inDays} días",
+              style: const TextStyle(color: Colors.grey),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+```
+
+**Visibilidad Dual Implementada**:
+
+1. **Pública**: GET /users/{id} retorna `average_rating` y `review_count` cachados
+2. **Privada**: GET /users/me/reviews retorna detalle completo de reviews propias
+3. **Comunidad**: GET /users/{id}/reviews retorna reviews recibidas (pública parcialmente)
+
+### Resumen de Cambios Etapa 18
+
+| Componente       | Etapa 6                    | Etapa 18                    | Cambio                     |
+| ---------------- | -------------------------- | --------------------------- | -------------------------- |
+| Tipo de Rating   | int (1-5)                  | float64 (0.5-5.0)           | Precisión decimal          |
+| Duplicados       | Posibles (sin validación)  | Prevención UPSERT           | No más duplicados          |
+| Cálculo Promedio | Al leer (queries costosas) | Al escribir (trigger)       | Mejor rendimiento          |
+| Widget UI        | Star picker simple         | StarRatingInput Letterboxd  | UX superior                |
+| Validación       | 1 ≤ rating ≤ 5             | 0.5 ≤ rating ≤ 5.0          | Más preciso                |
+| Integración Chat | Diálogo separado           | ChatBloc sin salir          | Seamless                   |
+| User Model       | Sin reputación             | AverageRating + ReviewCount | Caché para renders rápidos |
+| Visibilidad      | Solo pública               | Dual (pública + privada)    | Control granular           |
+
+**Etapa 18 Status: 100% Implementado y Verificado**
+
 ## Estructura del Proyecto
 
 Consultar `documentation/` para documentación exhaustiva:
@@ -8478,19 +9429,20 @@ Este proyecto se desarrolla en fases:
 - **Fase 7** (Completada): CI/CD pipeline, testing unitario, linting, vulnerability scanning, Docker push
 - **Fase 8** (Completada): Verificación de identidad (R-SEC-01), anti-multicuentas (R-SEC-02), blacklist (R-SEC-03), auto-ban system (R-SEC-04)
 - **Fase 9** (Completada): Matchmaking inteligente, perfiles enriquecidos, algoritmo de compatibilidad, flujo de swipe/pending/respond
-- **Etapa 4** (Completada): Bandejas inteligentes separadas (pending/active chats), robustez en swipe deck (LEFT JOIN), mejoras frontend (JWT decoding, list handling)
 - **Fase 10** (Completada): Chat persistente, filtro "Evil PAWS" contra estafas, sistema de reputación 1-5 estrellas
+- **Etapa 4** (Completada): Bandejas inteligentes separadas (pending/active chats), robustez en swipe deck (LEFT JOIN), mejoras frontend (JWT decoding, list handling)
 - **Etapa 5** (Completada): Identidad real (foto, nombre, bio, teléfono), geolocalización con permisos GPS, MainLayout con navegación inferior
 - **Etapa 6** (Completada): Robustez en handlers (type-safe JWT), ChatScreen con menús contextuales, SocialRepository centralizada
-- **Etapa 7** (Completada): RBAC administrativo (middleware de roles), Panel de Justicia para admins, autopromoci\u00f3n autom\u00e1tica, correcci\u00f3n de identidad en reportes
-- **Etapa 8** (Completada): Despliegue cloud (Supabase, Railway, Vercel), base de datos h\u00edbrida local/nube, frontend web, API p\u00fablica global
-- **Etapa 9** (Completada): Contenedorización total (Docker & Docker Compose), estabilidad de conexi\u00f3n con Supabase (Session Mode), almacenamiento resiliente (MinIO con fallback)
+- **Etapa 7** (Completada): RBAC administrativo (middleware de roles), Panel de Justicia para admins, autopromoción automática, corrección de identidad en reportes
+- **Etapa 8** (Completada): Despliegue cloud (Supabase, Railway, Vercel), base de datos híbrida local/nube, frontend web, API pública global
+- **Etapa 9** (Completada): Contenedorización total (Docker & Docker Compose), estabilidad de conexión con Supabase (Session Mode), almacenamiento resiliente (MinIO con fallback)
 - **Etapa 10** (Completada): Arquitectura orientada a eventos (RabbitMQ), registro en dos pasos con commit diferido (Redis + PostgreSQL), correos transaccionales (SendGrid), UX/UI mejorada
 - **Etapa 11** (Completada): Chat en tiempo real con WebSockets, Hub inteligente con enrutamiento por roles (Adoptante/Rescatista), dual-delivery (recipient + sender confirmation), persistencia garantizada en PostgreSQL, hybrid frontend loading (HTTP historial + WebSocket presente), stream fusion con BLoC, JWT validation en handshake
 - **Etapa 12** (Completada): Notificaciones Push con Firebase Cloud Messaging (FCM), sistema híbrido en tiempo real (WebSocket online + Push offline), lógica WhatsApp con detección Online/Offline en Hub, agrupación de notificaciones por Tag, registro transparente de tokens FCM, integración RabbitMQ como broker de push notifications
 - **Etapa 15** (Completada): Perfiles enriquecidos con 8 campos de hogar/experiencia (vivienda, patio, familia, mascotas, disponibilidad, experiencia), visibilidad de perfil adoptante en solicitudes pendientes, ciclo de vida inicial de chats con exit/bloqueo/eliminación
 - **Etapa 16** (Completada): Máquina de estados terminal para chats (estado `cancelled` cuando ambos usuarios abandonan), eliminación de bucle infinito ping-pong, cascada atómica de eliminación de mascotas con transacciones GORM, robustez contra datos malformados (\_parseInt helper), personalización de mensajes de bloqueo por rol del usuario
 - **Etapa 17** (Completada): Sistema de justicia integral con denuncias categorizadas (maltrato, estafa, spam, odio, otro), evidencia congelada inmutable, discretion administrativa (ban/dismiss), blacklist pública con búsqueda de antecedentes por RUT, validación Módulo 11 chileno, Centro de Resolución para admins con visor de evidencia, protección de denunciante con silencio operativo
+- **Etapa 18** (Completada): Módulo de calificación avanzada con ratings decimales 0.5-5.0, UPSERT inteligente para prevenir duplicados, recalcación automática de promedios mediante triggers, StarRatingInput widget Letterboxd-style, integración seamless en ChatBloc sin salir de pantalla chat, User model robusto con blindsiding contra inconsistencias
 
 ## Documentación Adicional
 
@@ -8517,7 +9469,7 @@ Este proyecto se desarrolla en fases:
 - **Etapa 15**: Perfiles enriquecidos y ciclo de vida inicial de chats (parcialmente integrada en [Fase-5](documentation/Fase-5.md) para EditProfileScreen, [Fase-9](documentation/Fase-9.md) para visibilidad de perfil en solicitudes, y [Fase-11](documentation/Fase-11.md) para chat exit/blocking)
 - **Etapa 16**: Máquina de estados terminal, eliminación de ping-pong, cascadas atómicas, robustez de datos (integrada en [Fase-15](documentation/Fase-15.md) con sección "COMPLETADO EN ETAPA 16")
 - **Etapa 17**: Sistema de justicia integral, denuncias categorizadas, evidencia congelada, discretion administrativa (integrada en [Fase-8](documentation/Fase-8.md) con sección "COMPLETADO EN ETAPA 17" y nueva [Etapa-17](documentation/Etapa-17.md) para documentación completa)
-- **Etapa 16**: Máquina de estados terminal, eliminación de ping-pong, cascadas atómicas, robustez de datos (integrada en [Fase-15](documentation/Fase-15.md) con sección "COMPLETADO EN ETAPA 16")
+- **Etapa 18**: Módulo de calificación avanzada, ratings decimales 0.5-5.0, UPSERT inteligente, triggers de recalcación, StarRatingInput Letterboxd-style, integración ChatBloc seamless (integrada en [Fase-10](documentation/Fase-10.md) con sección "COMPLETADO EN ETAPA 18")
 - **Etapa 17**: Sistema de justicia integral, denuncias categorizadas, evidencia congelada, discretion administrativa (integrada en [Fase-8](documentation/Fase-8.md) con sección "COMPLETADO EN ETAPA 17" para detalles de seguridad y modelo de reportes)
 
 ## Notas Arquitectónicas
