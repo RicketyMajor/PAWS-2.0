@@ -8,11 +8,18 @@ import (
 type User struct {
 	gorm.Model
 
-	Name       string `gorm:"not null" json:"name"`
-	Email      string `gorm:"uniqueIndex;not null" json:"email"`
-	Run        string `gorm:"uniqueIndex;not null" json:"run"`
-	Password   string `gorm:"not null" json:"-"`
-	Role       string `gorm:"default:'adopter'" json:"role"`
+	Name string `gorm:"not null" json:"name"`
+
+	// CAMBIO: Indices compuestos con el Rol.
+	// Esto permite tener el mismo Email/Run si el Rol es diferente.
+	Email string `gorm:"index:idx_email_role,unique;not null" json:"email"`
+	Run   string `gorm:"index:idx_run_role,unique;not null" json:"run"`
+
+	Password string `gorm:"not null" json:"-"`
+
+	// El Rol es parte de la clave única compuesta ahora.
+	Role       string `gorm:"default:'adopter';index:idx_email_role,unique;index:idx_run_role,unique" json:"role"`
+	
 	IsVerified bool   `gorm:"default:false" json:"is_verified"`
 	IsBanned   bool   `gorm:"default:false" json:"is_banned"`
 
@@ -22,21 +29,20 @@ type User struct {
 	Phone    string `json:"phone"`
 
 	// --- REPUTACIÓN (CACHÉ) ---
-	// Estos campos se actualizan automáticamente cada vez que alguien califica.
-	AverageRating float64 `gorm:"default:0" json:"average_rating"` // Promedio (ej: 4.5)
-	ReviewCount   int     `gorm:"default:0" json:"review_count"`   // Total de reseñas (ej: 300)
+	AverageRating float64 `gorm:"default:0" json:"average_rating"`
+	ReviewCount   int     `gorm:"default:0" json:"review_count"`
 
-	// --- NUEVOS DATOS: VIVIENDA (Para Evaluar Adopción) ---
-	HousingType      string `json:"housing_type"`      // House, Apartment, Parcel
-	HousingOwnership string `json:"housing_ownership"` // Owned, Rented
-	HasYard          bool   `json:"has_yard"`          // ¿Tiene patio?
-	HasFence         bool   `json:"has_fence"`         // ¿Tiene cerco seguro?
+	// --- DATOS: VIVIENDA ---
+	HousingType      string `json:"housing_type"`
+	HousingOwnership string `json:"housing_ownership"`
+	HasYard          bool   `json:"has_yard"`
+	HasFence         bool   `json:"has_fence"`
 
-	// --- NUEVOS DATOS: ESTILO DE VIDA ---
-	FamilyComposition string `json:"family_composition"` // Single, Couple, Kids, Seniors
-	OtherPets         string `json:"other_pets"`         // None, Dogs, Cats, Both
-	TimeAvailability  string `json:"time_availability"`  // Low (<2h), Medium (2-5h), High (>5h)
-	Experience        string `json:"experience"`         // Beginner, Intermediate, Expert
+	// --- DATOS: ESTILO DE VIDA ---
+	FamilyComposition string `json:"family_composition"`
+	OtherPets         string `json:"other_pets"`
+	TimeAvailability  string `json:"time_availability"`
+	Experience        string `json:"experience"`
 
 	// Token de Firebase
 	FCMToken string `json:"fcm_token"`

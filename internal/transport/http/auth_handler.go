@@ -28,12 +28,9 @@ type OTPVerifyRequest struct {
 	Code  string `json:"code" binding:"required,len=6"`
 }
 
-// --- NUEVO: Structs para Recuperación ---
 type ResetPasswordRequest struct {
 	Email       string `json:"email" binding:"required,email"`
 	NewPassword string `json:"new_password" binding:"required,min=6"`
-	// Opcional: Podrías pedir el código aquí de nuevo para doble seguridad, 
-	// pero normalmente se verifica en el paso anterior.
 }
 
 type AuthHandler struct {
@@ -45,21 +42,43 @@ func NewAuthHandler(s *services.AuthService, otp *services.OTPService) *AuthHand
 	return &AuthHandler{service: s, otpService: otp}
 }
 
+// --- FLUJO DE CAMBIO DE ROL ---
+
+func (h *AuthHandler) SwitchRole(c *gin.Context) {
+	userIDVal, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "No autorizado"})
+		return
+	}
+	
+	var userID uint
+	if val, ok := userIDVal.(float64); ok {
+		userID = uint(val)
+	} else {
+		userID = userIDVal.(uint)
+	}
+
+	newToken, newUser, err := h.service.SwitchRole(userID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Cambio de perfil exitoso",
+		"token":   newToken,
+		"user":    newUser,
+	})
+}
+
 // --- FLUJO DE RECUPERACIÓN DE CONTRASEÑA ---
 
-// 1. ForgotPassword: Pide el código
 func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 	var req OTPRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
-	// Verificar si el usuario existe antes de enviar nada
-	// (Para evitar enumeración de usuarios, a veces se omite, pero por UX es mejor avisar)
-	// Como GenerateRecoveryOTP solo envía mail, no valida existencia en BD explícitamente allí.
-	// Podemos hacerlo aquí o dejar que el usuario se de cuenta si no llega el mail.
-	// Por seguridad estándar, respondemos "Si el correo existe, se envió el código".
 	
 	_, err := h.otpService.GenerateRecoveryOTP(req.Email)
 	if err != nil {
@@ -70,7 +89,6 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Código de recuperación enviado"})
 }
 
-// 2. VerifyRecoveryCode: Verifica el código antes de permitir cambiar la clave
 func (h *AuthHandler) VerifyRecoveryCode(c *gin.Context) {
 	var req OTPVerifyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -84,12 +102,9 @@ func (h *AuthHandler) VerifyRecoveryCode(c *gin.Context) {
 		return
 	}
 
-	// En un flujo más estricto, aquí devolveríamos un "Reset Token" temporal.
-	// Para simplificar, confiamos en que el cliente pasará al siguiente paso inmediatamente.
 	c.JSON(http.StatusOK, gin.H{"message": "Código verificado correctamente"})
 }
 
-// 3. ResetPassword: Cambia la contraseña
 func (h *AuthHandler) ResetPassword(c *gin.Context) {
 	var req ResetPasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -105,7 +120,7 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Contraseña restablecida exitosamente"})
 }
 
-// --- FLUJO DE REGISTRO & LOGIN (Existente) ---
+// --- FLUJO DE REGISTRO & LOGIN ---
 
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req RegisterRequest
@@ -144,15 +159,12 @@ func (h *AuthHandler) VerifyOTP(c *gin.Context) {
 		return
 	}
 
+	// INTENTAMOS COMPLETAR EL REGISTRO
 	user, err := h.service.CompleteRegistration(req.Email)
 	if err != nil {
-		// Intento de login con OTP (si ya existe)
-		token, tokenErr := h.service.GenerateTokenForEmail(req.Email)
-		if tokenErr != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Registro expirado o usuario no encontrado."})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"message": "Bienvenido", "token": token})
+		// CORRECCIÓN CRÍTICA: Eliminamos el "fallback" de login automático si falla el registro.
+		// Si falla (ej: por duplicidad de DB), debemos avisar al usuario, no loguearlo en su cuenta vieja.
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error creando la cuenta: " + err.Error()})
 		return
 	}
 

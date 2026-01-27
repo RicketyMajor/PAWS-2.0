@@ -8,6 +8,7 @@ import (
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/domain"
 	"github.com/RicketyMajor/PAWS-2.0/internal/infrastructure/messaging"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Constantes locales mapeadas al dominio
@@ -40,6 +41,43 @@ func NewMatchService(db *gorm.DB, petService *PetService, mq *messaging.RabbitMQ
 	}
 }
 
+// GetSwipeDeck devuelve las mascotas disponibles para un adoptante, aplicando filtros lógicos.
+func (s *MatchService) GetSwipeDeck(userID uint, lat, lon float64) ([]domain.Pet, error) {
+	// 1. Obtener el RUT del usuario actual (Adoptante) para el Filtro Espejo
+	var currentUser domain.User
+	if err := s.db.Select("run").First(&currentUser, userID).Error; err != nil {
+		return nil, fmt.Errorf("error identificando usuario: %v", err)
+	}
+
+	var pets []domain.Pet
+	
+	// Construcción de la Query
+	query := s.db.Table("pets p").
+		Select("p.*").
+		// JOIN 1 (Filtro Espejo): Unimos con la tabla de usuarios dueños (u)
+		Joins("INNER JOIN users u ON p.user_id = u.id").
+		// JOIN 2 (Historial): Unimos con matches (m) para ver si ya interactuó
+		Joins("LEFT JOIN matches m ON m.pet_id = p.id AND m.adopter_id = ?", userID).
+		// CONDICIONES:
+		Where("m.id IS NULL").                         // Que no haya swipe previo
+		Where("p.status = ?", domain.StatusAvailable). // Que la mascota esté disponible
+		Where("p.deleted_at IS NULL").                 // Que no esté eliminada
+		Where("u.run <> ?", currentUser.Run)           // FILTRO ESPEJO: El dueño no puede tener mi mismo RUT
+
+	// Lógica de ordenamiento (Geolocalización o Cronológico)
+	if lat != 0 && lon != 0 {
+		// Fórmula Haversine simplificada para ordenar por distancia
+		orderClause := "((? - p.latitude) * (? - p.latitude) + (? - p.longitude) * (? - p.longitude)) ASC"
+		query = query.Order(clause.Expr{SQL: orderClause, Vars: []interface{}{lat, lat, lon, lon}})
+	} else {
+		query = query.Order("p.created_at DESC")
+	}
+
+	// Ejecutar y cargar relaciones necesarias para la UI (Foto y Dueño)
+	err := query.Preload("Images").Preload("User").Find(&pets).Error
+	return pets, err
+}
+
 // Unmatch gestiona la lógica de estados para salir del chat
 func (s *MatchService) Unmatch(userID, matchID uint) error {
 	var match domain.Match
@@ -61,12 +99,9 @@ func (s *MatchService) Unmatch(userID, matchID uint) error {
 	// Lógica de Máquina de Estados:
 	if userID == match.AdopterID {
 		// --- SOY EL ADOPTANTE ---
-		// Si el Rescatista ya se fue o la mascota fue borrada, y ahora yo me voy...
-		// Significa que ya nadie quiere el chat -> Cancelled (Adios para siempre)
 		if match.Status == MatchRescuerLeft || match.Status == MatchPetDeleted {
 			newStatus = MatchCancelled
 		} else {
-			// Si no, solo marco que yo me fui
 			newStatus = MatchAdopterLeft
 		}
 
@@ -93,8 +128,6 @@ func (s *MatchService) Unmatch(userID, matchID uint) error {
 }
 
 // GetAcceptedMatches (Para el ADOPTANTE)
-// Debe ver: Accepted, RescuerLeft (bloqueado), PetDeleted (bloqueado)
-// NO debe ver: AdopterLeft (él se salió), Cancelled (ambos se salieron)
 func (s *MatchService) GetAcceptedMatches(adopterID uint) ([]domain.Match, error) {
 	var matches []domain.Match
 	
@@ -108,7 +141,6 @@ func (s *MatchService) GetAcceptedMatches(adopterID uint) ([]domain.Match, error
 		Order("updated_at DESC").
 		Find(&matches).Error
 	
-	// Ajuste visual para mascotas borradas
 	for i := range matches {
 		if !matches[i].Pet.DeletedAt.Time.IsZero() {
 			matches[i].Pet.Status = domain.PetStatus("deleted") 
@@ -118,12 +150,9 @@ func (s *MatchService) GetAcceptedMatches(adopterID uint) ([]domain.Match, error
 }
 
 // GetRescuerMatches (Para el RESCATISTA)
-// Debe ver: Accepted, AdopterLeft (bloqueado), PetDeleted (bloqueado)
-// NO debe ver: RescuerLeft (él se salió), Cancelled
 func (s *MatchService) GetRescuerMatches(rescuerID uint) ([]domain.Match, error) {
 	var matches []domain.Match
 	
-	// Usamos Table/Joins porque la relación es a través de Pets
 	err := s.db.Table("matches").
 		Select("matches.*").
 		Joins("JOIN pets ON matches.pet_id = pets.id").
@@ -143,29 +172,6 @@ func (s *MatchService) GetRescuerMatches(rescuerID uint) ([]domain.Match, error)
 		}
 	}
 	return matches, err
-}
-
-// --- El resto de funciones se mantienen IGUAL (Swipe, Respond, etc.) ---
-// Solo copia y pega las funciones auxiliares que ya tenías (GetSwipeDeck, RespondMatch, GetPendingRequests, GetAdopterPendingMatches)
-// Asegúrate de que GetPendingRequests mantenga el Select("matches.*") que arreglamos antes.
-
-func (s *MatchService) GetSwipeDeck(userID uint, lat, lon float64) ([]domain.Pet, error) {
-	var pets []domain.Pet
-	query := s.db.Table("pets p").
-		Select("p.*").
-		Joins("LEFT JOIN matches m ON m.pet_id = p.id AND m.adopter_id = ?", userID).
-		Where("m.id IS NULL").
-		Where("p.status = ?", domain.StatusAvailable).
-		Where("p.deleted_at IS NULL")
-
-	if lat != 0 && lon != 0 {
-		orderClause := "((? - p.latitude) * (? - p.latitude) + (? - p.longitude) * (? - p.longitude)) ASC"
-		query = query.Order(gorm.Expr(orderClause, lat, lat, lon, lon))
-	} else {
-		query = query.Order("p.created_at DESC")
-	}
-	err := query.Preload("Images").Preload("User").Find(&pets).Error
-	return pets, err
 }
 
 func (s *MatchService) Swipe(adopterID, petID uint, isLike bool) error {

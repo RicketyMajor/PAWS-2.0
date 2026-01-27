@@ -1,48 +1,74 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
-	"fmt"
+
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/domain"
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/services"
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/workers"
 	"github.com/RicketyMajor/PAWS-2.0/internal/infrastructure/email"
 	"github.com/RicketyMajor/PAWS-2.0/internal/infrastructure/messaging"
 	"github.com/RicketyMajor/PAWS-2.0/internal/platform/database"
-	
+
 	httpTransport "github.com/RicketyMajor/PAWS-2.0/internal/transport/http"
-	"github.com/RicketyMajor/PAWS-2.0/internal/transport/http/middleware" 
-	
+	"github.com/RicketyMajor/PAWS-2.0/internal/transport/http/middleware"
+
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	"gorm.io/gorm"
 )
+
+// dropLegacyConstraints elimina índices antiguos que impiden la duplicidad de RUT/Email
+func dropLegacyConstraints(db *gorm.DB) {
+	// Intentamos borrar los índices únicos globales antiguos.
+	// Si no existen, no pasa nada (por eso el 'IF EXISTS').
+	queries := []string{
+		"DROP INDEX IF EXISTS idx_users_run;",
+		"DROP INDEX IF EXISTS idx_users_email;",
+		"DROP INDEX IF EXISTS uni_users_run;",   // Nombre alternativo común de GORM
+		"DROP INDEX IF EXISTS uni_users_email;", // Nombre alternativo común de GORM
+	}
+
+	log.Println("MIGRACIÓN: Limpiando restricciones antiguas de base de datos...")
+	for _, q := range queries {
+		if err := db.Exec(q).Error; err != nil {
+			log.Printf("Advertencia borrando índice (%s): %v", q, err)
+		}
+	}
+	log.Println("Limpieza de índices completada.")
+}
 
 func main() {
 	// =========================================================================
 	// 1. CONFIGURACIÓN E INFRAESTRUCTURA
 	// =========================================================================
-	
+
 	if err := godotenv.Load(); err != nil {
 		log.Println("Info: No se encontró archivo .env, usando variables del sistema")
 	}
-    url := os.Getenv("DATABASE_URL")
-    if url != "" {
-        log.Println("DEBUG: ¡Variable DATABASE_URL encontrada! Longitud:", len(url))
-    } else {
-        log.Println("DEBUG: DATABASE_URL está vacía. Godotenv cargó el archivo pero no leyó la variable.")
-    }
+	url := os.Getenv("DATABASE_URL")
+	if url != "" {
+		log.Println("DEBUG: ¡Variable DATABASE_URL encontrada! Longitud:", len(url))
+	} else {
+		log.Println("DEBUG: DATABASE_URL está vacía. Godotenv cargó el archivo pero no leyó la variable.")
+	}
 
 	database.Connect()
 
+	// --- CORRECCIÓN BASE DE DATOS ---
+	// Ejecutamos la limpieza ANTES de la migración automática
+	dropLegacyConstraints(database.DB)
+
 	// Migraciones
 	if err := database.DB.AutoMigrate(
-		&domain.User{}, 
+		&domain.User{},
 		&domain.UserProfile{},
 		&domain.Pet{},
 		&domain.PetImage{},
 		&domain.Match{},
-		&domain.Message{}, 
+		&domain.Message{},
 		&domain.Review{},
 		&domain.Report{},
 		&domain.BlacklistEntry{},
@@ -175,6 +201,7 @@ func main() {
 		protected := api.Group("/")
 		protected.Use(middleware.AuthMiddleware()) 
 		{
+			protected.POST("/auth/switch-role", authHandler.SwitchRole)
 			protected.PUT("/profile", userHandler.UpdateProfile)
 			protected.GET("/profile", userHandler.GetProfile)
 			protected.POST("/pets", petHandler.Create)
