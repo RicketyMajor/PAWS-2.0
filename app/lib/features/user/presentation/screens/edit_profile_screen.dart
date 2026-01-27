@@ -2,11 +2,20 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:image_picker/image_picker.dart';
+
+// --- Imports de Utilidades y Datos ---
 import '../../../../core/utils/image_helper.dart';
 import '../../data/user_repository.dart';
 import '../../domain/user_model.dart';
+
+// --- Imports de Pantallas Relacionadas ---
 import '../../../security/presentation/screens/blacklist_search_screen.dart';
 import '../../../reviews/presentation/screens/user_reviews_screen.dart';
+import '../../../auth/presentation/screens/register_screen.dart';
+import '../../../../core/presentation/main_layout_screen.dart';
+
+// --- Import del Repositorio de Autenticación (Para el Switch) ---
+import '../../../auth/data/auth_repository.dart';
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
@@ -54,10 +63,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   String _timeAvailability = _timeOptions[1]; // Medium
   String _experience = _expOptions[0];
 
-  // --- ESTADO DE REPUTACIÓN ---
+  // --- ESTADO DE REPUTACIÓN E IDENTIDAD ---
   double _averageRating = 0.0;
   int _reviewCount = 0;
   int _userId = 0;
+
+  // Variables para Cambio de Rol
+  String _currentRole = 'adopter';
+  String _currentEmail = '';
+  String _currentRun = '';
 
   String? _currentPhotoUrl;
   File? _newPhotoFile;
@@ -82,13 +96,19 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   Future<void> _loadProfile() async {
     try {
       final repo = context.read<UserRepository>();
-      final data = await repo.getProfile();
+      final data = await repo.getProfile(); // Devuelve Map<String, dynamic>
       final user = User.fromJson(data);
 
       if (mounted) {
         setState(() {
-          // Datos Identificación
+          // Datos Identificación para Switch Role
           _userId = user.id;
+          _currentRole = user.role;
+          _currentEmail = user.email;
+          // Obtenemos el RUN directamente del mapa crudo porque User.fromJson podría no tenerlo mapeado aún
+          _currentRun = data['run'] ?? '';
+
+          // Datos Reputación
           _averageRating = user.averageRating;
           _reviewCount = user.reviewCount;
 
@@ -128,10 +148,90 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
-        // Usamos print para debuggear, a veces el SnackBar en initState puede fallar si el contexto no está listo
+        // Usamos print para debuggear errores de carga inicial
         print("Error cargando perfil: $e");
       }
     }
+  }
+
+  // --- LÓGICA DE CAMBIO DE ROL (NUEVO) ---
+  Future<void> _handleSwitchRole() async {
+    setState(() => _isLoading = true);
+    try {
+      // Usamos el AuthRepository inyectado en main.dart
+      final authRepo = context.read<AuthRepository>();
+
+      // Intentamos cambiar de rol
+      final newUserMap = await authRepo.switchRole();
+
+      if (newUserMap != null) {
+        // ¡ÉXITO! La cuenta existía y el token se actualizó.
+        final newRole = newUserMap['role'];
+        if (!mounted) return;
+
+        // Reiniciamos la App en el MainLayout con el nuevo rol para refrescar tabs y permisos
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => MainLayoutScreen(role: newRole)),
+          (route) => false,
+        );
+      } else {
+        // 404: La cuenta NO existe.
+        if (!mounted) return;
+        setState(() => _isLoading = false);
+
+        // Preguntamos si quiere crearla facilitándole el registro
+        _showCreateAccountDialog();
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  void _showCreateAccountDialog() {
+    final targetRoleName = _currentRole == 'adopter'
+        ? 'Rescatista'
+        : 'Adoptante';
+    final targetRoleCode = _currentRole == 'adopter' ? 'rescuer' : 'adopter';
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text("Activar modo $targetRoleName"),
+        content: Text(
+          "Aún no tienes un perfil de $targetRoleName asociado a tu cuenta.\n\n"
+          "¿Quieres activarlo ahora usando tus mismos datos (RUT y Email)?",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Cancelar"),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              // Navegar al Registro con datos pre-cargados
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => RegisterScreen(
+                    initialName: _nameCtrl.text,
+                    initialEmail: _currentEmail,
+                    initialRun: _currentRun,
+                    initialRole: targetRoleCode,
+                  ),
+                ),
+              );
+            },
+            child: const Text("Sí, activar"),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _pickImage() async {
@@ -196,6 +296,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Configuración visual del botón según el rol al que iríamos
+    final targetRoleLabel = _currentRole == 'adopter'
+        ? 'Modo Rescatista'
+        : 'Modo Adoptante';
+    final targetColor = _currentRole == 'adopter'
+        ? Colors.purple
+        : Colors.orange;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text("Mi Perfil"),
@@ -231,7 +339,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // --- FOTO ---
+                    // --- FOTO DE PERFIL ---
                     Center(
                       child: GestureDetector(
                         onTap: _pickImage,
@@ -261,7 +369,28 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     ),
                     const SizedBox(height: 16),
 
-                    // --- BOTÓN DE REPUTACIÓN ---
+                    // --- BOTÓN DE CAMBIO DE ROL (NUEVO) ---
+                    Center(
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: targetColor,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 20,
+                            vertical: 12,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(30),
+                          ),
+                        ),
+                        onPressed: _handleSwitchRole,
+                        icon: const Icon(Icons.swap_horiz),
+                        label: Text("Cambiar a $targetRoleLabel"),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // --- BOTÓN DE REPUTACIÓN (Autoevaluación) ---
                     Center(
                       child: InkWell(
                         onTap: () {

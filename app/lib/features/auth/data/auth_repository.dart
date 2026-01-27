@@ -24,7 +24,7 @@ class AuthRepository {
     );
   }
 
-  // --- LOGIN (Actualizado para futuro soporte de "Remember Me") ---
+  // --- LOGIN ---
   Future<void> login(
     String email,
     String password, {
@@ -37,12 +37,7 @@ class AuthRepository {
       );
 
       final token = response.data['token'];
-
-      // Si "Recuérdame" es true, guardamos en SecureStorage (Persistente)
-      // Si es false, idealmente lo guardaríamos solo en memoria, pero por ahora
-      // mantenemos el comportamiento estándar para no romper el Bloc.
       await _storage.write(key: 'jwt_token', value: token);
-
       print('Login exitoso.');
     } on DioException catch (e) {
       if (e.response != null) {
@@ -50,6 +45,37 @@ class AuthRepository {
       } else {
         throw Exception('Error de conexión con el servidor');
       }
+    }
+  }
+
+  // --- SWITCH ROLE (NUEVO) ---
+  // Retorna el objeto User (Map) si el cambio fue exitoso.
+  // Retorna NULL si la cuenta no existe (404).
+  Future<Map<String, dynamic>?> switchRole() async {
+    try {
+      final token = await _storage.read(key: 'jwt_token');
+      final response = await _dio.post(
+        '${ApiConstants.baseUrl}${ApiConstants.switchRole}',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+
+      if (response.statusCode == 200) {
+        final newToken = response.data['token'];
+        final newUser = response.data['user'];
+
+        // Guardamos el nuevo token inmediatamente
+        await _storage.write(key: 'jwt_token', value: newToken);
+
+        return newUser;
+      }
+      return null;
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) {
+        return null; // Cuenta no existe
+      }
+      throw Exception(
+        e.response?.data['error'] ?? 'Error cambiando de identidad',
+      );
     }
   }
 
@@ -71,24 +97,19 @@ class AuthRepository {
           'role': role,
         },
       );
-
       if (response.statusCode == 201 || response.statusCode == 200) {
         print('Registro exitoso');
       }
     } on DioException catch (e) {
       if (e.response != null) {
-        throw Exception(
-          e.response?.data['error'] ?? 'Error de validación en el servidor',
-        );
+        throw Exception(e.response?.data['error'] ?? 'Error de validación');
       } else {
-        throw Exception('Error de conexión con el servidor');
+        throw Exception('Error de conexión');
       }
     }
   }
 
-  Future<String?> getToken() async {
-    return await _storage.read(key: 'jwt_token');
-  }
+  Future<String?> getToken() async => await _storage.read(key: 'jwt_token');
 
   Future<String?> verifyOtp(String email, String code) async {
     try {
@@ -96,7 +117,6 @@ class AuthRepository {
         '${ApiConstants.baseUrl}/auth/otp/verify',
         data: {'email': email, 'code': code},
       );
-
       if (response.statusCode == 200 || response.statusCode == 201) {
         final token = response.data['token'];
         if (token != null) {
@@ -110,11 +130,7 @@ class AuthRepository {
     }
   }
 
-  // ===============================================================
-  //  RECUPERACIÓN DE CONTRASEÑA (NUEVO)
-  // ===============================================================
-
-  // Paso 1: Solicitar código
+  // --- Recuperación de Contraseña ---
   Future<void> forgotPassword(String email) async {
     try {
       await _dio.post(
@@ -126,7 +142,6 @@ class AuthRepository {
     }
   }
 
-  // Paso 2: Verificar código
   Future<bool> verifyRecoveryCode(String email, String code) async {
     try {
       final response = await _dio.post(
@@ -139,7 +154,6 @@ class AuthRepository {
     }
   }
 
-  // Paso 3: Cambiar contraseña
   Future<void> resetPassword(String email, String newPassword) async {
     try {
       await _dio.post(

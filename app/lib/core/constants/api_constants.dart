@@ -11,6 +11,7 @@ class ApiConstants {
   static const String login = '/auth/login';
   static const String register = '/auth/register';
   static const String verifyOtp = '/auth/otp/verify';
+  static const String switchRole = '/auth/switch-role';
 
   // Endpoints Match
   static const String swipeDeck = '/matches/candidates';
