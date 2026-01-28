@@ -2064,3 +2064,66 @@ func TestPetHandler_Create(t *testing.T) {
 - JWT Auth Pattern: https://tools.ietf.org/html/rfc7519
 - Go UUID: https://pkg.go.dev/github.com/google/uuid
 - File Upload Security: https://owasp.org/www-community/vulnerabilities/Unrestricted_File_Upload
+
+---
+
+## COMPLETADO EN ETAPA 19: Filtro Espejo (Mirror Filter) en GetSwipeDeck
+
+Etapa 19 introduce el **Filtro Espejo**, una capa crítica de privacidad para la doble identidad que impide que un usuario vea sus propias mascotas en el deck de búsqueda, incluso cuando usa su rol opuesto.
+
+### El Problema
+
+Con la doble identidad, un usuario es simultáneamente Adoptante y Rescatista. **Riesgo**: podría ver sus propias mascotas en GetSwipeDeck cuando cambia de rol, contaminando el flujo de matching.
+
+### La Solución: Filtro por RUT
+
+GetSwipeDeck() excluye mascotas del mismo RUT, independientemente del rol actual:
+
+```go
+func (s *MatchService) GetSwipeDeck(userID uint, lat, lon float64) ([]domain.Pet, error) {
+    var currentUser domain.User
+    if err := s.db.Select("run").First(&currentUser, userID).Error; err != nil {
+        return nil, err
+    }
+
+    query := s.db.Table("pets p").
+        Select("p.*").
+        Joins("INNER JOIN users u ON p.user_id = u.id").
+        Joins("LEFT JOIN matches m ON m.pet_id = p.id AND m.adopter_id = ?", userID).
+        Where("m.id IS NULL").
+        Where("p.status = ?", domain.StatusAvailable).
+        Where("p.deleted_at IS NULL").
+        Where("u.run <> ?", currentUser.Run)  // FILTRO ESPEJO: Excluye por RUT
+    
+    query = query.Order("p.created_at DESC").Limit(50)
+    
+    var pets []domain.Pet
+    if err := query.Preload("Images").Find(&pets).Error; err != nil {
+        return nil, err
+    }
+    return pets, nil
+}
+```
+
+**Línea Clave**: `Where("u.run <> ?", currentUser.Run)` asegura que el usuario NUNCA ve sus propias mascotas.
+
+### Garantía de Privacidad
+
+| Escenario | RUT | Rol | ¿Ve propia mascota? | Razón |
+|---|---|---|---|---|
+| Adoptante en GetSwipeDeck | RUT-001 | adopter | NO | u.run <> RUT-001 |
+| Rescatista en GetSwipeDeck | RUT-001 | rescuer | NO | u.run <> RUT-001 |
+| Cambio a Rescatista (mismo RUT) | RUT-001 | rescuer | NO | u.run <> RUT-001 |
+| Otro usuario busca | RUT-002 | any | SÍ | u.run <> RUT-002 ✓ |
+
+### Integración con GET /pets/my
+
+El Filtro Espejo es complementario a `GET /pets/my`:
+
+- **GetSwipeDeck**: Ve MASCOTAS AJENAS (Filtro Espejo activo)
+- **GET /pets/my**: Ve PROPIAS MASCOTAS (Sin filtro, control total)
+
+Juntos garantizan:
+- Usuario ve SUS mascotas en `/pets/my`
+- Usuario ve mascotas AJENAS en `/swipedeck`
+- Usuario NUNCA ve propias mascotas en `/swipedeck`

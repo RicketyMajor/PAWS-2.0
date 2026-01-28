@@ -3686,3 +3686,382 @@ Future<void> unmatch(int matchId) async {
 - **WSL2 Networking**: https://docs.microsoft.com/en-us/windows/wsl/networking
 - **Android Emulator Networking**: https://developer.android.com/studio/run/emulator-networking
 - **Secure Storage Best Practices**: https://owasp.org/www-community/Sensitive_Data_Exposure
+
+---
+
+## COMPLETADO EN ETAPA 19: Botón de Transformación de Rol en Frontend
+
+Etapa 19 introduce en Fase 5 el **Botón de Cambio de Rol** (Switch Role), una componente crítica que permite a usuarios cambiar instantáneamente entre sus identidades de Adoptante y Rescatista sin necesidad de logout/login.
+
+### Ubicación y Visibilidad
+
+El botón existe en **EditProfileScreen** (perfil del usuario):
+
+```dart
+// app/lib/features/user/presentation/screens/edit_profile_screen.dart
+
+class EditProfileScreen extends StatefulWidget {
+  @override
+  State<EditProfileScreen> createState() => _EditProfileScreenState();
+}
+
+class _EditProfileScreenState extends State<EditProfileScreen> {
+  late AuthRepository authRepo;
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    authRepo = context.read<AuthRepository>();
+  }
+
+  // ... otros métodos ...
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text("Mi Perfil")),
+      body: ListView(
+        children: [
+          // ... datos de perfil ...
+          
+          // BOTÓN DE SWITCH ROLE (siempre visible)
+          Padding(
+            padding: EdgeInsets.all(16),
+            child: ElevatedButton.icon(
+              icon: Icon(Icons.swap_horiz),
+              label: Text(_getSwitchRoleLabel()),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _getSwitchRoleColor(),
+                padding: EdgeInsets.symmetric(vertical: 12),
+              ),
+              onPressed: _isLoading ? null : _handleSwitchRole,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _getSwitchRoleLabel() {
+    final userRole = context.read<AuthBloc>().state.user?.role;
+    if (userRole == "rescuer") {
+      return "Cambiar a Modo Adoptante";
+    }
+    return "Cambiar a Modo Rescatista";
+  }
+
+  Color _getSwitchRoleColor() {
+    final userRole = context.read<AuthBloc>().state.user?.role;
+    if (userRole == "rescuer") {
+      return Colors.purple;  // Rescatista → Adoptante (púrpura)
+    }
+    return Colors.orange;   // Adoptante → Rescatista (naranja)
+  }
+}
+```
+
+### Lógica de Manejo: _handleSwitchRole()
+
+```dart
+Future<void> _handleSwitchRole() async {
+  setState(() => _isLoading = true);
+  try {
+    final newUserMap = await authRepo.switchRole();
+
+    if (newUserMap != null) {
+      // ÉXITO: Cuenta del rol opuesto existe
+      final newRole = newUserMap['role'];
+      if (!mounted) return;
+
+      // Navegar a MainLayoutScreen del nuevo rol
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (_) => MainLayoutScreen(role: newRole),
+        ),
+        (route) => false,  // Elimina TODA la pila de navegación
+      );
+    } else {
+      // FALLO (404): Cuenta del rol opuesto NO existe
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      
+      // Mostrar dialog para crear la otra identidad
+      _showCreateAccountDialog();
+    }
+  } catch (e) {
+    if (mounted) {
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Error: $e"),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+}
+```
+
+### Detección Inteligente: _showCreateAccountDialog()
+
+Si la cuenta del rol opuesto no existe, se ofrece crear una con pre-llenado automático:
+
+```dart
+void _showCreateAccountDialog() {
+  final currentUser = context.read<AuthBloc>().state.user!;
+  final targetRole = currentUser.role == "rescuer" ? "adopter" : "rescuer";
+
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text("Crear Perfil de $targetRole"),
+      content: Text(
+        "No existe un perfil de $targetRole con tu RUT. "
+        "¿Quieres crear uno ahora? Tus datos básicos se pre-llenarán.",
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text("Cancelar"),
+        ),
+        ElevatedButton(
+          onPressed: () {
+            Navigator.pop(context);
+            // Navegar a RegisterScreen con datos pre-llenados
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => RegisterScreen(
+                  initialName: currentUser.name,
+                  initialEmail: currentUser.email,
+                  initialRun: currentUser.run,
+                  initialRole: targetRole,
+                ),
+              ),
+            );
+          },
+          child: Text("Crear"),
+        ),
+      ],
+    ),
+  );
+}
+```
+
+### RegisterScreen con Pre-Llenado
+
+```dart
+class RegisterScreen extends StatefulWidget {
+  final String? initialName;
+  final String? initialEmail;
+  final String? initialRun;
+  final String? initialRole;
+
+  const RegisterScreen({
+    this.initialName,
+    this.initialEmail,
+    this.initialRun,
+    this.initialRole = "adopter",
+  });
+
+  @override
+  State<RegisterScreen> createState() => _RegisterScreenState();
+}
+
+class _RegisterScreenState extends State<RegisterScreen> {
+  late TextEditingController _nameController;
+  late TextEditingController _emailController;
+  late TextEditingController _runController;
+  late String _selectedRole;
+
+  @override
+  void initState() {
+    super.initState();
+    
+    // IMPORTANTE: Pre-llenar si vinieron parámetros iniciales
+    _nameController = TextEditingController(text: widget.initialName ?? "");
+    _emailController = TextEditingController(text: widget.initialEmail ?? "");
+    _runController = TextEditingController(text: widget.initialRun ?? "");
+    _selectedRole = widget.initialRole ?? "adopter";
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text("Crear Cuenta")),
+      body: SingleChildScrollView(
+        padding: EdgeInsets.all(16),
+        child: Column(
+          children: [
+            TextField(
+              controller: _nameController,
+              decoration: InputDecoration(
+                labelText: "Nombre",
+                hintText: "Tu nombre completo",
+              ),
+              readOnly: widget.initialName != null,  // Read-only si fue pre-llenado
+            ),
+            SizedBox(height: 16),
+            TextField(
+              controller: _emailController,
+              decoration: InputDecoration(labelText: "Email"),
+              readOnly: widget.initialEmail != null,
+            ),
+            SizedBox(height: 16),
+            TextField(
+              controller: _runController,
+              decoration: InputDecoration(labelText: "RUT"),
+              readOnly: widget.initialRun != null,
+            ),
+            SizedBox(height: 16),
+            DropdownButton<String>(
+              value: _selectedRole,
+              items: ["adopter", "rescuer"]
+                  .map((role) => DropdownMenuItem(
+                    value: role,
+                    child: Text(role == "adopter" ? "Adoptante" : "Rescatista"),
+                  ))
+                  .toList(),
+              onChanged: (value) => setState(() => _selectedRole = value!),
+            ),
+            SizedBox(height: 16),
+            TextField(
+              decoration: InputDecoration(labelText: "Contraseña"),
+              obscureText: true,
+              controller: _passwordController,
+            ),
+            SizedBox(height: 24),
+            ElevatedButton(
+              onPressed: _handleRegister,
+              child: Text("Crear Cuenta"),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleRegister() async {
+    // ... validar campos ...
+    try {
+      await context.read<AuthBloc>().register(
+        name: _nameController.text,
+        email: _emailController.text,
+        password: _passwordController.text,
+        run: _runController.text,
+        role: _selectedRole,
+      );
+      
+      // Tras registro exitoso, vuelve a MainLayout
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => MainLayoutScreen()),
+          (route) => false,
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error: $e")),
+      );
+    }
+  }
+}
+```
+
+### Integración con AuthRepository
+
+En `app/lib/features/auth/data/auth_repository.dart`:
+
+```dart
+class AuthRepository {
+  final Dio _dio;
+  final FlutterSecureStorage _storage;
+
+  Future<Map<String, dynamic>?> switchRole() async {
+    try {
+      final token = await _storage.read(key: 'jwt_token');
+      if (token == null) throw Exception("No hay sesión activa");
+
+      final response = await _dio.post(
+        '/api/v1/auth/switch-role',
+        options: Options(
+          headers: {'Authorization': 'Bearer $token'},
+        ),
+      );
+
+      if (response.statusCode == 200) {
+        final newToken = response.data['token'];
+        final newUser = response.data['user'];
+        
+        // Guardar nuevo token
+        await _storage.write(key: 'jwt_token', value: newToken);
+        
+        return newUser;
+      }
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) {
+        // Cuenta del rol opuesto NO existe
+        return null;
+      }
+      rethrow;
+    }
+  }
+}
+```
+
+### Flujo Completo: Usuario Adoptante → Rescatista
+
+**Paso 1**: Usuario abre EditProfileScreen, ve botón "Cambiar a Modo Rescatista"
+
+**Paso 2**: Presiona botón → Se llama `authRepo.switchRole()`
+
+**Paso 3a (Éxito)**: Rescatista existe
+- API retorna 200 con nuevo JWT
+- Frontend navega a MainLayoutScreen(role: "rescuer")
+- Usuario entra en interfaz de Rescatista (ver mascotas, matches, etc.)
+
+**Paso 3b (Fallo)**: Rescatista no existe
+- API retorna 404
+- Frontend muestra dialog "¿Crear perfil de Rescatista?"
+- Si usuario dice SÍ, abre RegisterScreen pre-llenado con nombre/email/run
+- Usuario SOLO ingresa contraseña (datos ya conocidos)
+- Tras completar, navega a MainLayoutScreen del nuevo rol
+
+### Ventajas de Este Diseño
+
+1. **Cero Fricción**: No re-ingresa datos, el rol opuesto se crea en segundos
+2. **Seguridad**: Ambas identidades requieren contraseña (en registro)
+3. **Privacidad**: Token nuevo, JWT asegura que solo puede acceder datos del nuevo rol
+4. **UX Limpia**: `pushAndRemoveUntil()` elimina stack, imposible volver atrás
+5. **Unicidad**: Garantiza un usuario = máximo 2 roles (Adoptante + Rescatista)
+
+### Archivos Afectados en Fase 5 (Etapa 19)
+
+- `app/lib/features/user/presentation/screens/edit_profile_screen.dart` (botón + _handleSwitchRole)
+- `app/lib/features/auth/presentation/screens/register_screen.dart` (pre-llenado)
+- `app/lib/features/auth/data/auth_repository.dart` (switchRole())
+- `app/lib/core/presentation/main_layout_screen.dart` (navega con rol)
+
+### Testing del Botón de Switch
+
+```bash
+# Test 1: Usuario sin rol opuesto (pre-llenado)
+1. Login como Adoptante
+2. Navega a Perfil
+3. Presiona "Cambiar a Modo Rescatista"
+4. Dialog aparece (cuenta no existe)
+5. Presiona "Crear"
+6. RegisterScreen abre con nombre/email/run pre-llenados
+7. Usuario ingresa SOLO contraseña
+8. Presiona "Crear Cuenta"
+9. Navega a MainLayout del Rescatista
+
+# Test 2: Usuario con rol opuesto (cambio instantáneo)
+1. Login como Adoptante (ya tiene Rescatista)
+2. Navega a Perfil
+3. Presiona "Cambiar a Modo Rescatista"
+4. MainLayout se refresca (rol = rescuer)
+5. Tabs y menú cambian para Rescatista
+```
+

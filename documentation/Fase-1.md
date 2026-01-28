@@ -910,12 +910,10 @@ El User model de Fase 1 soportaba teóricamente tres roles: "adopter", "rescuer"
 **Roles Operacionales en PAWS (Etapa 7)**:
 
 1. **adopter** (Adoptante): Usuario que busca adoptar mascota. Default para registros normales.
-
    - Acceso: GET mascotas, POST swipes, GET matches, POST reviews/reports, WebSocket chat
    - Negado: GET /admin/_, POST /admin/_
 
 2. **rescuer** (Rescatista): Usuario que rescata y ofrece mascotas en adopción. Default para registros normales.
-
    - Acceso: GET mascotas, GET solicitudes, POST respuestas, GET matches, POST reviews/reports, WebSocket chat
    - Negado: GET /admin/_, POST /admin/_
 
@@ -1138,6 +1136,214 @@ UPDATE users SET role='adopter' WHERE role IS NULL OR role='';
 | gin                 | v1.11.0 | Framework web                | Fase 1       |
 | golang.org/x/crypto | v0.46.0 | Bcrypt y criptografía        | Fase 1       |
 | jwt/v5              | v5.3.0  | JSON Web Tokens              | Fase 1       |
+
+## COMPLETADO EN ETAPA 19: Módulo de Doble Identidad - Flexibilidad en Restricciones de Base de Datos
+
+Etapa 19 resuelve una limitación crítica de Fase 1: los índices `UNIQUE` globales bloqueaban completamente la doble identidad. La solución implementa índices compuestos que permiten flexibilidad sin sacrificar unicidad.
+
+### Cambios en el Modelo de Usuario (Etapa 19)
+
+**Antes (Fase 1 - Restricción Global)**:
+
+```go
+type User struct {
+    Email string `gorm:"uniqueIndex"`  // GLOBAL: No puede repetirse
+    Run   string `gorm:"uniqueIndex"`  // GLOBAL: No puede repetirse
+    Role  string `gorm:"default:'adopter'"`
+}
+```
+
+**Después (Etapa 19 - Índices Compuestos)**:
+
+```go
+type User struct {
+    Email string `gorm:"index:idx_email_role,unique;not null"`  // COMPUESTO: (Email, Role)
+    Run   string `gorm:"index:idx_run_role,unique;not null"`    // COMPUESTO: (Run, Role)
+    Role  string `gorm:"default:'adopter';index:idx_email_role,unique;index:idx_run_role,unique"`
+}
+```
+
+**Garantía**: Ahora la base de datos permite:
+
+- (Email=juan@mail.com, Role=adopter)
+- (Email=juan@mail.com, Role=rescuer)
+
+Ambas coexisten sin conflicto porque el rol es parte de la clave única compuesta.
+
+### Limpieza Automática de Índices Legacy
+
+El servidor implementa `dropLegacyConstraints()` en `cmd/api/main.go`, que ejecuta ANTES de AutoMigrate():
+
+```go
+func dropLegacyConstraints(db *gorm.DB) {
+    queries := []string{
+        "DROP INDEX IF EXISTS idx_users_run;",
+        "DROP INDEX IF EXISTS idx_users_email;",
+        "DROP INDEX IF EXISTS uni_users_run;",
+        "DROP INDEX IF EXISTS uni_users_email;",
+    }
+
+    log.Println("MIGRACIÓN: Limpiando restricciones antiguas...")
+    for _, q := range queries {
+        if err := db.Exec(q).Error; err != nil {
+            log.Printf("Advertencia borrando índice (%s): %v", q, err)
+        }
+    }
+}
+```
+
+**Garantía**: Operadores NO necesitan intervención manual. El servidor limpia índices antiguos automáticamente en el startup, preparando la BD para los nuevos índices compuestos.
+
+### Lógica de Duplicidad Inteligente
+
+La función `InitiateRegistration()` en `internal/core/services/auth_service.go` se actualiza:
+
+```go
+func (s *AuthService) InitiateRegistration(name, email, password, run, role string) error {
+    roleNormalized := strings.ToLower(role)
+    if roleNormalized == "" { roleNormalized = "adopter" }
+
+    // CAMBIO: Verificar existencia ESPECÍFICA para este Rol
+    var existingUser domain.User
+    err := s.db.Where("(run = ? OR email = ?) AND role = ?", run, email, roleNormalized).
+            First(&existingUser).Error
+
+    if err == nil {
+        // ENCONTRÓ: Existe ya un usuario con este (Email o RUT) Y este rol específico
+        return fmt.Errorf("ya existe una cuenta de %s registrada con este Email o RUT", roleNormalized)
+    }
+    // Si no lo encuentra, procedemos (puede tener el mismo Email/RUT si rol es diferente)
+
+    // ... resto del flujo
+}
+```
+
+**Lógica**:
+
+- Si intenta registrar Email=juan@mail.com, Role=adopter y YA EXISTE un adopter con ese email → Rechaza
+- Si intenta registrar Email=juan@mail.com, Role=rescuer y NO EXISTE rescatista con ese email (pero SÍ existe adopter) → PERMITE
+- Resultado: Un usuario puede ser Adoptante Y Rescatista con los mismos Email/RUT
+
+### Cambios en AuthService para Soportar Doble Identidad
+
+**Nueva función: SwitchRole()**
+
+```go
+func (s *AuthService) SwitchRole(currentUserID uint) (string, *domain.User, error) {
+    // 1. Obtener usuario actual (su RUT y rol)
+    var currentUser domain.User
+    if err := s.db.First(&currentUser, currentUserID).Error; err != nil {
+        return "", nil, errors.New("usuario no encontrado")
+    }
+
+    // 2. Determinar rol objetivo (opuesto)
+    targetRole := "rescuer"
+    if currentUser.Role == "rescuer" {
+        targetRole = "adopter"
+    }
+
+    // 3. Buscar el "gemelo" (mismo RUT, rol objetivo)
+    var targetUser domain.User
+    if err := s.db.Where("run = ? AND role = ?", currentUser.Run, targetRole).
+            First(&targetUser).Error; err != nil {
+        // No encontrado: Usuario aún no ha creado el otro perfil
+        return "", nil, errors.New("no existe un perfil asociado para el modo " + targetRole)
+    }
+
+    // 4. Generar JWT para la nueva identidad (SIN pedir contraseña)
+    token, err := s.GenerateTokenForUser(&targetUser)
+    if err != nil {
+        return "", nil, err
+    }
+
+    return token, &targetUser, nil
+}
+```
+
+**Uso**: Un usuario Adoptante presiona "Cambiar a Rescatista" → SwitchRole() busca usuario con (run=adopter.run, role=rescuer) → Genera JWT → Frontend navega a MainLayout del nuevo rol
+
+### Impacto en Validación de Login
+
+La función `Login()` NO se modifica, mantiene su comportamiento de "tomar el primero que encuentra":
+
+```go
+func (s *AuthService) Login(email, password string) (string, error) {
+    var user domain.User
+    if err := s.db.Where("email = ?", email).First(&user).Error; err != nil {
+        return "", errors.New("credenciales inválidas")
+    }
+
+    if user.IsBanned { return "", errors.New("cuenta suspendida") }
+
+    if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
+        return "", errors.New("credenciales inválidas")
+    }
+
+    return s.GenerateTokenForUser(&user)
+}
+```
+
+**Nota**: Login retorna un rol (el primero encontrado para ese email). SwitchRole() permite cambiar sin re-login.
+
+### Endpoint HTTP - SwitchRole
+
+Nuevo endpoint en `internal/transport/http/auth_handler.go`:
+
+```go
+func (h *AuthHandler) SwitchRole(c *gin.Context) {
+    userIDVal, exists := c.Get("userID")
+    if !exists {
+        c.JSON(http.StatusUnauthorized, gin.H{"error": "No autorizado"})
+        return
+    }
+
+    var userID uint
+    if val, ok := userIDVal.(float64); ok {
+        userID = uint(val)
+    } else {
+        userID = userIDVal.(uint)
+    }
+
+    newToken, newUser, err := h.service.SwitchRole(userID)
+    if err != nil {
+        c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+        return
+    }
+
+    c.JSON(http.StatusOK, gin.H{
+        "message": "Cambio de perfil exitoso",
+        "token":   newToken,
+        "user":    newUser,
+    })
+}
+```
+
+**Endpoint**: `POST /api/v1/auth/switch-role`  
+**Requiere**: JWT válido (extrae userID del middleware)  
+**Respuesta**: 200 OK con nuevo token + datos usuario  
+**Error**: 404 si no existe cuenta del rol opuesto
+
+### Tabla Comparativa: Etapa 1 vs. Etapa 19
+
+| Aspecto                    | Fase 1 (Original)          | Etapa 19 (Actualizado)                  |
+| -------------------------- | -------------------------- | --------------------------------------- |
+| **UNIQUE(run)**            | Global (bloquea doble rol) | Compuesto: (run, role)                  |
+| **UNIQUE(email)**          | Global (bloquea doble rol) | Compuesto: (email, role)                |
+| **Cambio de Rol**          | No existe                  | SwitchRole() endpoint                   |
+| **Limpieza de BD**         | Manual                     | Automática (dropLegacyConstraints)      |
+| **Validación en Registro** | Valida por rol global      | Valida por (email/run, role) específico |
+| **Flexibilidad**           | Usuario = 1 rol            | Usuario = 2 roles máximo                |
+
+### Garantías de Seguridad Preservadas
+
+La doble identidad NO debilita las garantías de Fase 1:
+
+1. **R-SEC-01 (Verificación de Identidad)**: Aún presente en IsVerified (OCR mock en Fase 8)
+2. **R-SEC-02 (Prevención de Multicuentas)**: Sigue validando Blacklist y RUT, ahora por (RUT, role)
+3. **R-SEC-03 (Blacklist Global)**: Misma tabla, sigue siendo global por RUT (un RUT baneado no puede tener ningún rol)
+4. **JWT**: Sigue siendo seguro, generado con rol específico
+
+---
 
 ## Referencias
 

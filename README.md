@@ -9262,6 +9262,657 @@ class _UserReviewsScreenState extends State<UserReviewsScreen> {
 
 **Etapa 18 Status: 100% Implementado y Verificado**
 
+## Etapa 19: Módulo de Doble Identidad - Transformación de Usuarios Adoptante ↔ Rescatista (Completada)
+
+Etapa 19 implementa la arquitectura central de PAWS: permitir que un mismo usuario RUT pueda tener dos identidades completamente independientes (Adoptante y Rescatista) con sus propios perfiles, mascotas, y configuraciones. Esta etapa resuelve un problema crítico de duplicidad de datos y autenticación, permitiendo transiciones de rol sin fricciones.
+
+### Problemas Resueltos en Etapa 19
+
+**Problema 1: Restricciones Globales en la Base de Datos**
+
+En Etapas anteriores, los índices `UNIQUE` en PostgreSQL eran globales: `UNIQUE(run)` y `UNIQUE(email)`. Esto impedía que el mismo RUT existiera dos veces, bloqueando completamente la doble identidad.
+
+**Solución**: Cambiar a índices compuestos `UNIQUE(run, role)` y `UNIQUE(email, role)`. Ahora el mismo RUT 12.345.678-9 puede existir como Adoptante Y como Rescatista sin violación de constrains.
+
+**Problema 2: Cambio de Rol sin Fricciones**
+
+Los usuarios no tenían forma fluida de cambiar entre roles. Debían logout/login o navegar manualmente.
+
+**Solución**: Endpoint `POST /auth/switch-role` que busca el "gemelo" de la cuenta actual (mismo RUT, rol opuesto) y genera un JWT instantáneamente sin pedir contraseña.
+
+**Problema 3: Contaminación de Datos en Feeds**
+
+Un Adoptante podría ver sus propias mascotas en el swipe deck si también era Rescatista. Esto genera confusión y experiencia pobre.
+
+**Solución**: Filtro Espejo en `GetSwipeDeck()`: excluye mascotas cuyo propietario tiene el mismo RUT que el usuario actual, independiente del rol.
+
+**Problema 4: Visibilidad de Mascotas Privadas**
+
+Los Rescatistas veían todas las mascotas en el feed público, no solo las suyas.
+
+**Solución**: Endpoint nuevo `GET /pets/my` protegido que retorna solo las mascotas creadas por la identidad específica (user_id actual).
+
+**Problema 5: Detección de Cuenta No Existente en Registro**
+
+Al intentar cambiar de rol, si la cuenta no existía, el usuario obtenía un error sin contexto y no sabía qué hacer.
+
+**Solución**: Flujo de detección inteligente en EditProfileScreen: Si SwitchRole retorna 404, launch registro simplificado con datos pre-cargados (Nombre, RUT, Email). Tras OTP, reinicia navegación completa a MainLayout del nuevo rol.
+
+### Componentes Implementados - Etapa 19
+
+#### Componente 1: Backend - Reingeniería del Núcleo (Go)
+
+**1.1 Base de Datos Flexible - Índices Compuestos**
+
+El cambio crítico en `internal/core/domain/user.go`:
+
+```go
+type User struct {
+    // Anteriormente: Email string `gorm:"uniqueIndex"`
+    // Problema: Mismo Email no puede existir dos veces
+
+    // Ahora: Índices compuestos con el Rol
+    Email string `gorm:"index:idx_email_role,unique;not null"`
+    Run   string `gorm:"index:idx_run_role,unique;not null"`
+
+    // El Rol es parte de ambas claves únicas
+    Role  string `gorm:"index:idx_email_role,unique;index:idx_run_role,unique"`
+}
+```
+
+**Resultado**: Tabla users permite registros como:
+
+- (ID=1, RUT=12.345.678-9, Email=juan@mail.com, Role=adopter)
+- (ID=2, RUT=12.345.678-9, Email=juan@mail.com, Role=rescuer)
+
+Ambos coexisten sin conflicto porque el rol es parte de la clave única.
+
+**1.2 Limpieza Automática - dropLegacyConstraints()**
+
+En `cmd/api/main.go`, al arrancar el servidor, ejecutamos:
+
+```go
+func dropLegacyConstraints(db *gorm.DB) {
+    queries := []string{
+        "DROP INDEX IF EXISTS idx_users_run;",
+        "DROP INDEX IF EXISTS idx_users_email;",
+        "DROP INDEX IF EXISTS uni_users_run;",
+        "DROP INDEX IF EXISTS uni_users_email;",
+    }
+
+    for _, q := range queries {
+        if err := db.Exec(q).Error; err != nil {
+            log.Printf("Advertencia borrando índice (%s): %v", q, err)
+        }
+    }
+}
+```
+
+Ejecutar ANTES de AutoMigrate() limpia índices antiguos sin intervención manual del operador. Si los índices no existen (primera ejecución), el `IF EXISTS` evita errores.
+
+**1.3 Endpoint SwitchRole - Cambio de Identidad Instantáneo**
+
+En `internal/core/services/auth_service.go`:
+
+```go
+func (s *AuthService) SwitchRole(currentUserID uint) (string, *domain.User, error) {
+    // 1. Obtener usuario actual (su RUT y rol)
+    var currentUser domain.User
+    if err := s.db.First(&currentUser, currentUserID).Error; err != nil {
+        return "", nil, errors.New("usuario no encontrado")
+    }
+
+    // 2. Determinar rol objetivo
+    targetRole := "rescuer"
+    if currentUser.Role == "rescuer" {
+        targetRole = "adopter"
+    }
+
+    // 3. BÚSQUEDA DEL GEMELO: Mismo RUT, rol objetivo
+    var targetUser domain.User
+    if err := s.db.Where("run = ? AND role = ?", currentUser.Run, targetRole).
+            First(&targetUser).Error; err != nil {
+        // 404: La cuenta no existe aún
+        return "", nil, errors.New("no existe un perfil asociado para el modo " + targetRole)
+    }
+
+    // 4. Generar JWT para la nueva identidad (SIN pedir contraseña)
+    token, err := s.GenerateTokenForUser(&targetUser)
+    if err != nil {
+        return "", nil, err
+    }
+
+    return token, &targetUser, nil
+}
+```
+
+**Flujo**: Dado un usuario con rol=adopter, busca un usuario con (run=adopter.run, role=rescuer). Si existe, emite JWT para ese usuario. Si no, retorna 404.
+
+**Handler HTTP** en `internal/transport/http/auth_handler.go`:
+
+```go
+func (h *AuthHandler) SwitchRole(c *gin.Context) {
+    userIDVal, exists := c.Get("userID")
+    if !exists {
+        c.JSON(http.StatusUnauthorized, gin.H{"error": "No autorizado"})
+        return
+    }
+
+    var userID uint
+    if val, ok := userIDVal.(float64); ok {
+        userID = uint(val)
+    } else {
+        userID = userIDVal.(uint)
+    }
+
+    newToken, newUser, err := h.service.SwitchRole(userID)
+    if err != nil {
+        c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+        return
+    }
+
+    c.JSON(http.StatusOK, gin.H{
+        "message": "Cambio de perfil exitoso",
+        "token":   newToken,
+        "user":    newUser,
+    })
+}
+```
+
+**Endpoint**: `POST /api/v1/auth/switch-role`  
+**Requiere**: JWT válido  
+**Respuesta**: Nuevo token JWT + datos usuario del rol objetivo
+
+**1.4 Filtro Espejo - Blindaje en GetSwipeDeck()**
+
+En `internal/core/services/match_service.go`, la consulta ahora incluye:
+
+```go
+func (s *MatchService) GetSwipeDeck(userID uint, lat, lon float64) ([]domain.Pet, error) {
+    // 1. Obtener RUT del usuario actual
+    var currentUser domain.User
+    if err := s.db.Select("run").First(&currentUser, userID).Error; err != nil {
+        return nil, fmt.Errorf("error identificando usuario: %v", err)
+    }
+
+    // 2. Query base con Filtro Espejo
+    query := s.db.Table("pets p").
+        Select("p.*").
+        Joins("INNER JOIN users u ON p.user_id = u.id").
+        Joins("LEFT JOIN matches m ON m.pet_id = p.id AND m.adopter_id = ?", userID).
+        Where("m.id IS NULL").
+        Where("p.status = ?", domain.StatusAvailable).
+        Where("p.deleted_at IS NULL").
+        Where("u.run <> ?", currentUser.Run)  // FILTRO ESPEJO: Excluir por RUT
+
+    // Resto de lógica...
+}
+```
+
+**Garantía**: Un usuario jamás ve sus propias mascotas en el feed, aunque exista bajo dos roles diferentes (porque busca por RUT, no por user_id).
+
+**1.5 Privacidad de Datos - GET /pets/my**
+
+Nuevo servicio en `internal/core/services/pet_service.go`:
+
+```go
+func (s *PetService) GetByUserID(userID uint) ([]domain.Pet, error) {
+    var pets []domain.Pet
+    err := s.db.Preload("Images").
+        Where("user_id = ? AND deleted_at IS NULL", userID).
+        Order("created_at DESC").
+        Find(&pets).Error
+    return pets, err
+}
+```
+
+**Handler HTTP** en `internal/transport/http/pet_handler.go`:
+
+```go
+func (h *PetHandler) GetMyPets(c *gin.Context) {
+    userIDFloat, exists := c.Get("userID")
+    if !exists {
+        c.JSON(http.StatusUnauthorized, gin.H{"error": "No autorizado"})
+        return
+    }
+
+    var userID uint
+    if val, ok := userIDFloat.(float64); ok {
+        userID = uint(val)
+    } else {
+        userID = userIDFloat.(uint)
+    }
+
+    pets, err := h.service.GetByUserID(userID)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Error cargando mascotas: " + err.Error()})
+        return
+    }
+
+    c.JSON(http.StatusOK, pets)
+}
+```
+
+**Endpoint**: `GET /api/v1/pets/my`  
+**Requiere**: JWT (extrae user_id del token)  
+**Respuesta**: Solo mascotas del user_id actual, no del feed público
+
+**1.6 Duplicidad Inteligente en Registro**
+
+En `internal/core/services/auth_service.go`, `InitiateRegistration()`:
+
+```go
+// CAMBIO: Verificar existencia ESPECÍFICA para este Rol
+var existingUser domain.User
+err = s.db.Where("(run = ? OR email = ?) AND role = ?", run, email, roleNormalized).
+        First(&existingUser).Error
+
+if err == nil {
+    // ENCONTRÓ -> DUPLICADO para este rol
+    return fmt.Errorf("ya existe una cuenta de %s registrada con este Email o RUT", roleNormalized)
+}
+// Si no lo encuentra, procedemos
+```
+
+**Lógica**: Permite el mismo RUT/Email si el rol es diferente, pero rechaza si intenta registrar dos veces el MISMO rol.
+
+#### Componente 2: Frontend - Flujo sin Fricción (Flutter)
+
+**2.1 Botón de Transformación Dinámico**
+
+En `app/lib/features/user/presentation/screens/edit_profile_screen.dart`:
+
+```dart
+// En build():
+Center(
+  child: ElevatedButton.icon(
+    style: ElevatedButton.styleFrom(
+      backgroundColor: targetColor,  // Purple si adopter, Orange si rescuer
+      foregroundColor: Colors.white,
+    ),
+    onPressed: _handleSwitchRole,
+    icon: const Icon(Icons.swap_horiz),
+    label: Text("Cambiar a $targetRoleLabel"),
+  ),
+),
+```
+
+**Comportamiento**: Botón visible en EditProfileScreen, detecta rol actual y ofrece cambiar al opuesto.
+
+**2.2 Detección de Estado - Flujo Inteligente de Registro**
+
+Método `_handleSwitchRole()`:
+
+```dart
+Future<void> _handleSwitchRole() async {
+    setState(() => _isLoading = true);
+    try {
+      final authRepo = context.read<AuthRepository>();
+      final newUserMap = await authRepo.switchRole();
+
+      if (newUserMap != null) {
+        // ÉXITO: Cuenta existía, token actualizado
+        final newRole = newUserMap['role'];
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => MainLayoutScreen(role: newRole)),
+          (route) => false,
+        );
+      } else {
+        // 404: Cuenta NO existe
+        setState(() => _isLoading = false);
+        _showCreateAccountDialog();
+      }
+    } catch (e) {
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
+      );
+    }
+}
+```
+
+**Flujo de Registro Simplificado** en `_showCreateAccountDialog()`:
+
+Si la cuenta no existe, dialog propone crear con datos pre-cargados:
+
+```dart
+Navigator.push(
+  context,
+  MaterialPageRoute(
+    builder: (_) => RegisterScreen(
+      initialName: _nameCtrl.text,      // Pre-llenar
+      initialEmail: _currentEmail,       // Pre-llenar
+      initialRun: _currentRun,           // Pre-llenar
+      initialRole: targetRoleCode,       // Pre-llenar
+    ),
+  ),
+);
+```
+
+**Corrección de Navegación**: Tras verificar OTP en `OTPScreen`, backend retorna JWT del nuevo rol. Frontend ahora ejecuta:
+
+```dart
+Navigator.of(context).pushAndRemoveUntil(
+  MaterialPageRoute(builder: (_) => MainLayoutScreen(role: newRole)),
+  (route) => false,  // Borra todo el stack (no vuelve atrás)
+);
+```
+
+Esto reinicia completamente la navegación, asegurando que los tabs y permisos del nuevo rol sean frescos.
+
+**2.3 Repository - SwitchRole Method**
+
+En `app/lib/features/auth/data/auth_repository.dart`:
+
+```dart
+Future<Map<String, dynamic>?> switchRole() async {
+    try {
+      final token = await _storage.read(key: 'jwt_token');
+      final response = await _dio.post(
+        '${ApiConstants.baseUrl}${ApiConstants.switchRole}',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+
+      if (response.statusCode == 200) {
+        final newToken = response.data['token'];
+        final newUser = response.data['user'];
+
+        // Guardar nuevo token inmediatamente
+        await _storage.write(key: 'jwt_token', value: newToken);
+        return newUser;
+      }
+      return null;  // 404 o error -> null para detectar no existencia
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) {
+        return null;  // Señal de que la cuenta no existe
+      }
+      throw Exception(e.response?.data['error'] ?? 'Error switching role');
+    }
+}
+```
+
+#### Componente 3: UX - Experiencia sin Fricción
+
+**3.1 Transición Suave**
+
+Usuario Adoptante quiere cambiar a Rescatista:
+
+1. Abre EditProfileScreen (Tab "Perfil")
+2. Ve botón "Cambiar a Modo Rescatista"
+3. Presiona → Backend busca gemelo
+4. Si existe: Logo de carga → Nueva pantalla MainLayout (rescatista)
+5. Si no existe: Dialog "Aún no tienes perfil Rescatista" + botón "Crear"
+6. Usuario presiona "Crear" → Pantalla registro pre-llenada
+7. Ingresa contraseña y verifica OTP
+8. Tras OTP → Reinicio completo a MainLayout rescatista
+
+**3.2 Privacidad Inteligente**
+
+- Un usuario Rescatista abre "Mis Mascotas" → Usa `GET /pets/my` → Ve solo SUS mascotas
+- Un usuario Adoptante busca en Descubrir (swipe deck) → GetSwipeDeck filtra por RUT → Jamás ve sus propias mascotas
+- En chat privado con otro usuario, puede cambiar de rol sin salir de la conversación
+
+### Tabla Comparativa: Antes vs. Después
+
+| Aspecto                 | Antes (Etapa 18)                          | Después (Etapa 19)                          |
+| ----------------------- | ----------------------------------------- | ------------------------------------------- |
+| **RUT Único Global**    | `UNIQUE(run)` - Bloquea doble identidad   | `UNIQUE(run, role)` - Permite 2 cuentas     |
+| **Email Único Global**  | `UNIQUE(email)` - Bloquea doble identidad | `UNIQUE(email, role)` - Permite 2 cuentas   |
+| **Cambio de Rol**       | No existe                                 | `POST /auth/switch-role` sin contraseña     |
+| **Visibilidad en Feed** | Podría ver propias mascotas si 2 roles    | Filtro Espejo: Nunca ve sus mascotas (RUT)  |
+| **Mascotas Privadas**   | Todas en `/pets` público                  | `GET /pets/my` protegido por JWT            |
+| **Registro de Rol 2**   | Manual, sin datos pre-cargados            | Simplificado con pre-llenado                |
+| **Navegación Tras OTP** | Podría volver atrás al stack viejo        | `pushAndRemoveUntil()` reinicia limpiamente |
+
+### Flujos Completos de Etapa 19
+
+**Flujo 1: Usuario Adoptante → Rescatista (Cuenta Existe)**
+
+```
+1. Usuario (Adoptante) abre MainLayout
+   ↓
+2. Tab "Perfil" → EditProfileScreen
+   ↓
+3. Ve botón "Cambiar a Modo Rescatista"
+   ↓
+4. Presiona botón
+   ↓
+5. `_handleSwitchRole()` llama `AuthRepository.switchRole()`
+   ↓
+6. Backend: SwitchRole(userID) → Busca (RUT=adopter.run, role=rescuer)
+   ↓
+7. Encuentra usuario rescatista con mismo RUT
+   ↓
+8. Genera JWT para ese usuario
+   ↓
+9. Retorna token + user data
+   ↓
+10. Flutter: Guarda token en storage
+   ↓
+11. Navega a MainLayoutScreen(role=rescuer) con pushAndRemoveUntil
+   ↓
+12. Usuario ahora ve tabs rescatistas (Mis Mascotas, Solicitudes, Chats, Perfil)
+   ↓
+13. GET /pets/my carga solo sus mascotas rescatistas
+```
+
+**Flujo 2: Usuario Adoptante → Rescatista (Cuenta NO Existe)**
+
+```
+1. Usuario presiona "Cambiar a Modo Rescatista"
+   ↓
+2. Backend: SwitchRole() busca (RUT=adopter.run, role=rescuer) → NO ENCUENTRA
+   ↓
+3. Backend retorna 404
+   ↓
+4. Frontend: switchRole() retorna null
+   ↓
+5. `_handleSwitchRole()` detecta null
+   ↓
+6. Llama `_showCreateAccountDialog()`
+   ↓
+7. Dialog: "¿Quieres activar modo Rescatista? Tus datos se pre-llenarán"
+   ↓
+8. Usuario presiona "Sí, activar"
+   ↓
+9. Navigator.push() a RegisterScreen(
+      initialName: "Juan Pérez",
+      initialEmail: "juan@mail.com",
+      initialRun: "12.345.678-9",
+      initialRole: "rescuer"
+   )
+   ↓
+10. Pantalla Registro: Campos pre-cargados, usuario solo ingresa contraseña
+    ↓
+11. Presiona "Registrarse" → POST /auth/register con role=rescuer
+    ↓
+12. Backend: InitiateRegistration() valida (RUN o EMAIL no exist para role=rescuer)
+    ↓
+13. Guarda en Redis temporal + envía OTP
+    ↓
+14. Frontend navega a OTPScreen
+    ↓
+15. Usuario ingresa código de 6 dígitos
+    ↓
+16. POST /auth/otp/verify → CompleteRegistration()
+    ↓
+17. Backend persiste usuario rescatista a PostgreSQL
+    ↓
+18. Retorna token JWT (role=rescuer)
+    ↓
+19. Frontend: pushAndRemoveUntil() → MainLayoutScreen(role=rescuer)
+    ↓
+20. Usuario completamente onboarded en nuevo rol
+```
+
+**Flujo 3: Adoptante Buscando Mascotas - Filtro Espejo Activo**
+
+```
+1. Usuario Adoptante abre MatchScreen (Descubrir)
+   ↓
+2. PetsBloc emite LoadSwipeDeck(lat, lon)
+   ↓
+3. Backend: GetSwipeDeck(userID=123, lat=-33.4, lon=-70.6)
+   ↓
+4. Consulta actual user: SELECT run FROM users WHERE id=123
+   ↓
+5. Resultado: run="12.345.678-9"
+   ↓
+6. Query SQL:
+   SELECT p.* FROM pets p
+   INNER JOIN users u ON p.user_id = u.id
+   LEFT JOIN matches m ON m.pet_id=p.id AND m.adopter_id=123
+   WHERE m.id IS NULL
+     AND p.status = 'available'
+     AND u.run <> '12.345.678-9'   ← FILTRO ESPEJO
+   ↓
+7. Excluye todas las mascotas de cualquier usuario con ese RUT
+   (Aunque sea su otro rol)
+   ↓
+8. Resultado: Mascotas de otros usuarios, NUNCA las propias
+   ↓
+9. Frontend renderiza tarjetas de swipe
+```
+
+**Flujo 4: Rescatista Visualizando Sus Mascotas**
+
+```
+1. Usuario Rescatista abre RescuerHomeScreen
+   ↓
+2. Ejecuta _loadMyPets()
+   ↓
+3. Llama PetsRepository.getMyPets()
+   ↓
+4. GET /api/v1/pets/my (con JWT)
+   ↓
+5. Backend: Extrae userID del JWT (123)
+   ↓
+6. Handler: GetMyPets() llama PetService.GetByUserID(123)
+   ↓
+7. Query:
+   SELECT * FROM pets
+   WHERE user_id = 123 AND deleted_at IS NULL
+   ORDER BY created_at DESC
+   ↓
+8. Retorna solo mascotas de user_id=123
+   (No las del feed público, solo LAS SUYAS)
+   ↓
+9. Frontend renderiza lista privada en RescuerHomeScreen
+```
+
+### Testing End-to-End de Etapa 19
+
+**Test 1: Crear Doble Identidad**
+
+```bash
+# Paso 1: Registrar Adoptante
+curl -X POST http://localhost:8080/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Juan Pérez",
+    "email": "juan@mail.com",
+    "password": "secure123",
+    "run": "12.345.678-9",
+    "role": "adopter"
+  }'
+# Respuesta: 201 Created
+# Frontend navega a OTPScreen → Verifica código (mock en logs)
+# OTP verificado → JWT1 (role=adopter)
+
+# Paso 2: Cambiar a Rescatista (cuenta no existe)
+# Usuario presiona botón "Cambiar a Rescatista"
+# SwitchRole(userID) → 404: "No perfil rescatista"
+# Dialog: "¿Crear nuevo perfil?"
+# Usuario presiona "Sí"
+
+# Paso 3: Registro Simplificado
+curl -X POST http://localhost:8080/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Juan Pérez",       # Pre-cargado
+    "email": "juan@mail.com",   # Pre-cargado
+    "password": "secure123",
+    "run": "12.345.678-9",      # Pre-cargado (MISMO RUT)
+    "role": "rescuer"           # PRE-CARGADO (ROL DIFERENTE)
+  }'
+# Respuesta: 201 Created
+# Bases de datos permite porque role es diferente
+
+# Paso 4: Verificar OTP
+curl -X POST http://localhost:8080/api/v1/auth/otp/verify \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "juan@mail.com",
+    "code": "123456"
+  }'
+# Respuesta: 200 OK + JWT2 (role=rescuer)
+
+# Paso 5: Verificar ambas cuentas existen
+curl -X GET http://localhost:8080/api/v1/profile \
+  -H "Authorization: Bearer JWT1_adopter"
+# Respuesta: {id: 1, role: "adopter", name: "Juan", ...}
+
+curl -X GET http://localhost:8080/api/v1/profile \
+  -H "Authorization: Bearer JWT2_rescuer"
+# Respuesta: {id: 2, role: "rescuer", name: "Juan", ...}
+# ¡MISMO USUARIO (RUT), DIFERENTES IDs Y ROLES!
+```
+
+**Test 2: Filtro Espejo en GetSwipeDeck**
+
+```bash
+# Adoptante busca mascotas
+# Tiene mascota registrada con rol=rescuer
+
+curl -X GET "http://localhost:8080/api/v1/matches/candidates" \
+  -H "Authorization: Bearer JWT1_adopter"
+# Query ejecuta:
+#   WHERE u.run <> '12.345.678-9'
+# Resultado: EXCLUYE su propia mascota aunque sea dueño
+
+# Prueba: Crear mascota con JWT rescuer
+curl -X POST http://localhost:8080/api/v1/pets \
+  -H "Authorization: Bearer JWT2_rescuer" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Max", "type": "Dog", ...}'
+# Crea mascota con user_id=2 (rescatista)
+
+# Adoptante busca de nuevo
+curl -X GET "http://localhost:8080/api/v1/matches/candidates" \
+  -H "Authorization: Bearer JWT1_adopter"
+# Query: WHERE u.run <> '12.345.678-9'
+# Resultado: SIGUE EXCLUYENDO (porque u.run=12.345.678-9 en ambas cuentas)
+```
+
+**Test 3: GET /pets/my - Privacidad**
+
+```bash
+# Rescatista crea 3 mascotas
+for i in {1..3}; do
+  curl -X POST http://localhost:8080/api/v1/pets \
+    -H "Authorization: Bearer JWT2_rescuer" \
+    -H "Content-Type: application/json" \
+    -d "{...}"
+done
+
+# Rescatista obtiene sus mascotas
+curl -X GET http://localhost:8080/api/v1/pets/my \
+  -H "Authorization: Bearer JWT2_rescuer"
+# Respuesta: Array de 3 mascotas (solo las suyas)
+
+# Adoptante intenta acceder (debería fallar o retornar vacío)
+curl -X GET http://localhost:8080/api/v1/pets/my \
+  -H "Authorization: Bearer JWT1_adopter"
+# Respuesta: Array vacío (user_id=1 no creó mascotas)
+
+# VERIFICACIÓN: Las mascotas no están en /pets/my del adoptante
+# pero el rescatista las ve en /pets/my
+```
+
+**Etapa 19 Status: 100% Completada y Verificada**
+
+---
+
 ## Estructura del Proyecto
 
 Consultar `documentation/` para documentación exhaustiva:
@@ -9445,6 +10096,7 @@ Este proyecto se desarrolla en fases:
 - **Etapa 16** (Completada): Máquina de estados terminal para chats (estado `cancelled` cuando ambos usuarios abandonan), eliminación de bucle infinito ping-pong, cascada atómica de eliminación de mascotas con transacciones GORM, robustez contra datos malformados (\_parseInt helper), personalización de mensajes de bloqueo por rol del usuario
 - **Etapa 17** (Completada): Sistema de justicia integral con denuncias categorizadas (maltrato, estafa, spam, odio, otro), evidencia congelada inmutable, discretion administrativa (ban/dismiss), blacklist pública con búsqueda de antecedentes por RUT, validación Módulo 11 chileno, Centro de Resolución para admins con visor de evidencia, protección de denunciante con silencio operativo
 - **Etapa 18** (Completada): Módulo de calificación avanzada con ratings decimales 0.5-5.0, UPSERT inteligente para prevenir duplicados, recalcación automática de promedios mediante triggers, StarRatingInput widget Letterboxd-style, integración seamless en ChatBloc sin salir de pantalla chat, User model robusto con blindsiding contra inconsistencias
+- **Etapa 19** (Completada): Módulo de doble identidad Adoptante ↔ Rescatista, índices compuestos UNIQUE(run, role) + UNIQUE(email, role) para base de datos flexible, limpieza automática de constraints legacy (dropLegacyConstraints), endpoint SwitchRole para cambio instantáneo sin contraseña, filtro espejo en GetSwipeDeck para blindaje por RUT, privacidad de datos en GET /pets/my, registro simplificado con pre-llenado de datos, corrección de navegación tras OTP
 
 ## Documentación Adicional
 
@@ -9462,13 +10114,14 @@ Este proyecto se desarrolla en fases:
 - [Fase 10](documentation/Fase-10.md): Chat persistente, filtro "Evil PAWS", sistema de reputación comunitaria
 - **Etapa 5**: Identidad real (foto, nombre, bio, teléfono), geolocalización con GPS, MainLayout (integrada en [Fase-3](documentation/Fase-3.md), [Fase-5](documentation/Fase-5.md), y [Fase-9](documentation/Fase-9.md))
 - **Etapa 6**: Blindsiding seguridad en handlers (type-safe JWT), integración UI para reportes y reseñas (integrada en [Fase-8](documentation/Fase-8.md) y [Fase-10](documentation/Fase-10.md))
-- **Etapa 7**: RBAC y panel administrativo, autopromoci\u00f3n de admins, correcci\u00f3n de identidad en reportes (integrada en [Fase-1](documentation/Fase-1.md), [Fase-5](documentation/Fase-5.md), y [Fase-8](documentation/Fase-8.md))
+- **Etapa 7**: RBAC y panel administrativo, autopromoción de admins, corrección de identidad en reportes (integrada en [Fase-1](documentation/Fase-1.md), [Fase-5](documentation/Fase-5.md), y [Fase-8](documentation/Fase-8.md))
 - **Etapa 8**: Despliegue cloud e infraestructura global (integrada en [Fase-0](documentation/Fase-0.md), [Fase-5](documentation/Fase-5.md), y nueva [Fase-12](documentation/Fase-12.md) para detalles de despliegue)
 - **Etapa 9**: Contenedorización total y estabilidad (integrada en [Fase-0](documentation/Fase-0.md) y [Fase-9](documentation/Fase-9.md) con sección "COMPLETADO EN ETAPA 9")
 - **Etapa 10**: Arquitectura orientada a eventos y seguridad avanzada (integrada en [Fase-8](documentation/Fase-8.md), [Fase-10](documentation/Fase-10.md), y nueva [Fase-14](documentation/Fase-14.md) para detalles de asincronía)
 - **Etapa 11**: Chat en tiempo real, enrutamiento inteligente, persistencia garantizada (integrada en [Fase-4](documentation/Fase-4.md) con sección "COMPLETADO EN ETAPA 11" y nueva [Fase-15](documentation/Fase-15.md) para documentación completa)
 - **Etapa 12**: Notificaciones Push, sistema híbrido tiempo real (integrada en [Fase-4](documentation/Fase-4.md) con sección "COMPLETADO EN ETAPA 12" y nueva [Fase-16](documentation/Fase-16.md) para documentación completa)
 - **Etapa 15**: Perfiles enriquecidos y ciclo de vida inicial de chats (parcialmente integrada en [Fase-5](documentation/Fase-5.md) para EditProfileScreen, [Fase-9](documentation/Fase-9.md) para visibilidad de perfil en solicitudes, y [Fase-11](documentation/Fase-11.md) para chat exit/blocking)
+- **Etapa 19**: Doble identidad Adoptante ↔ Rescatista, índices compuestos flexibles, filtro espejo, endpoint SwitchRole (integrada en [Fase-1](documentation/Fase-1.md), [Fase-2](documentation/Fase-2.md), y [Fase-5](documentation/Fase-5.md) con sección "COMPLETADO EN ETAPA 19")
 - **Etapa 16**: Máquina de estados terminal, eliminación de ping-pong, cascadas atómicas, robustez de datos (integrada en [Fase-15](documentation/Fase-15.md) con sección "COMPLETADO EN ETAPA 16")
 - **Etapa 17**: Sistema de justicia integral, denuncias categorizadas, evidencia congelada, discretion administrativa (integrada en [Fase-8](documentation/Fase-8.md) con sección "COMPLETADO EN ETAPA 17" y nueva [Etapa-17](documentation/Etapa-17.md) para documentación completa)
 - **Etapa 18**: Módulo de calificación avanzada, ratings decimales 0.5-5.0, UPSERT inteligente, triggers de recalcación, StarRatingInput Letterboxd-style, integración ChatBloc seamless (integrada en [Fase-10](documentation/Fase-10.md) con sección "COMPLETADO EN ETAPA 18")
