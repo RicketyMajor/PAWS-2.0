@@ -205,6 +205,7 @@ func main() {
 			protected.PUT("/profile", userHandler.UpdateProfile)
 			protected.GET("/profile", userHandler.GetProfile)
 			protected.POST("/pets", petHandler.Create)
+			protected.GET("/pets/my", petHandler.GetMyPets)
 			protected.POST("/files/upload", uploadHandler.Upload)
 			protected.DELETE("/pets/:id", petHandler.Delete)
 			protected.POST("/notifications/token", notificationHandler.UpdateToken)

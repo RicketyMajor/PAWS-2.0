@@ -9,8 +9,6 @@ import (
 )
 
 // --- ESTRUCTURAS DE DATOS ---
-
-// 1. DTO para Búsqueda (Restaurado)
 type SearchPetFilters struct {
 	Type   string  `form:"type"`
 	Breed  string  `form:"breed"`
@@ -20,7 +18,6 @@ type SearchPetFilters struct {
 	MaxAge int     `form:"max_age"`
 }
 
-// 2. DTO para Crear Mascota (Multipart Form)
 type CreatePetForm struct {
 	Name         string  `form:"name" binding:"required"`
 	Type         string  `form:"type" binding:"required"`
@@ -30,21 +27,15 @@ type CreatePetForm struct {
 	Latitude     float64 `form:"latitude"`
 	Longitude    float64 `form:"longitude"`
 	Address      string  `form:"address"`
-
-	// Veterinarios
-	IsVaccinated bool   `form:"is_vaccinated"`
-	IsSterilized bool   `form:"is_sterilized"`
-	IsDewormed   bool   `form:"is_dewormed"`
-	SpecialNeeds string `form:"special_needs"`
-
-	// Preferencias
-	RequiresYard bool   `form:"requires_yard"`
-	GoodWithKids bool   `form:"good_with_kids"`
-	GoodWithDogs bool   `form:"good_with_dogs"`
-	EnergyLevel  string `form:"energy_level"`
+	IsVaccinated bool    `form:"is_vaccinated"`
+	IsSterilized bool    `form:"is_sterilized"`
+	IsDewormed   bool    `form:"is_dewormed"`
+	SpecialNeeds string  `form:"special_needs"`
+	RequiresYard bool    `form:"requires_yard"`
+	GoodWithKids bool    `form:"good_with_kids"`
+	GoodWithDogs bool    `form:"good_with_dogs"`
+	EnergyLevel  string  `form:"energy_level"`
 }
-
-// --- HANDLER ---
 
 type PetHandler struct {
 	service     *services.PetService
@@ -60,44 +51,37 @@ func NewPetHandler(service *services.PetService, fileService *services.FileServi
 
 // Create maneja la creación con imágenes múltiples
 func (h *PetHandler) Create(c *gin.Context) {
-	// 1. Auth
 	userIDFloat, exists := c.Get("userID")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "no auth"})
 		return
 	}
 	
-	// Conversión segura de ID (Mejorada para evitar pánicos)
 	var userID uint
 	if val, ok := userIDFloat.(float64); ok {
 		userID = uint(val)
 	} else if val, ok := userIDFloat.(uint); ok {
 		userID = val
 	} else {
-		userID = userIDFloat.(uint) // Fallback
+		userID = userIDFloat.(uint)
 	}
 
-	// 2. Bind de campos de texto
 	var form CreatePetForm
 	if err := c.ShouldBind(&form); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Datos inválidos: " + err.Error()})
 		return
 	}
 
-	// 3. Procesar Archivos (Imágenes)
 	formMultipart, err := c.MultipartForm()
 	var imageURLs []string
 
 	if err == nil {
-		files := formMultipart.File["images"] // Array de archivos
-
+		files := formMultipart.File["images"]
 		if len(files) > 0 {
 			if len(files) > 10 {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Máximo 10 fotos permitidas"})
 				return
 			}
-
-			// Subir usando FileService
 			uploadedURLs, err := h.fileService.SaveMultipleImages(c.Request.Context(), files)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Error subiendo fotos: " + err.Error()})
@@ -107,7 +91,6 @@ func (h *PetHandler) Create(c *gin.Context) {
 		}
 	}
 
-	// 4. Llamar al servicio
 	newPet, err := h.service.Create(services.CreatePetInput{
 		Name:        form.Name,
 		Type:        form.Type,
@@ -118,18 +101,15 @@ func (h *PetHandler) Create(c *gin.Context) {
 		Longitude:   form.Longitude,
 		Address:     form.Address,
 		UserID:      userID,
-
 		IsVaccinated: form.IsVaccinated,
 		IsSterilized: form.IsSterilized,
 		IsDewormed:   form.IsDewormed,
 		SpecialNeeds: form.SpecialNeeds,
-
 		RequiresYard: form.RequiresYard,
 		GoodWithKids: form.GoodWithKids,
 		GoodWithDogs: form.GoodWithDogs,
 		EnergyLevel:  form.EnergyLevel,
-
-		ImageURLs: imageURLs,
+		ImageURLs:    imageURLs,
 	})
 
 	if err != nil {
@@ -149,14 +129,38 @@ func (h *PetHandler) GetAll(c *gin.Context) {
 	c.JSON(http.StatusOK, pets)
 }
 
+// --- NUEVO HANDLER: OBTENER MIS MASCOTAS ---
+func (h *PetHandler) GetMyPets(c *gin.Context) {
+	userIDFloat, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "No autorizado"})
+		return
+	}
+	
+	var userID uint
+	if val, ok := userIDFloat.(float64); ok {
+		userID = uint(val)
+	} else if val, ok := userIDFloat.(uint); ok {
+		userID = val
+	} else {
+		userID = userIDFloat.(uint)
+	}
+
+	pets, err := h.service.GetByUserID(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error cargando mascotas: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, pets)
+}
+
 func (h *PetHandler) Search(c *gin.Context) {
 	filters := SearchPetFilters{}
 	if err := c.BindQuery(&filters); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Filtros inválidos"})
 		return
 	}
-
-	// Por ahora usamos GetAll, luego conectaremos los filtros al servicio
 	pets, err := h.service.GetAll()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -183,7 +187,6 @@ func (h *PetHandler) GetNearby(c *gin.Context) {
 		dist = 10.0
 	}
 
-	// CORRECCIÓN PRINCIPAL: Cambiado de SearchNearby a GetNearby
 	pets, err := h.service.GetNearby(lat, lng, dist)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error calculando cercanía: " + err.Error()})

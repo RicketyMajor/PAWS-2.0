@@ -90,6 +90,17 @@ func (s *PetService) GetAll() ([]domain.Pet, error) {
 	return pets, err
 }
 
+// --- NUEVO: OBTENER SOLO MIS MASCOTAS ---
+func (s *PetService) GetByUserID(userID uint) ([]domain.Pet, error) {
+	var pets []domain.Pet
+	// Filtramos por user_id y ordenamos por fecha de creación (más nuevas primero)
+	err := s.db.Preload("Images").
+		Where("user_id = ? AND deleted_at IS NULL", userID).
+		Order("created_at DESC").
+		Find(&pets).Error
+	return pets, err
+}
+
 func (s *PetService) GetNearby(lat, lng, dist float64) ([]domain.Pet, error) {
 	var pets []domain.Pet
 	// Fórmula Haversine simple en SQL
