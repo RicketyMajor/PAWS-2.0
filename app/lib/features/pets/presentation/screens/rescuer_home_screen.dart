@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import '../../../../core/utils/image_helper.dart'; // <--- IMPORTANTE
+import '../../../../core/utils/image_helper.dart';
 import '../../../auth/presentation/screens/login_screen.dart';
 import '../../data/pets_repository.dart';
 import '../../domain/pet_model.dart';
@@ -28,8 +28,8 @@ class _RescuerHomeScreenState extends State<RescuerHomeScreen> {
   Future<void> _loadMyPets() async {
     setState(() => _isLoading = true);
     try {
-      // Obtenemos las mascotas (idealmente filtrar por "mis mascotas" en el futuro)
-      final pets = await context.read<PetsRepository>().getPets();
+      // CORRECCIÓN: Usamos getMyPets() para traer solo las mías
+      final pets = await context.read<PetsRepository>().getMyPets();
 
       if (mounted) {
         setState(() {
@@ -126,9 +126,6 @@ class _RescuerHomeScreenState extends State<RescuerHomeScreen> {
               leading: SizedBox(
                 width: 60,
                 height: 60,
-                // --- CORRECCIÓN ROBUSTA ---
-                // En lugar de usar backgroundImage (que falla silenciosamente),
-                // usamos ClipOval + ImageHelper.getImage para ver errores o placeholders.
                 child: ClipOval(
                   child: ImageHelper.getImage(
                     pet.imageUrl,

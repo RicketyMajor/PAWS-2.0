@@ -22,14 +22,9 @@ class PetsRepository {
   //  LECTURA (ADOPTANTE)
   // ===============================================================
 
-  // En pets_repository.dart
-
-  // En getSwipeDeck, agrega los parámetros opcionales
   Future<List<Pet>> getSwipeDeck({double? lat, double? lon}) async {
     try {
       final options = await _getAuthOptions();
-
-      // Enviamos lat y lon como query parameters
       final response = await _dio.get(
         '${ApiConstants.baseUrl}${ApiConstants.swipeDeck}',
         queryParameters: {
@@ -40,7 +35,7 @@ class PetsRepository {
       );
 
       if (response.statusCode == 200) {
-        List<dynamic> data = response.data ?? []; // Protección contra null
+        List<dynamic> data = response.data ?? [];
         return data.map((json) => Pet.fromJson(json)).toList();
       }
       return [];
@@ -50,12 +45,15 @@ class PetsRepository {
     }
   }
 
-  // 2. Obtener TODAS las mascotas (Para el Dashboard del Rescatista)
-  // Nota: Esto llama a /pets (público) o podrías crear /pets/my-pets en backend
-  Future<List<Pet>> getPets() async {
+  // --- NUEVO: OBTENER SOLO MIS MASCOTAS (RESCATISTA) ---
+  // Endpoint: /pets/my (Protegido)
+  Future<List<Pet>> getMyPets() async {
     try {
-      // Usamos el endpoint público por ahora, que lista disponibles
-      final response = await _dio.get('${ApiConstants.baseUrl}/pets');
+      final options = await _getAuthOptions();
+      final response = await _dio.get(
+        '${ApiConstants.baseUrl}/pets/my',
+        options: options,
+      );
 
       if (response.statusCode == 200) {
         List<dynamic> data = response.data;
@@ -68,7 +66,22 @@ class PetsRepository {
     }
   }
 
-  // --- NUEVO CREATE PET (Multipart) ---
+  // 2. Obtener TODAS las mascotas (Público - Legacy o para Feed General)
+  Future<List<Pet>> getPets() async {
+    try {
+      final response = await _dio.get('${ApiConstants.baseUrl}/pets');
+      if (response.statusCode == 200) {
+        List<dynamic> data = response.data;
+        return data.map((json) => Pet.fromJson(json)).toList();
+      }
+      return [];
+    } on DioException catch (e) {
+      _handleError(e);
+      return [];
+    }
+  }
+
+  // --- CREATE PET (Multipart) ---
   Future<void> createPet({
     required String name,
     required String type,
@@ -77,14 +90,11 @@ class PetsRepository {
     required String description,
     required double latitude,
     required double longitude,
-    required List<File> images, // <--- LISTA DE FOTOS
-    // Salud
+    required List<File> images,
     bool isVaccinated = false,
     bool isSterilized = false,
     bool isDewormed = false,
     String specialNeeds = '',
-
-    // Preferencias
     bool requiresYard = false,
     bool goodWithKids = false,
     bool goodWithDogs = false,
@@ -93,7 +103,6 @@ class PetsRepository {
     try {
       final options = await _getAuthOptions();
 
-      // Construimos el FormData
       final formData = FormData.fromMap({
         "name": name,
         "type": type,
@@ -102,25 +111,21 @@ class PetsRepository {
         "description": description,
         "latitude": latitude,
         "longitude": longitude,
-
-        // Booleans como strings para form-data
         "is_vaccinated": isVaccinated,
         "is_sterilized": isSterilized,
         "is_dewormed": isDewormed,
         "special_needs": specialNeeds,
-
         "requires_yard": requiresYard,
         "good_with_kids": goodWithKids,
         "good_with_dogs": goodWithDogs,
         "energy_level": energyLevel,
       });
 
-      // Adjuntar imágenes
       for (var file in images) {
         String fileName = file.path.split('/').last;
         formData.files.add(
           MapEntry(
-            "images", // Debe coincidir con formMultipart.File["images"] en Go
+            "images",
             await MultipartFile.fromFile(file.path, filename: fileName),
           ),
         );
@@ -137,14 +142,12 @@ class PetsRepository {
   }
 
   // ===============================================================
-  //  INTERACCIÓN (MATCHING)
+  //  INTERACCIÓN
   // ===============================================================
 
-  // 5. Ejecutar Swipe (Like/Dislike)
   Future<void> swipePet({required int petId, required bool isLike}) async {
     try {
       final options = await _getAuthOptions();
-      // Endpoint: /matches/swipe
       await _dio.post(
         '${ApiConstants.baseUrl}${ApiConstants.swipeAction}',
         options: options,
@@ -152,14 +155,11 @@ class PetsRepository {
       );
     } catch (e) {
       print("Error en swipe: $e");
-      // No lanzamos excepción para no interrumpir la UI fluida
     }
   }
 
-  // Helper de errores centralizado
   void _handleError(DioException e) {
     String errorMessage = 'Error de conexión';
-
     if (e.response != null) {
       final data = e.response!.data;
       if (data is Map<String, dynamic>) {
@@ -168,14 +168,10 @@ class PetsRepository {
         errorMessage = data.toString();
       }
     }
-
     print("PETS REPO ERROR: $errorMessage");
     throw Exception(errorMessage);
   }
 
-  // ... dentro de PetsRepository ...
-
-  // 6. Eliminar Mascota
   Future<void> deletePet(int id) async {
     try {
       final options = await _getAuthOptions();
