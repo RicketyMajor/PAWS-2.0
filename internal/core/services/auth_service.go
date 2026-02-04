@@ -35,11 +35,15 @@ type AuthService struct {
 func NewAuthService(dbOrNil *gorm.DB) *AuthService {
 	redisHost := os.Getenv("REDIS_HOST")
 	redisPort := os.Getenv("REDIS_PORT")
+	redisPass := os.Getenv("REDIS_PASSWORD") // <--- NUEVO: Leemos la contraseña
+
 	if redisHost == "" { redisHost = "localhost" }
 	if redisPort == "" { redisPort = "6379" }
 	
 	rdb := redis.NewClient(&redis.Options{
-		Addr: fmt.Sprintf("%s:%s", redisHost, redisPort),
+		Addr:     fmt.Sprintf("%s:%s", redisHost, redisPort),
+		Password: redisPass, // <--- NUEVO: La usamos aquí
+		DB:       0,
 	})
 
 	if dbOrNil == nil {
