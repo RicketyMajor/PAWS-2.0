@@ -13,3 +13,6 @@
 # Firebase - Ignorar llave privada
 firebase-service-account.json
 **/firebase-service-account.json
+
+*.sql
+respaldo_paws.sql

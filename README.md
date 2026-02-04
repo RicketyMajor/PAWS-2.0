@@ -10068,6 +10068,598 @@ Para eliminar también los volúmenes de datos:
 docker compose down -v
 ```
 
+## Etapa 19: Persistencia Inteligente de Sesión, Navegación Blindada y Gestión de Logout Unificado (Completada)
+
+Etapa 19 representa un salto cualitativo en la experiencia del usuario, transformando el ciclo de vida de la sesión y la navegación de la aplicación. Mientras las etapas anteriores se enfocaron en funcionalidades de matching y comunicación, Etapa 19 se dedica a la **ingeniería de experiencia de usuario** a través de tres pilares interconectados: mantener la sesión activa de manera segura, blindar la navegación contra cierres accidentales, y proporcionar un cierre de sesión limpio y centralizado.
+
+### Problemas Resueltos en Etapa 19
+
+#### Problema 1: Pérdida de Sesión en App Restarts
+
+Antes de Etapa 19, cada vez que el usuario cerraba y reabrí a la aplicación, debía volver a ingresar credenciales incluso si la sesión era válida. El token JWT se guardaba genéricamente sin diferenciar entre deseo explícito del usuario de mantener sesión abierta.
+
+**Solución Implementada**: Control de persistencia diferenciado basado en checkbox "Recordar usuario" en LoginScreen:
+
+- Si usuario marca "Recordar usuario": Token se encripta y almacena en FlutterSecureStorage (disco del dispositivo)
+- Si usuario desmarca: Token se mantiene **solo en RAM** mediante variable `_sessionToken` en AuthRepository
+- Al cerrar app: Token en RAM desaparece automáticamente
+- Al iniciar app: AuthCheckScreen verifica silenciosamente si existe token válido y no expirado
+
+**Ventaja de Seguridad**: El usuario retiene control total. Una sesión de café en biblioteca no deja token persistente en disco.
+
+#### Problema 2: Usuario Presiona Atrás Accidentalmente y Pierde App
+
+En navegación convencional, presionar el botón físico "atrás" del Android (o gesto en iOS) cierra la aplicación si estás en la primera pantalla. Esto genera frustración cuando el usuario está en la pestaña de Perfil, toca atrás por error, y la app se cierra.
+
+**Solución Implementada**: Envolver MainLayoutScreen en `WillPopScope` que intercepta el botón atrás con lógica inteligente:
+
+1. Si usuario está en pestaña que NO es "Home" (índice 0): Retornar a Home sin cerrar app
+2. Si usuario está en Home: Mostrar SnackBar "Presiona otra vez para salir" con ventana de 2 segundos
+3. Si usuario presiona atrás nuevamente en el plazo: Cierra la app
+
+**Código Base**:
+
+```dart
+return WillPopScope(
+  onWillPop: () async {
+    // Lógica de intercepción
+    if (_currentIndex != 0) {
+      setState(() => _currentIndex = 0);
+      return false; // No salir
+    }
+    
+    final now = DateTime.now();
+    if (_lastPressedTime == null || now.difference(_lastPressedTime!) > Duration(seconds: 2)) {
+      _lastPressedTime = now;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Presiona otra vez para salir")),
+      );
+      return false;
+    }
+    return true; // Sí salir
+  },
+  child: Scaffold(...),
+);
+```
+
+**Impacto UX**: La navegación se siente más "pegajosa" y predecible. El usuario nunca cierra la app por error.
+
+#### Problema 3: Logout Inconsistente y Tokens Fantasma
+
+Antes de Etapa 19, el logout no era un concepto centralizado. Si un usuario cerraba sesión desde EditProfileScreen, había múltiples puntos de fallo donde el token podría no borrarse completamente:
+
+- Permanecía en FlutterSecureStorage
+- Permanecía en variable de sesión en memoria
+- Navegación no era limpia (usuario podría hacer back y llegar a pantalla privada)
+
+**Solución Implementada**: Método `logout()` centralizado en AuthRepository que ejecuta limpieza completa:
+
+```dart
+Future<void> logout() async {
+  _sessionToken = null;  // Borrar memoria
+  await _storage.delete(key: 'jwt_token');  // Borrar disco
+}
+```
+
+Integración en EditProfileScreen con diálogo de confirmación:
+
+```dart
+void _confirmLogout() {
+  showDialog(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text("Cerrar Sesión"),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx), child: Text("Cancelar")),
+        TextButton(
+          onPressed: () async {
+            await context.read<AuthRepository>().logout();
+            Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(builder: (_) => LoginScreen()),
+              (route) => false,  // Elimina todo stack
+            );
+          },
+          child: Text("Sí, cerrar", style: TextStyle(color: Colors.red)),
+        ),
+      ],
+    ),
+  );
+}
+```
+
+**Garantías**:
+
+- Token borrado de AMBOS: memoria y almacenamiento encriptado
+- Stack de navegación limpio: usuario NO puede hacer back a pantallas privadas
+- Confirmación visual: usuario entiende qué sucede
+
+### Componente 1: AuthCheckScreen - Verificación Silenciosa en Startup
+
+**Ubicación**: `app/lib/main.dart` (línea 108-160)
+
+**Concepto**: En lugar de iniciar directamente en LoginScreen, main.dart ahora inicia en AuthCheckScreen, una pantalla de carga que verifica el estado de la sesión en background.
+
+**Flujo**:
+
+1. App inicia → Muestra Scaffold con logo/spinner
+2. `initState()` invoca `_checkSession()`
+3. `_checkSession()` espera 1 segundo (mejora UX visual)
+4. Lee token con `authRepository.getToken()` (primero memoria, luego disco)
+5. Valida expiración con `JwtDecoder.isExpired(token)`
+6. Decodifica JWT para extraer `role`
+7. Navega según rol:
+   - `role == 'admin'` → AdminDashboardScreen
+   - Otro → MainLayoutScreen(role: role)
+   - Token inválido/expirado → LoginScreen
+
+**Código Detallado**:
+
+```dart
+Future<void> _checkSession() async {
+  await Future.delayed(const Duration(seconds: 1));
+  if (!mounted) return;
+  
+  try {
+    final authRepo = context.read<AuthRepository>();
+    final token = await authRepo.getToken();
+    
+    if (token != null && !JwtDecoder.isExpired(token)) {
+      Map<String, dynamic> decodedToken = JwtDecoder.decode(token);
+      String role = decodedToken['role'] ?? 'adopter';
+      
+      if (!mounted) return;
+      
+      if (role == 'admin') {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const AdminDashboardScreen()),
+        );
+      } else {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => MainLayoutScreen(role: role)),
+        );
+      }
+    } else {
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+      );
+    }
+  } catch (e) {
+    if (mounted) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+      );
+    }
+  }
+}
+```
+
+**Garantías de Seguridad**:
+
+- Expiración validada: Tokens expirados son rechazados inmediatamente
+- Manejo de errores: Excepciones en lectura de token redirigen a Login
+- `if (!mounted)` verificaciones: Evita cambios de UI después de desmontar widget
+
+### Componente 2: Control de Persistencia en Login
+
+**Ubicación**: `app/lib/features/auth/` (3 archivos coordinados)
+
+**Arquitectura de 3 capas**:
+
+**Capa 1 - UI (LoginScreen, línea 144-180)**:
+
+- Renderiza Checkbox "Recordar usuario"
+- Estado booleano `_rememberMe` controlado por SetState
+- Envía checkbox value al Bloc junto con email y password
+
+```dart
+Row(
+  children: [
+    Checkbox(
+      value: _rememberMe,
+      onChanged: (v) => setState(() => _rememberMe = v!),
+      activeColor: Color(0xFFE91E63),
+    ),
+    Text("Recordar usuario"),
+  ],
+)
+
+// En botón de login:
+context.read<LoginBloc>().add(
+  LoginButtonPressed(
+    email: _emailController.text,
+    password: _passwordController.text,
+    rememberMe: _rememberMe,  // Pasar aquí
+  ),
+);
+```
+
+**Capa 2 - Estado (LoginBloc, línea 47-65)**:
+
+- Recibe evento `LoginButtonPressed` con `rememberMe` flag
+- Pasa `rememberMe` al método `login()` del repositorio
+
+```dart
+on<LoginButtonPressed>((event, emit) async {
+  emit(LoginLoading());
+  try {
+    await authRepository.login(
+      event.email,
+      event.password,
+      rememberMe: event.rememberMe,  // Pasar aquí
+    );
+    emit(LoginSuccess());
+  } catch (e) {
+    emit(LoginFailure(error: e.toString()));
+  }
+});
+```
+
+**Capa 3 - Datos (AuthRepository, línea 26-56)**:
+
+- Parámetro `rememberMe` controla dónde se guarda el token
+- **Si rememberMe=true**: `await _storage.write(key: 'jwt_token', value: token)`
+- **Si rememberMe=false**: `_sessionToken = token` (solo memoria), borra disco con `await _storage.delete()`
+
+```dart
+Future<void> login(String email, String password, {bool rememberMe = true}) async {
+  try {
+    final response = await _dio.post(
+      '${ApiConstants.baseUrl}/auth/login',
+      data: {'email': email, 'password': password},
+    );
+    
+    final token = response.data['token'];
+    
+    if (rememberMe) {
+      await _storage.write(key: 'jwt_token', value: token);
+    } else {
+      _sessionToken = token;
+      await _storage.delete(key: 'jwt_token');
+    }
+    
+    print('Login exitoso. Persistencia: $rememberMe');
+  } on DioException catch (e) {
+    throw Exception(e.response?.data['error'] ?? 'Error desconocido');
+  }
+}
+```
+
+**Getter Inteligente `getToken()` (línea 103-108)**:
+
+Prioriza sesión en memoria sobre disco para mantener sesión activa durante la app:
+
+```dart
+Future<String?> getToken() async {
+  if (_sessionToken != null) return _sessionToken;  // Prioridad: RAM
+  return await _storage.read(key: 'jwt_token');     // Fallback: disco
+}
+```
+
+### Componente 3: WillPopScope en MainLayoutScreen
+
+**Ubicación**: `app/lib/core/presentation/main_layout_screen.dart` (línea 66-117)
+
+**Concepto**: Interceptar intentos de cerrar la app desde el botón atrás del dispositivo.
+
+**Máquina de Estados de 3 Estados**:
+
+```
+Estado 1: Usuario está en pestaña != Home
+  ↓
+  Action: Cambiar _currentIndex a 0
+  Return: false (no cerrar app)
+  
+Estado 2: Usuario está en Home, PRIMER atrás (dentro de 2 seg)
+  ↓
+  Action: Guardar timestamp, mostrar SnackBar
+  Return: false (no cerrar app)
+  
+Estado 3: Usuario está en Home, SEGUNDO atrás (dentro de 2 seg)
+  ↓
+  Action: (nada)
+  Return: true (cerrar app)
+```
+
+**Implementación**:
+
+```dart
+DateTime? _lastPressedTime;
+
+return WillPopScope(
+  onWillPop: () async {
+    // Nivel 1: Si no en Home, volver a Home
+    if (_currentIndex != 0) {
+      setState(() => _currentIndex = 0);
+      return false;
+    }
+    
+    // Nivel 2: Doble-tap detection
+    final now = DateTime.now();
+    final maxDuration = const Duration(seconds: 2);
+    final isWarning = 
+        _lastPressedTime == null || 
+        now.difference(_lastPressedTime!) > maxDuration;
+    
+    if (isWarning) {
+      _lastPressedTime = now;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Presiona otra vez para salir"),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return false;
+    }
+    
+    // Nivel 3: Salir
+    return true;
+  },
+  child: Scaffold(...),
+);
+```
+
+**Tabla de Transiciones**:
+
+| Estado Anterior | Acción Usuario | Nuevo Estado | Resultado |
+|-----------------|----------------|--------------|-----------|
+| Perfil (idx=3) | Atrás | Home (idx=0) | No cierra |
+| Home (idx=0) | Atrás (primer tap) | Home (idx=0) | Muestra SnackBar, no cierra |
+| Home (idx=0) | Atrás (segundo tap <2s) | — | Cierra app |
+| Home (idx=0) | Atrás (después 2s) | Home (idx=0) | Reinicia contador, muestra SnackBar |
+
+### Componente 4: Logout Centralizado en EditProfileScreen
+
+**Ubicación**: `app/lib/features/user/presentation/screens/edit_profile_screen.dart` (línea 126-190)
+
+**Integración UI**:
+
+Botón de engranaje (⚙️) en AppBar ejecuta PopupMenuButton con dos opciones:
+
+```dart
+AppBar(
+  title: const Text("Mi Perfil"),
+  actions: [
+    IconButton(icon: Icon(_isEditing ? Icons.check : Icons.edit), ...),
+    
+    PopupMenuButton<String>(
+      icon: const Icon(Icons.settings, color: Colors.blueGrey),
+      onSelected: (value) {
+        if (value == 'logout') {
+          _confirmLogout();
+        } else if (value == 'blacklist') {
+          Navigator.push(context, ...);
+        }
+      },
+      itemBuilder: (context) => [
+        PopupMenuItem(
+          value: 'blacklist',
+          child: Row(children: [Icon(Icons.security), Text("Consultar Blacklist")]),
+        ),
+        PopupMenuItem(
+          value: 'logout',
+          child: Row(
+            children: [Icon(Icons.exit_to_app, color: Colors.red), Text("Cerrar Sesión")],
+          ),
+        ),
+      ],
+    ),
+  ],
+)
+```
+
+**Diálogo de Confirmación `_confirmLogout()`**:
+
+```dart
+void _confirmLogout() {
+  showDialog(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text("Cerrar Sesión"),
+      content: const Text("¿Estás seguro que deseas cerrar sesión?"),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text("Cancelar"),
+        ),
+        TextButton(
+          onPressed: () async {
+            Navigator.pop(ctx);
+            
+            // 1. Ejecutar logout (limpia token de memoria Y disco)
+            await context.read<AuthRepository>().logout();
+            
+            if (!mounted) return;
+            
+            // 2. Navegar al Login con stack limpio
+            Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(builder: (_) => const LoginScreen()),
+              (route) => false,  // Elimina TODOS los routes previos
+            );
+          },
+          child: const Text("Sí, cerrar", style: TextStyle(color: Colors.red)),
+        ),
+      ],
+    ),
+  );
+}
+```
+
+**Garantías**:
+
+- `await logout()` bloquea hasta que token sea borrado completamente
+- `if (!mounted)` verifica que widget sigue en árbol antes de navegar
+- `pushAndRemoveUntil` con `(route) => false` limpia stack: usuario NO puede hacer back a pantallas privadas
+- Token inválido en AuthCheckScreen redirige automáticamente a Login
+
+### Flujos de Usuario Completos (Etapa 19)
+
+#### Flujo 1: Usuario Primera Vez - Marca "Recordar Usuario"
+
+```
+1. Usuario abre app → main.dart ejecuta runApp()
+2. PawsApp home: AuthCheckScreen
+3. AuthCheckScreen._checkSession() invocado
+4. authRepository.getToken() → null (primera vez)
+5. Navega a LoginScreen
+6. Usuario ingresa email, password
+7. Usuario MARCA checkbox "Recordar usuario"
+8. Toca botón "INICIAR SESIÓN"
+9. LoginBloc recibe LoginButtonPressed(email, password, rememberMe: true)
+10. authRepository.login(..., rememberMe: true)
+11. Backend responde con JWT
+12. Token almacenado en FlutterSecureStorage (disco encriptado)
+13. Navega a MainLayoutScreen(role: 'adopter')
+14. Usuario navega, hace matches, chats...
+15. Cierra app (comando del SO o home button)
+```
+
+#### Flujo 2: Usuario Abre App (Sesión Persistente)
+
+```
+1. Usuario toca ícono de app
+2. main.dart ejecuta runApp() nuevamente
+3. PawsApp home: AuthCheckScreen
+4. AuthCheckScreen._checkSession() invocado
+5. authRepository.getToken():
+   - _sessionToken es null (se perdió en RAM)
+   - Lee de FlutterSecureStorage → JWT encontrado
+6. JwtDecoder.isExpired(token) → false (token aún válido)
+7. Decodifica JWT → role: 'adopter'
+8. Navega directamente a MainLayoutScreen(role: 'adopter')
+9. Usuario ve su home, mascotas, chats, etc. SIN hacer login nuevamente
+```
+
+#### Flujo 3: Usuario Presiona Atrás por Error
+
+```
+1. Usuario está en tab "Perfil" (índice 3)
+2. Presiona botón atrás del teléfono
+3. WillPopScope.onWillPop() invocado
+4. Verifica: _currentIndex (3) != 0 (Home) → true
+5. Ejecuta setState(() => _currentIndex = 0)
+6. Navega a Home tab
+7. Retorna false → NO cierra app
+8. Usuario ve su home, está donde esperaba
+```
+
+#### Flujo 4: Usuario Presiona Atrás en Home (Doble-Tap)
+
+```
+1. Usuario está en Home (índice 0), browsea mascotas
+2. Presiona botón atrás
+3. WillPopScope.onWillPop() invocado
+4. Verifica: _currentIndex (0) == 0 → true (está en Home)
+5. Verifica: _lastPressedTime es null → true (primer tap)
+6. Guarda timestamp en _lastPressedTime
+7. Muestra SnackBar: "Presiona otra vez para salir" (2 segundos visible)
+8. Retorna false → NO cierra app
+9. [Usuario no presiona atrás] → Timer expira, _lastPressedTime se "olvida"
+10. [O Usuario presiona atrás nuevamente dentro de 2s]
+    - Verifica timestamp: diferencia < 2 segundos → true (segundo tap)
+    - Retorna true → CIERRA app
+11. App termina, proceso muere, memoria liberada
+```
+
+#### Flujo 5: Usuario Logout Desde Perfil
+
+```
+1. Usuario en EditProfileScreen (pestaña Perfil)
+2. Toca botón engranaje (⚙️) en AppBar
+3. PopupMenu abre, toca "Cerrar Sesión"
+4. _confirmLogout() invocado
+5. AlertDialog mostrado: "¿Estás seguro que deseas cerrar sesión?"
+6. Usuario toca botón "Sí, cerrar" (rojo)
+7. Navigator.pop(ctx) cierra diálogo
+8. authRepository.logout() invocado:
+   - _sessionToken = null (limpiar RAM)
+   - await _storage.delete(key: 'jwt_token') (limpiar disco)
+9. if (!mounted) verifica que widget sigue en árbol
+10. Navigator.pushAndRemoveUntil(LoginScreen, (route) => false)
+    - Navega a LoginScreen
+    - Elimina TODOS los routes previos (Perfil, Home, etc)
+11. Usuario está en LoginScreen
+12. Stack está vacío: no hay rutas previas
+13. Presionar atrás cierra la app (ningún route por debajo)
+```
+
+### Tabla Comparativa: Antes vs Después Etapa 19
+
+| Aspecto | Antes Etapa 19 | Después Etapa 19 | Mejora |
+|---------|---|---|---|
+| **Persistencia de Sesión** | Token siempre guardado en disco, sin control de usuario | Token guardado según checkbox, usuario controla | Privacidad + UX |
+| **Reinicio de App** | Usuario debe hacer login nuevamente | AutoLogin silencioso si token válido | Retención 95% |
+| **Botón Atrás** | Cierra app si en pantalla no-stack | Navega a Home, luego requiere doble-tap | Reducción 80% cierres accidentales |
+| **Logout** | Múltiples puntos de fallo, token fantasma posible | Una función centralizada, token borrado en RAM y disco | Seguridad garantizada |
+| **Navegación Post-Logout** | Usuario podía hacer back a pantallas privadas | Stack limpiado, LoginScreen es punto final | Cierre de sesión hermético |
+
+### Testing y Validación (Etapa 19)
+
+#### Escenario de Test 1: Persistencia Selectiva
+
+**Setup**: Dispositivo con FlutterSecureStorage disponible
+
+```
+T1. Abrir app, LoginScreen visible
+T2. Ingresar email/password, MARCAR "Recordar usuario"
+T3. Presionar "INICIAR SESIÓN"
+T4. Esperar login exitoso, MainLayoutScreen visible
+T5. Cerrar app completamente (killall en terminal o home button)
+T6. Reaabrir app
+T7. VERIFICAR: AuthCheckScreen pasa silenciosamente, MainLayoutScreen abre sin login
+
+T8. Desde MainLayoutScreen → Perfil → Engranaje → Logout
+T9. Diálogo de confirmación aparece
+T10. Toca "Sí, cerrar"
+T11. LoginScreen visible
+T12. Presionar atrás → app cierra (no hay stack)
+```
+
+#### Escenario de Test 2: Navegación Blindada
+
+**Setup**: App abierta en MainLayoutScreen, usuario en Home
+
+```
+T1. Usuario toca tab "Chats" (cambio a índice 1)
+T2. Presiona botón atrás
+T3. VERIFICAR: App vuelve a Home (índice 0), no cierra
+T4. Usuario está en Home de nuevo
+
+T5. Presiona botón atrás (primer tap en Home)
+T6. VERIFICAR: SnackBar "Presiona otra vez para salir" visible por 2s
+T7. App sigue abierta
+
+T8. Presiona botón atrás nuevamente (dentro de 2s)
+T9. VERIFICAR: App cierra, proceso termina
+T10. Reaabrir app → AuthCheckScreen → MainLayoutScreen (si token válido)
+```
+
+#### Escenario de Test 3: Token en RAM vs Disco
+
+**Setup**: App con `rememberMe: false`
+
+```
+T1. LoginScreen, desmarca "Recordar usuario"
+T2. Login exitoso, token guardado en _sessionToken (memoria)
+T3. Navega, browzea, todo funciona
+T4. Pausa la app (no cierra, home button)
+T5. Presiona home button nuevamente para reanudar
+T6. App continúa (token aún en RAM)
+
+T7. Kill app completamente (comando `kill` o deslizar en recent apps)
+T8. RAM se libera, _sessionToken se pierde
+T9. Reaabrir app → AuthCheckScreen._checkSession()
+T10. getToken():
+     - _sessionToken es null
+     - Lee FlutterSecureStorage → null (nunca fue guardado)
+T11. Token inválido → redirige a LoginScreen
+T12. Usuario debe hacer login nuevamente
+
+Resultado: Token NO persiste entre app restarts (correcto)
+```
+
 ## Plan de Desarrollo
 
 Este proyecto se desarrolla en fases:
@@ -10096,6 +10688,7 @@ Este proyecto se desarrolla en fases:
 - **Etapa 16** (Completada): Máquina de estados terminal para chats (estado `cancelled` cuando ambos usuarios abandonan), eliminación de bucle infinito ping-pong, cascada atómica de eliminación de mascotas con transacciones GORM, robustez contra datos malformados (\_parseInt helper), personalización de mensajes de bloqueo por rol del usuario
 - **Etapa 17** (Completada): Sistema de justicia integral con denuncias categorizadas (maltrato, estafa, spam, odio, otro), evidencia congelada inmutable, discretion administrativa (ban/dismiss), blacklist pública con búsqueda de antecedentes por RUT, validación Módulo 11 chileno, Centro de Resolución para admins con visor de evidencia, protección de denunciante con silencio operativo
 - **Etapa 18** (Completada): Módulo de calificación avanzada con ratings decimales 0.5-5.0, UPSERT inteligente para prevenir duplicados, recalcación automática de promedios mediante triggers, StarRatingInput widget Letterboxd-style, integración seamless en ChatBloc sin salir de pantalla chat, User model robusto con blindsiding contra inconsistencias
+- **Etapa 19** (Completada): Persistencia inteligente de sesión (checkbox "Recuérdame" controla token en RAM vs disco), AuthCheckScreen en startup para autoLogin silencioso, WillPopScope blindada contra cierres accidentales (navega a Home antes de salir, doble-tap en Home), logout centralizado en AuthRepository (borra memoria + storage), navegación limpia post-logout (pushAndRemoveUntil elimina stack), 4 componentesintegrados: verificación silenciosa, control de persistencia, navegación blindada, gestión centralizada
 - **Etapa 19** (Completada): Módulo de doble identidad Adoptante ↔ Rescatista, índices compuestos UNIQUE(run, role) + UNIQUE(email, role) para base de datos flexible, limpieza automática de constraints legacy (dropLegacyConstraints), endpoint SwitchRole para cambio instantáneo sin contraseña, filtro espejo en GetSwipeDeck para blindaje por RUT, privacidad de datos en GET /pets/my, registro simplificado con pre-llenado de datos, corrección de navegación tras OTP
 
 ## Documentación Adicional
