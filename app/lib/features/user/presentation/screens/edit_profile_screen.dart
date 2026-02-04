@@ -13,8 +13,9 @@ import '../../../security/presentation/screens/blacklist_search_screen.dart';
 import '../../../reviews/presentation/screens/user_reviews_screen.dart';
 import '../../../auth/presentation/screens/register_screen.dart';
 import '../../../../core/presentation/main_layout_screen.dart';
+import '../../../auth/presentation/screens/login_screen.dart'; // <--- NECESARIO PARA REDIRIGIR AL LOGOUT
 
-// --- Import del Repositorio de Autenticación (Para el Switch) ---
+// --- Import del Repositorio de Autenticación (Para Switch y Logout) ---
 import '../../../auth/data/auth_repository.dart';
 
 class EditProfileScreen extends StatefulWidget {
@@ -32,7 +33,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   final _bioCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
 
-  // --- OPCIONES VÁLIDAS (Constantes para evitar errores de Dropdown) ---
+  // --- OPCIONES VÁLIDAS ---
   static const List<String> _housingTypesOptions = [
     "House",
     "Apartment",
@@ -53,7 +54,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     "Expert",
   ];
 
-  // --- ESTADO NUEVOS CAMPOS (Inicializados con valores seguros) ---
+  // --- ESTADO NUEVOS CAMPOS ---
   String _housingType = _housingTypesOptions[0];
   String _housingOwnership = _ownershipOptions[0];
   bool _hasYard = false;
@@ -90,22 +91,21 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     if (value != null && options.contains(value)) {
       return value;
     }
-    return options[0]; // Retorna el default si el valor no es válido
+    return options[0];
   }
 
   Future<void> _loadProfile() async {
     try {
       final repo = context.read<UserRepository>();
-      final data = await repo.getProfile(); // Devuelve Map<String, dynamic>
+      final data = await repo.getProfile();
       final user = User.fromJson(data);
 
       if (mounted) {
         setState(() {
-          // Datos Identificación para Switch Role
+          // Datos Identificación
           _userId = user.id;
           _currentRole = user.role;
           _currentEmail = user.email;
-          // Obtenemos el RUN directamente del mapa crudo porque User.fromJson podría no tenerlo mapeado aún
           _currentRun = data['run'] ?? '';
 
           // Datos Reputación
@@ -118,7 +118,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           _phoneCtrl.text = user.phone;
           _currentPhotoUrl = user.photoUrl;
 
-          // Datos Vivienda (Validamos contra las listas permitidas)
+          // Datos Vivienda
           _housingType = _validateOption(
             user.housingType,
             _housingTypesOptions,
@@ -148,38 +148,67 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
-        // Usamos print para debuggear errores de carga inicial
         print("Error cargando perfil: $e");
       }
     }
   }
 
-  // --- LÓGICA DE CAMBIO DE ROL (NUEVO) ---
+  // --- LÓGICA DE CERRAR SESIÓN (NUEVO) ---
+  void _confirmLogout() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Cerrar Sesión"),
+        content: const Text("¿Estás seguro que deseas cerrar sesión?"),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Cancelar"),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(ctx); // Cierra el diálogo
+
+              // 1. Ejecuta Logout del Repo (Borra el token del almacenamiento)
+              await context.read<AuthRepository>().logout();
+
+              if (!mounted) return;
+
+              // 2. Navega al Login y elimina todo el historial de pantallas previas
+              Navigator.pushAndRemoveUntil(
+                context,
+                MaterialPageRoute(builder: (_) => const LoginScreen()),
+                (route) => false,
+              );
+            },
+            child: const Text(
+              "Sí, cerrar",
+              style: TextStyle(color: Colors.red),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // --- LÓGICA DE CAMBIO DE ROL ---
   Future<void> _handleSwitchRole() async {
     setState(() => _isLoading = true);
     try {
-      // Usamos el AuthRepository inyectado en main.dart
       final authRepo = context.read<AuthRepository>();
-
-      // Intentamos cambiar de rol
       final newUserMap = await authRepo.switchRole();
 
       if (newUserMap != null) {
-        // ¡ÉXITO! La cuenta existía y el token se actualizó.
         final newRole = newUserMap['role'];
         if (!mounted) return;
 
-        // Reiniciamos la App en el MainLayout con el nuevo rol para refrescar tabs y permisos
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => MainLayoutScreen(role: newRole)),
           (route) => false,
         );
       } else {
-        // 404: La cuenta NO existe.
         if (!mounted) return;
         setState(() => _isLoading = false);
-
-        // Preguntamos si quiere crearla facilitándole el registro
         _showCreateAccountDialog();
       }
     } catch (e) {
@@ -214,7 +243,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           ElevatedButton(
             onPressed: () {
               Navigator.pop(ctx);
-              // Navegar al Registro con datos pre-cargados
               Navigator.push(
                 context,
                 MaterialPageRoute(
@@ -296,7 +324,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Configuración visual del botón según el rol al que iríamos
     final targetRoleLabel = _currentRole == 'adopter'
         ? 'Modo Rescatista'
         : 'Modo Adoptante';
@@ -308,18 +335,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       appBar: AppBar(
         title: const Text("Mi Perfil"),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.security, color: Colors.blueGrey),
-            tooltip: "Consultar Blacklist",
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const BlacklistSearchScreen(),
-                ),
-              );
-            },
-          ),
+          // 1. Botón Editar (Se mantiene igual)
           IconButton(
             icon: Icon(_isEditing ? Icons.check : Icons.edit),
             onPressed: _isLoading
@@ -327,6 +343,45 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 : (_isEditing
                       ? _save
                       : () => setState(() => _isEditing = true)),
+          ),
+
+          // 2. Botón de Opciones (Engranaje) - NUEVO
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.settings, color: Colors.blueGrey),
+            onSelected: (value) {
+              if (value == 'logout') {
+                _confirmLogout();
+              } else if (value == 'blacklist') {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const BlacklistSearchScreen(),
+                  ),
+                );
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'blacklist',
+                child: Row(
+                  children: [
+                    Icon(Icons.security, size: 20, color: Colors.blueGrey),
+                    SizedBox(width: 10),
+                    Text("Consultar Blacklist"),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'logout',
+                child: Row(
+                  children: [
+                    Icon(Icons.exit_to_app, size: 20, color: Colors.red),
+                    SizedBox(width: 10),
+                    Text("Cerrar Sesión", style: TextStyle(color: Colors.red)),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -339,7 +394,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // --- FOTO DE PERFIL ---
+                    // --- FOTO ---
                     Center(
                       child: GestureDetector(
                         onTap: _pickImage,
@@ -369,7 +424,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     ),
                     const SizedBox(height: 16),
 
-                    // --- BOTÓN DE CAMBIO DE ROL (NUEVO) ---
+                    // --- BOTÓN DE CAMBIO DE ROL ---
                     Center(
                       child: ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(
@@ -390,7 +445,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     ),
                     const SizedBox(height: 16),
 
-                    // --- BOTÓN DE REPUTACIÓN (Autoevaluación) ---
+                    // --- BOTÓN DE REPUTACIÓN ---
                     Center(
                       child: InkWell(
                         onTap: () {
@@ -488,7 +543,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           child: _buildDropdown(
                             "Tipo de Vivienda",
                             _housingType,
-                            _housingTypesOptions, // Usamos la lista constante
+                            _housingTypesOptions,
                             (v) => setState(() => _housingType = v!),
                           ),
                         ),
@@ -497,7 +552,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           child: _buildDropdown(
                             "Tenencia",
                             _housingOwnership,
-                            _ownershipOptions, // Usamos la lista constante
+                            _ownershipOptions,
                             (v) => setState(() => _housingOwnership = v!),
                           ),
                         ),
@@ -531,14 +586,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     _buildDropdown(
                       "Composición Familiar",
                       _familyComposition,
-                      _familyOptions, // Usamos la lista constante
+                      _familyOptions,
                       (v) => setState(() => _familyComposition = v!),
                     ),
                     const SizedBox(height: 16),
                     _buildDropdown(
                       "Otras Mascotas",
                       _otherPets,
-                      _petsOptions, // Usamos la lista constante
+                      _petsOptions,
                       (v) => setState(() => _otherPets = v!),
                     ),
                     const SizedBox(height: 16),
@@ -548,7 +603,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           child: _buildDropdown(
                             "Tiempo Libre",
                             _timeAvailability,
-                            _timeOptions, // Usamos la lista constante
+                            _timeOptions,
                             (v) => setState(() => _timeAvailability = v!),
                           ),
                         ),
@@ -557,7 +612,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           child: _buildDropdown(
                             "Experiencia",
                             _experience,
-                            _expOptions, // Usamos la lista constante
+                            _expOptions,
                             (v) => setState(() => _experience = v!),
                           ),
                         ),

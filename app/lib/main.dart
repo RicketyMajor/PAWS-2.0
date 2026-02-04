@@ -2,15 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:jwt_decoder/jwt_decoder.dart'; // Importante para leer el rol
 
 // Imports de tus Repositorios
 import 'features/auth/data/auth_repository.dart';
 import 'features/pets/data/pets_repository.dart';
 import 'features/chat/data/chat_repository.dart';
 import 'features/user/data/user_repository.dart';
-import 'features/pets/data/matches_repository.dart'; // <--- NUEVO IMPORT
+import 'features/pets/data/matches_repository.dart';
 
+// Imports de Pantallas
 import 'features/auth/presentation/screens/login_screen.dart';
+import 'core/presentation/main_layout_screen.dart'; // Layout Principal
+import 'features/admin/presentation/screens/admin_dashboard_screen.dart'; // Dashboard Admin
 
 import 'features/admin/data/admin_repository.dart';
 import 'features/security/data/security_repository.dart';
@@ -71,14 +75,10 @@ class _PawsAppState extends State<PawsApp> {
         RepositoryProvider(create: (context) => PetsRepository()),
         RepositoryProvider(create: (context) => ChatRepository()),
         RepositoryProvider(create: (context) => UserRepository()),
-        RepositoryProvider(
-          create: (context) => MatchesRepository(),
-        ), // <--- INYECCIÓN AGREGADA
+        RepositoryProvider(create: (context) => MatchesRepository()),
         RepositoryProvider(create: (context) => AdminRepository()),
         RepositoryProvider(create: (context) => SecurityRepository()),
-        RepositoryProvider(
-          create: (context) => ReviewsRepository(),
-        ), // <--- NUEVO REPO GLOBAL
+        RepositoryProvider(create: (context) => ReviewsRepository()),
       ],
       child: MaterialApp(
         title: 'PAWS',
@@ -98,7 +98,83 @@ class _PawsAppState extends State<PawsApp> {
             ),
           ),
         ),
-        home: const LoginScreen(),
+        // CORRECCIÓN: En lugar de LoginScreen directo, usamos el verificador
+        home: const AuthCheckScreen(),
+      ),
+    );
+  }
+}
+
+// --- PANTALLA DE CARGA / VERIFICACIÓN DE SESIÓN ---
+class AuthCheckScreen extends StatefulWidget {
+  const AuthCheckScreen({super.key});
+
+  @override
+  State<AuthCheckScreen> createState() => _AuthCheckScreenState();
+}
+
+class _AuthCheckScreenState extends State<AuthCheckScreen> {
+  @override
+  void initState() {
+    super.initState();
+    _checkSession();
+  }
+
+  Future<void> _checkSession() async {
+    // Pequeño delay para que se vea el logo (opcional, mejora UX)
+    await Future.delayed(const Duration(seconds: 1));
+
+    if (!mounted) return;
+
+    try {
+      final authRepo = context.read<AuthRepository>();
+      final token = await authRepo.getToken();
+
+      if (token != null && !JwtDecoder.isExpired(token)) {
+        // Token válido -> Redirigir según Rol
+        Map<String, dynamic> decodedToken = JwtDecoder.decode(token);
+        String role = decodedToken['role'] ?? 'adopter';
+
+        if (!mounted) return;
+
+        if (role == 'admin') {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const AdminDashboardScreen()),
+          );
+        } else {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => MainLayoutScreen(role: role)),
+          );
+        }
+      } else {
+        // No hay token o expiró -> Login
+        if (!mounted) return;
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const LoginScreen()),
+        );
+      }
+    } catch (e) {
+      // Error leyendo token -> Login
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const LoginScreen()),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: const [
+            Icon(Icons.pets, size: 100, color: Color(0xFFE91E63)),
+            SizedBox(height: 24),
+            CircularProgressIndicator(),
+          ],
+        ),
       ),
     );
   }

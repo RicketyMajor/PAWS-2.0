@@ -21,16 +21,15 @@ class MainLayoutScreen extends StatefulWidget {
 
 class _MainLayoutScreenState extends State<MainLayoutScreen> {
   int _currentIndex = 0;
-
-  // Simulación de notificaciones (En una etapa futura esto vendría del Backend)
   int _unreadChats = 0;
   int _pendingRequests = 0;
+  DateTime? _lastPressedTime; // Variable para controlar el doble tap
 
   @override
   Widget build(BuildContext context) {
     final isAdopter = widget.role == 'adopter';
 
-    // Definición de Pantallas (Igual que antes)
+    // Definición de Pantallas
     final screens = isAdopter
         ? [
             const MatchScreen(),
@@ -64,10 +63,7 @@ class _MainLayoutScreenState extends State<MainLayoutScreen> {
               label: 'Descubrir',
             ),
             NavigationDestination(
-              icon: _buildBadgedIcon(
-                Icons.favorite,
-                _unreadChats,
-              ), // Badge en Matches
+              icon: _buildBadgedIcon(Icons.favorite, _unreadChats),
               label: 'Matches',
             ),
             const NavigationDestination(
@@ -81,17 +77,11 @@ class _MainLayoutScreenState extends State<MainLayoutScreen> {
               label: 'Mascotas',
             ),
             NavigationDestination(
-              icon: _buildBadgedIcon(
-                Icons.chat,
-                _unreadChats,
-              ), // Badge en Chats
+              icon: _buildBadgedIcon(Icons.chat, _unreadChats),
               label: 'Chats',
             ),
             NavigationDestination(
-              icon: _buildBadgedIcon(
-                Icons.notifications,
-                _pendingRequests,
-              ), // Badge en Solicitudes
+              icon: _buildBadgedIcon(Icons.notifications, _pendingRequests),
               label: 'Solicitudes',
             ),
             const NavigationDestination(
@@ -100,22 +90,54 @@ class _MainLayoutScreenState extends State<MainLayoutScreen> {
             ),
           ];
 
-    return Scaffold(
-      body: IndexedStack(index: _currentIndex, children: screens),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _currentIndex,
-        onDestinationSelected: (index) {
+    // --- AQUÍ ESTÁ LA MAGIA DEL BOTÓN ATRÁS ---
+    return WillPopScope(
+      onWillPop: () async {
+        // 1. Si no estamos en la pestaña Home (índice 0), volvemos a ella
+        if (_currentIndex != 0) {
           setState(() {
-            _currentIndex = index;
-            // Truco UX: Si entra a la pestaña, borramos la notificación visual
-            if (isAdopter && index == 1) _unreadChats = 0;
-            if (!isAdopter && index == 1) _unreadChats = 0;
-            if (!isAdopter && index == 2) _pendingRequests = 0;
+            _currentIndex = 0;
           });
-        },
-        destinations: items,
-        backgroundColor: Colors.white,
-        indicatorColor: const Color(0xFFE91E63).withOpacity(0.2),
+          return false; // Retornamos false para NO salir de la app
+        }
+
+        // 2. Estamos en Home. Verificamos tiempo para doble tap.
+        final now = DateTime.now();
+        final maxDuration = const Duration(seconds: 2);
+        final isWarning =
+            _lastPressedTime == null ||
+            now.difference(_lastPressedTime!) > maxDuration;
+
+        if (isWarning) {
+          _lastPressedTime = now;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Presiona otra vez para salir"),
+              duration: Duration(seconds: 2),
+            ),
+          );
+          return false; // No salimos aún
+        }
+
+        return true; // Salimos de la app
+      },
+      child: Scaffold(
+        body: IndexedStack(index: _currentIndex, children: screens),
+        bottomNavigationBar: NavigationBar(
+          selectedIndex: _currentIndex,
+          onDestinationSelected: (index) {
+            setState(() {
+              _currentIndex = index;
+              // Limpieza de notificaciones visuales al entrar
+              if (isAdopter && index == 1) _unreadChats = 0;
+              if (!isAdopter && index == 1) _unreadChats = 0;
+              if (!isAdopter && index == 2) _pendingRequests = 0;
+            });
+          },
+          destinations: items,
+          backgroundColor: Colors.white,
+          indicatorColor: const Color(0xFFE91E63).withOpacity(0.2),
+        ),
       ),
     );
   }

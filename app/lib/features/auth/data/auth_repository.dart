@@ -13,6 +13,9 @@ class AuthRepository {
 
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
 
+  // Variable en memoria para sesión temporal (si "Recuérdame" es false)
+  String? _sessionToken;
+
   AuthRepository() {
     _dio.interceptors.add(
       LogInterceptor(
@@ -37,8 +40,18 @@ class AuthRepository {
       );
 
       final token = response.data['token'];
-      await _storage.write(key: 'jwt_token', value: token);
-      print('Login exitoso.');
+
+      // Lógica de Persistencia
+      if (rememberMe) {
+        await _storage.write(key: 'jwt_token', value: token);
+      } else {
+        // Solo en memoria (se borra al cerrar la app)
+        _sessionToken = token;
+        // Aseguramos que no quede basura de una sesión anterior persistente
+        await _storage.delete(key: 'jwt_token');
+      }
+
+      print('Login exitoso. Persistencia: $rememberMe');
     } on DioException catch (e) {
       if (e.response != null) {
         throw Exception(e.response?.data['error'] ?? 'Error desconocido');
@@ -48,12 +61,12 @@ class AuthRepository {
     }
   }
 
-  // --- SWITCH ROLE (NUEVO) ---
-  // Retorna el objeto User (Map) si el cambio fue exitoso.
-  // Retorna NULL si la cuenta no existe (404).
+  // --- SWITCH ROLE ---
   Future<Map<String, dynamic>?> switchRole() async {
     try {
-      final token = await _storage.read(key: 'jwt_token');
+      final token = await getToken(); // Usamos el getter inteligente
+      if (token == null) throw Exception("No hay sesión activa");
+
       final response = await _dio.post(
         '${ApiConstants.baseUrl}${ApiConstants.switchRole}',
         options: Options(headers: {'Authorization': 'Bearer $token'}),
@@ -63,21 +76,44 @@ class AuthRepository {
         final newToken = response.data['token'];
         final newUser = response.data['user'];
 
-        // Guardamos el nuevo token inmediatamente
-        await _storage.write(key: 'jwt_token', value: newToken);
+        // Si tenemos token en storage, actualizamos storage.
+        // Si tenemos token en memoria, actualizamos memoria.
+        final storedToken = await _storage.read(key: 'jwt_token');
+        if (storedToken != null) {
+          await _storage.write(key: 'jwt_token', value: newToken);
+        } else {
+          _sessionToken = newToken;
+        }
 
         return newUser;
       }
       return null;
     } on DioException catch (e) {
       if (e.response?.statusCode == 404) {
-        return null; // Cuenta no existe
+        return null;
       }
       throw Exception(
         e.response?.data['error'] ?? 'Error cambiando de identidad',
       );
     }
   }
+
+  // Modificado para soportar sesión temporal
+  Future<String?> getToken() async {
+    // 1. Intentar memoria (prioridad sesión actual)
+    if (_sessionToken != null) return _sessionToken;
+    // 2. Intentar disco (persistencia)
+    return await _storage.read(key: 'jwt_token');
+  }
+
+  // Nuevo método para Logout
+  Future<void> logout() async {
+    _sessionToken = null;
+    await _storage.delete(key: 'jwt_token');
+  }
+
+  // ... (Resto de métodos: register, verifyOtp, forgotPassword, etc. se mantienen IGUAL) ...
+  // COPIA AQUÍ EL RESTO DE TUS MÉTODOS EXISTENTES (register, verifyOtp, etc) SIN CAMBIOS
 
   Future<void> register({
     required String email,
@@ -109,8 +145,6 @@ class AuthRepository {
     }
   }
 
-  Future<String?> getToken() async => await _storage.read(key: 'jwt_token');
-
   Future<String?> verifyOtp(String email, String code) async {
     try {
       final response = await _dio.post(
@@ -120,6 +154,7 @@ class AuthRepository {
       if (response.statusCode == 200 || response.statusCode == 201) {
         final token = response.data['token'];
         if (token != null) {
+          // Por defecto en registro asumimos persistencia true
           await _storage.write(key: 'jwt_token', value: token);
           return token.toString();
         }
@@ -130,7 +165,6 @@ class AuthRepository {
     }
   }
 
-  // --- Recuperación de Contraseña ---
   Future<void> forgotPassword(String email) async {
     try {
       await _dio.post(

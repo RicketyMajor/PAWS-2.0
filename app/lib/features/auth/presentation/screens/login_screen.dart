@@ -4,12 +4,12 @@ import 'package:jwt_decoder/jwt_decoder.dart';
 import '../../data/auth_repository.dart';
 import '../bloc/login_bloc.dart';
 import 'register_screen.dart';
-import 'password_recovery_screen.dart'; // <--- IMPORTAR NUEVA PANTALLA
+import 'password_recovery_screen.dart';
 import '../../../../core/presentation/main_layout_screen.dart';
 import '../../../admin/presentation/screens/admin_dashboard_screen.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import '../../../../features/user/data/user_repository.dart';
-import '../../../../features/security/presentation/screens/blacklist_search_screen.dart'; // <--- IMPORTAR
+import '../../../../features/security/presentation/screens/blacklist_search_screen.dart';
 
 class LoginScreen extends StatelessWidget {
   const LoginScreen({super.key});
@@ -35,7 +35,7 @@ class _LoginFormState extends State<_LoginForm> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isPasswordVisible = false;
-  bool _rememberMe = false; // <--- ESTADO DEL CHECKBOX
+  bool _rememberMe = false; // Estado del checkbox
 
   @override
   Widget build(BuildContext context) {
@@ -148,8 +148,8 @@ class _LoginFormState extends State<_LoginForm> {
                       ),
                     ),
 
-                    // --- CORRECCIÓN UI: Checkbox solo, sin el botón al lado ---
                     const SizedBox(height: 8),
+                    // --- CHECKBOX RECÚERDAME ---
                     Row(
                       children: [
                         Checkbox(
@@ -162,7 +162,7 @@ class _LoginFormState extends State<_LoginForm> {
                     ),
                     const SizedBox(height: 24),
 
-                    // Botón Login
+                    // --- BOTÓN INICIAR SESIÓN (MODIFICADO) ---
                     BlocBuilder<LoginBloc, LoginState>(
                       builder: (context, state) {
                         if (state is LoginLoading) {
@@ -172,10 +172,12 @@ class _LoginFormState extends State<_LoginForm> {
                         }
                         return FilledButton(
                           onPressed: () {
+                            // AQUÍ ESTÁ EL CAMBIO: Enviamos rememberMe al Bloc
                             context.read<LoginBloc>().add(
                               LoginButtonPressed(
                                 email: _emailController.text,
                                 password: _passwordController.text,
+                                rememberMe: _rememberMe,
                               ),
                             );
                           },
@@ -207,7 +209,7 @@ class _LoginFormState extends State<_LoginForm> {
                       child: const Text('¿No tienes cuenta? Regístrate aquí'),
                     ),
 
-                    // --- CORRECCIÓN UI: Botón Recuperar AQUÍ ABAJO ---
+                    // Botón Recuperar
                     const SizedBox(height: 10),
                     TextButton(
                       onPressed: () {
@@ -221,6 +223,7 @@ class _LoginFormState extends State<_LoginForm> {
                       style: TextButton.styleFrom(foregroundColor: Colors.grey),
                       child: const Text("¿Olvidaste tu contraseña?"),
                     ),
+
                     // Botón Seguridad (Blacklist)
                     const SizedBox(height: 20),
                     OutlinedButton.icon(

@@ -2,7 +2,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
 import '../../data/auth_repository.dart';
 
-// --- EVENTOS (Lo que sucede) ---
+// --- EVENTOS ---
 abstract class LoginEvent extends Equatable {
   const LoginEvent();
   @override
@@ -12,14 +12,19 @@ abstract class LoginEvent extends Equatable {
 class LoginButtonPressed extends LoginEvent {
   final String email;
   final String password;
+  final bool rememberMe; // <--- NUEVO CAMPO
 
-  const LoginButtonPressed({required this.email, required this.password});
+  const LoginButtonPressed({
+    required this.email,
+    required this.password,
+    required this.rememberMe,
+  });
 
   @override
-  List<Object> get props => [email, password];
+  List<Object> get props => [email, password, rememberMe];
 }
 
-// --- ESTADOS (Cómo se ve la UI) ---
+// --- ESTADOS ---
 abstract class LoginState extends Equatable {
   const LoginState();
   @override
@@ -45,14 +50,16 @@ class LoginBloc extends Bloc<LoginEvent, LoginState> {
 
   LoginBloc({required this.authRepository}) : super(LoginInitial()) {
     on<LoginButtonPressed>((event, emit) async {
-      emit(LoginLoading()); // 1. Mostramos ruedita de carga
+      emit(LoginLoading());
       try {
-        // 2. Intentamos login
-        await authRepository.login(event.email, event.password);
-        // 3. Si no explota, éxito
+        // Pasamos el rememberMe al repositorio
+        await authRepository.login(
+          event.email,
+          event.password,
+          rememberMe: event.rememberMe,
+        );
         emit(LoginSuccess());
       } catch (e) {
-        // 4. Si falla, mostramos error
         emit(LoginFailure(error: e.toString().replaceAll("Exception: ", "")));
       }
     });
