@@ -1,22 +1,31 @@
 import 'package:dio/dio.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../../core/constants/api_constants.dart';
-import '../domain/match_model.dart'; // Importamos el nuevo modelo
+import '../domain/match_model.dart';
+import '../../auth/data/auth_repository.dart'; // Importamos al "Dueño del Token"
 
 class MatchesRepository {
   final Dio _dio = Dio();
-  final FlutterSecureStorage _storage = const FlutterSecureStorage();
+  final AuthRepository authRepository; // Dependencia inyectada
+
+  // Constructor que exige el AuthRepository
+  MatchesRepository({required this.authRepository});
+
+  // Helper privado para obtener cabeceras con el token válido (sea de memoria o disco)
+  Future<Options> _getAuthOptions() async {
+    final token = await authRepository.getToken();
+    if (token == null) throw Exception('Sesión expirada o inválida');
+    return Options(headers: {'Authorization': 'Bearer $token'});
+  }
 
   // Obtener solicitudes pendientes (Rescatista)
   Future<List<Match>> getPendingRequests() async {
     try {
-      final token = await _storage.read(key: 'jwt_token');
+      final options = await _getAuthOptions();
       final response = await _dio.get(
         '${ApiConstants.baseUrl}/matches/requests',
-        options: Options(headers: {'Authorization': 'Bearer $token'}),
+        options: options,
       );
 
-      // Convertimos la lista dinámica a List<Match>
       return (response.data as List)
           .map((json) => Match.fromJson(json))
           .toList();
@@ -27,11 +36,11 @@ class MatchesRepository {
 
   Future<void> respondMatch(int matchId, bool accept) async {
     try {
-      final token = await _storage.read(key: 'jwt_token');
+      final options = await _getAuthOptions();
       await _dio.post(
         '${ApiConstants.baseUrl}/matches/respond',
         data: {'match_id': matchId, 'accept': accept},
-        options: Options(headers: {'Authorization': 'Bearer $token'}),
+        options: options,
       );
     } catch (e) {
       throw Exception('Error respondiendo solicitud: $e');
@@ -40,24 +49,24 @@ class MatchesRepository {
 
   Future<void> unmatch(int matchId) async {
     try {
-      final token = await _storage.read(key: 'jwt_token');
+      final options = await _getAuthOptions();
       await _dio.post(
         '${ApiConstants.baseUrl}/matches/unmatch',
         data: {'match_id': matchId},
-        options: Options(headers: {'Authorization': 'Bearer $token'}),
+        options: options,
       );
     } catch (e) {
       throw Exception('Error saliendo del chat: $e');
     }
   }
 
-  // Obtener chats activos del Rescatista (Ahora retorna List<Match>)
+  // Obtener chats activos del Rescatista
   Future<List<Match>> getRescuerChats() async {
     try {
-      final token = await _storage.read(key: 'jwt_token');
+      final options = await _getAuthOptions();
       final response = await _dio.get(
         '${ApiConstants.baseUrl}/matches/rescuer',
-        options: Options(headers: {'Authorization': 'Bearer $token'}),
+        options: options,
       );
       return (response.data as List)
           .map((json) => Match.fromJson(json))
@@ -67,16 +76,13 @@ class MatchesRepository {
     }
   }
 
-  // Obtener matches del Adoptante (Ahora retorna List<Match>)
+  // Obtener matches del Adoptante
   Future<List<Match>> getMyPendingMatches() async {
     try {
-      final token = await _storage.read(key: 'jwt_token');
-      // NOTA: Asegúrate que el endpoint en backend para adoptantes (ej: /matches/adopter)
-      // devuelva la estructura completa de Match. Si usas uno que solo devuelve Pets, habrá que ajustarlo.
-      // Asumiendo que usas /matches/adopter o similar que devuelve Matches:
+      final options = await _getAuthOptions();
       final response = await _dio.get(
         '${ApiConstants.baseUrl}/matches/adopter',
-        options: Options(headers: {'Authorization': 'Bearer $token'}),
+        options: options,
       );
       return (response.data as List)
           .map((json) => Match.fromJson(json))

@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart'; // Para kIsWeb
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -21,7 +21,6 @@ import 'features/admin/data/admin_repository.dart';
 import 'features/security/data/security_repository.dart';
 import 'features/reviews/data/reviews_repository.dart';
 
-// Handler simple para background (solo móvil)
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   print("Notificación en Segundo Plano: ${message.messageId}");
 }
@@ -29,23 +28,15 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // --- INICIALIZACIÓN ROBUSTA DE FIREBASE ---
   try {
-    // Si tienes firebase_options.dart generado, úsalo aquí.
-    // Si no, este bloque try-catch evitará que la app web explote al inicio.
     await Firebase.initializeApp();
-
-    // Solo registramos el handler si no estamos en web para evitar errores de Service Worker faltantes
     if (!kIsWeb) {
       FirebaseMessaging.onBackgroundMessage(
         _firebaseMessagingBackgroundHandler,
       );
     }
   } catch (e) {
-    print(
-      "Advertencia: Firebase no se pudo inicializar (Normal en Web dev sin config): $e",
-    );
-    // La app continuará ejecutándose sin Firebase
+    print("⚠️ Advertencia: Firebase no se pudo inicializar: $e");
   }
 
   runApp(const PawsApp());
@@ -67,12 +58,8 @@ class _PawsAppState extends State<PawsApp> {
 
   Future<void> _setupFCM() async {
     try {
-      // Verificamos si Firebase está activo antes de llamar a Messaging
       if (Firebase.apps.isEmpty) return;
-
       FirebaseMessaging messaging = FirebaseMessaging.instance;
-
-      // Pedimos permisos con gracia
       NotificationSettings settings = await messaging.requestPermission(
         alert: true,
         badge: true,
@@ -80,17 +67,11 @@ class _PawsAppState extends State<PawsApp> {
       );
 
       if (settings.authorizationStatus == AuthorizationStatus.authorized) {
-        // En Web, getToken requiere un VAPID key público, si no lo tienes, fallará.
-        // Lo envolvemos en try-catch para que no moleste en consola.
         try {
           String? token = await messaging.getToken();
-          if (token != null) {
-            print("FCM Token: $token");
-          }
+          if (token != null) print("FCM Token: $token");
         } catch (e) {
-          print(
-            "No se pudo obtener FCM Token (Probablemente falta configuración Web): $e",
-          );
+          print("Error obteniendo FCM Token (Normal en web dev): $e");
         }
       }
     } catch (e) {
@@ -100,13 +81,28 @@ class _PawsAppState extends State<PawsApp> {
 
   @override
   Widget build(BuildContext context) {
+    // --- AQUÍ ESTÁ LA MAGIA DE LA INYECCIÓN ---
     return MultiRepositoryProvider(
       providers: [
+        // 1. Creamos el AuthRepository (El Padre de los Tokens)
         RepositoryProvider(create: (context) => AuthRepository()),
-        RepositoryProvider(create: (context) => PetsRepository()),
+
+        // 2. Inyectamos AuthRepository en los demás
+        RepositoryProvider(
+          create: (context) =>
+              PetsRepository(authRepository: context.read<AuthRepository>()),
+        ),
+        RepositoryProvider(
+          create: (context) =>
+              UserRepository(authRepository: context.read<AuthRepository>()),
+        ),
+        RepositoryProvider(
+          create: (context) =>
+              MatchesRepository(authRepository: context.read<AuthRepository>()),
+        ),
+
+        // Otros repos (Si alguno necesita Auth, haz lo mismo)
         RepositoryProvider(create: (context) => ChatRepository()),
-        RepositoryProvider(create: (context) => UserRepository()),
-        RepositoryProvider(create: (context) => MatchesRepository()),
         RepositoryProvider(create: (context) => AdminRepository()),
         RepositoryProvider(create: (context) => SecurityRepository()),
         RepositoryProvider(create: (context) => ReviewsRepository()),
@@ -135,7 +131,6 @@ class _PawsAppState extends State<PawsApp> {
   }
 }
 
-// --- PANTALLA DE CARGA / VERIFICACIÓN DE SESIÓN ---
 class AuthCheckScreen extends StatefulWidget {
   const AuthCheckScreen({super.key});
 
@@ -152,7 +147,6 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
 
   Future<void> _checkSession() async {
     await Future.delayed(const Duration(seconds: 1));
-
     if (!mounted) return;
 
     try {

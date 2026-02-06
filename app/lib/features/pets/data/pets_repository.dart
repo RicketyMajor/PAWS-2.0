@@ -1,8 +1,8 @@
 import 'dart:io';
 import 'package:dio/dio.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../../core/constants/api_constants.dart';
 import '../domain/pet_model.dart';
+import '../../auth/data/auth_repository.dart'; // Importar AuthRepository
 
 class PetsRepository {
   final Dio _dio = Dio(
@@ -11,15 +11,19 @@ class PetsRepository {
       receiveTimeout: const Duration(seconds: 10),
     ),
   );
-  final FlutterSecureStorage _storage = const FlutterSecureStorage();
+
+  final AuthRepository authRepository; // Dependencia
+
+  PetsRepository({required this.authRepository});
 
   Future<Options> _getAuthOptions() async {
-    final token = await _storage.read(key: 'jwt_token');
+    final token = await authRepository.getToken();
+    if (token == null) throw Exception('Sesión inválida');
     return Options(headers: {'Authorization': 'Bearer $token'});
   }
 
   // ===============================================================
-  //  LECTURA (ADOPTANTE)
+  //  LECTURA
   // ===============================================================
 
   Future<List<Pet>> getSwipeDeck({double? lat, double? lon}) async {
@@ -45,8 +49,7 @@ class PetsRepository {
     }
   }
 
-  // --- NUEVO: OBTENER SOLO MIS MASCOTAS (RESCATISTA) ---
-  // Endpoint: /pets/my (Protegido)
+  // OBTENER SOLO MIS MASCOTAS (RESCATISTA)
   Future<List<Pet>> getMyPets() async {
     try {
       final options = await _getAuthOptions();
@@ -66,22 +69,7 @@ class PetsRepository {
     }
   }
 
-  // 2. Obtener TODAS las mascotas (Público - Legacy o para Feed General)
-  Future<List<Pet>> getPets() async {
-    try {
-      final response = await _dio.get('${ApiConstants.baseUrl}/pets');
-      if (response.statusCode == 200) {
-        List<dynamic> data = response.data;
-        return data.map((json) => Pet.fromJson(json)).toList();
-      }
-      return [];
-    } on DioException catch (e) {
-      _handleError(e);
-      return [];
-    }
-  }
-
-  // --- CREATE PET (Multipart) ---
+  // CREATE PET
   Future<void> createPet({
     required String name,
     required String type,
@@ -141,10 +129,7 @@ class PetsRepository {
     }
   }
 
-  // ===============================================================
-  //  INTERACCIÓN
-  // ===============================================================
-
+  // INTERACCIÓN (Swipe)
   Future<void> swipePet({required int petId, required bool isLike}) async {
     try {
       final options = await _getAuthOptions();

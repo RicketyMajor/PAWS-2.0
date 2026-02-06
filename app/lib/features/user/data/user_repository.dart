@@ -1,14 +1,18 @@
 import 'dart:io';
 import 'package:dio/dio.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../../core/constants/api_constants.dart';
+import '../../auth/data/auth_repository.dart'; // Importar AuthRepository
 
 class UserRepository {
   final Dio _dio = Dio();
-  final FlutterSecureStorage _storage = const FlutterSecureStorage();
+  final AuthRepository authRepository; // Dependencia
+
+  UserRepository({required this.authRepository});
 
   Future<Options> _getAuthOptions() async {
-    final token = await _storage.read(key: 'jwt_token');
+    // Pedimos el token al repositorio central (maneja RAM y Disco por nosotros)
+    final token = await authRepository.getToken();
+    if (token == null) throw Exception('No hay sesión activa');
     return Options(headers: {'Authorization': 'Bearer $token'});
   }
 
@@ -26,14 +30,12 @@ class UserRepository {
     }
   }
 
-  // 2. ACTUALIZAR PERFIL (Expandido)
+  // 2. ACTUALIZAR PERFIL
   Future<void> updateProfile({
     required String name,
     required String bio,
     required String phone,
     required String photoUrl,
-
-    // --- NUEVOS CAMPOS (Vivienda & Estilo de Vida) ---
     String housingType = 'House',
     String housingOwnership = 'Owned',
     bool hasYard = false,
@@ -53,8 +55,6 @@ class UserRepository {
           "bio": bio,
           "phone": phone,
           "photo_url": photoUrl,
-
-          // Mapeo exacto a los JSON tags de Go
           "housing_type": housingType,
           "housing_ownership": housingOwnership,
           "has_yard": hasYard,
@@ -95,11 +95,14 @@ class UserRepository {
   // 4. GUARDAR TOKEN FCM
   Future<void> saveDeviceToken(String fcmToken) async {
     try {
-      final options = await _getAuthOptions();
+      // Usamos try-catch silencioso porque getToken puede ser null si no hay sesión
+      final token = await authRepository.getToken();
+      if (token == null) return;
+
       await _dio.post(
         '${ApiConstants.baseUrl}/notifications/token',
         data: {'token': fcmToken},
-        options: options,
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
       );
     } catch (e) {
       print("Error guardando token FCM: $e");

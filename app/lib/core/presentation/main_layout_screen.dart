@@ -7,8 +7,7 @@ import '../../features/user/presentation/screens/edit_profile_screen.dart';
 import '../../features/pets/presentation/screens/rescuer_home_screen.dart';
 import '../../features/pets/presentation/screens/match_requests_screen.dart';
 import '../../features/chat/presentation/screens/rescuer_chats_screen.dart';
-import '../../features/user/data/user_repository.dart';
-import '../../features/pets/data/matches_repository.dart';
+// Ya no necesitamos importar los repositorios aquí porque los provee main.dart
 
 class MainLayoutScreen extends StatefulWidget {
   final String role;
@@ -30,29 +29,19 @@ class _MainLayoutScreenState extends State<MainLayoutScreen> {
     final isAdopter = widget.role == 'adopter';
 
     // Definición de Pantallas
+    // CORRECCIÓN: Eliminamos los RepositoryProvider locales.
+    // Las pantallas ahora usarán los repositorios globales inyectados en main.dart.
     final screens = isAdopter
         ? [
             const MatchScreen(),
             const AdopterMatchesScreen(),
-            RepositoryProvider(
-              create: (_) => UserRepository(),
-              child: const EditProfileScreen(),
-            ),
+            const EditProfileScreen(), // Ya tiene acceso a UserRepository global
           ]
         : [
             const RescuerHomeScreen(),
-            RepositoryProvider(
-              create: (_) => MatchesRepository(),
-              child: const RescuerChatsScreen(),
-            ),
-            RepositoryProvider(
-              create: (_) => MatchesRepository(),
-              child: const MatchRequestsScreen(),
-            ),
-            RepositoryProvider(
-              create: (_) => UserRepository(),
-              child: const EditProfileScreen(),
-            ),
+            const RescuerChatsScreen(), // Ya tiene acceso a MatchesRepository global
+            const MatchRequestsScreen(), // Ya tiene acceso a MatchesRepository global
+            const EditProfileScreen(), // Ya tiene acceso a UserRepository global
           ];
 
     // Definición de Íconos con BADGES
@@ -90,7 +79,7 @@ class _MainLayoutScreenState extends State<MainLayoutScreen> {
             ),
           ];
 
-    // --- AQUÍ ESTÁ LA MAGIA DEL BOTÓN ATRÁS ---
+    // --- MANEJO DEL BOTÓN ATRÁS ---
     return WillPopScope(
       onWillPop: () async {
         // 1. Si no estamos en la pestaña Home (índice 0), volvemos a ella
