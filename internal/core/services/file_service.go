@@ -9,128 +9,95 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cloudinary/cloudinary-go/v2"
+	"github.com/cloudinary/cloudinary-go/v2/api" // <--- IMPORTANTE: Nuevo import
+	"github.com/cloudinary/cloudinary-go/v2/api/uploader"
 	"github.com/google/uuid"
-	"github.com/minio/minio-go/v7"
-	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
 type FileService struct {
-	minioClient *minio.Client
-	bucketName  string
-	publicURL   string
-	isEnabled   bool
+	cld       *cloudinary.Cloudinary
+	isEnabled bool
 }
 
 func NewFileService() *FileService {
-	// 1. Configuración
-	endpoint := os.Getenv("MINIO_ENDPOINT")
-	accessKeyID := os.Getenv("MINIO_ACCESS_KEY")
-	secretAccessKey := os.Getenv("MINIO_SECRET_KEY")
-	bucketName := os.Getenv("MINIO_BUCKET")
-	useSSL := os.Getenv("MINIO_USE_SSL") == "true"
-	publicURL := os.Getenv("STORAGE_PUBLIC_URL")
+	// 1. Configuración: Solo necesitamos la URL mágica de Cloudinary
+	cldURL := os.Getenv("CLOUDINARY_URL")
 
-	if endpoint == "" || accessKeyID == "" {
-		log.Println("ADVERTENCIA: Variables de MinIO incompletas. Servicio desactivado.")
+	if cldURL == "" {
+		log.Println("ADVERTENCIA: CLOUDINARY_URL no encontrada. Servicio de archivos desactivado (imágenes no se guardarán).")
 		return &FileService{isEnabled: false}
 	}
 
 	// 2. Conexión
-	minioClient, err := minio.New(endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(accessKeyID, secretAccessKey, ""),
-		Secure: useSSL,
-	})
+	cld, err := cloudinary.NewFromURL(cldURL)
 	if err != nil {
-		log.Printf("Error conectando a MinIO: %v. Servicio desactivado.\n", err)
+		log.Printf("Error inicializando Cloudinary: %v. Servicio desactivado.\n", err)
 		return &FileService{isEnabled: false}
 	}
 
-	// 3. Setup del Bucket
-	ctx := context.Background()
-	exists, err := minioClient.BucketExists(ctx, bucketName)
-	if err != nil {
-		log.Printf("Error verificando bucket '%s': %v.\n", bucketName, err)
-		return &FileService{isEnabled: false}
-	} 
-	
-	if !exists {
-		err = minioClient.MakeBucket(ctx, bucketName, minio.MakeBucketOptions{})
-		if err != nil {
-			log.Printf("Error creando bucket: %v\n", err)
-			return &FileService{isEnabled: false}
-		}
-		log.Printf("Bucket '%s' creado exitosamente.\n", bucketName)
-	}
-
-	// --- CORRECCIÓN CLAVE: SIEMPRE APLICAR POLÍTICA PÚBLICA ---
-	// No importa si el bucket es nuevo o viejo, refrescamos los permisos de lectura.
-	policy := fmt.Sprintf(`{
-		"Version": "2012-10-17",
-		"Statement": [
-			{
-				"Action": ["s3:GetObject"],
-				"Effect": "Allow",
-				"Principal": {"AWS": ["*"]},
-				"Resource": ["arn:aws:s3:::%s/*"]
-			}
-		]
-	}`, bucketName)
-
-	err = minioClient.SetBucketPolicy(ctx, bucketName, policy)
-	if err != nil {
-		log.Printf("Error configurando política pública en bucket: %v\n", err)
-	} else {
-		log.Printf("Política de acceso público configurada para '%s'.\n", bucketName)
-	}
-	// -----------------------------------------------------------
+	log.Println("Servicio de almacenamiento (Cloudinary) conectado exitosamente.")
 
 	return &FileService{
-		minioClient: minioClient,
-		bucketName:  bucketName,
-		publicURL:   publicURL,
-		isEnabled:   true,
+		cld:       cld,
+		isEnabled: true,
 	}
 }
 
-// SaveImage sube el archivo
+// SaveImage sube el archivo a Cloudinary y retorna la URL segura (HTTPS)
 func (s *FileService) SaveImage(ctx context.Context, file *multipart.FileHeader) (string, error) {
-	if !s.isEnabled || s.minioClient == nil {
+	// Protección si el servicio falló al iniciar
+	if !s.isEnabled {
 		return "", fmt.Errorf("servicio de almacenamiento no disponible")
 	}
 
+	// Validación de extensión
 	ext := strings.ToLower(filepath.Ext(file.Filename))
 	if ext != ".jpg" && ext != ".jpeg" && ext != ".png" {
 		return "", fmt.Errorf("formato inválido (solo JPG/PNG)")
 	}
 
-	objectName := uuid.New().String() + ext
-	contentType := file.Header.Get("Content-Type")
-
+	// Abrir el archivo
 	src, err := file.Open()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("error leyendo archivo: %v", err)
 	}
 	defer src.Close()
 
-	_, err = s.minioClient.PutObject(ctx, s.bucketName, objectName, src, file.Size, minio.PutObjectOptions{
-		ContentType: contentType,
+	// Generamos un ID único para el archivo en la nube
+	uniqueFilename := uuid.New().String()
+
+	// Subida a Cloudinary
+	resp, err := s.cld.Upload.Upload(ctx, src, uploader.UploadParams{
+		PublicID:     uniqueFilename,
+		Folder:       "paws_uploads",
+		ResourceType: "image",
+		// CORRECCIÓN: Usamos api.Bool(true) en lugar de true directo
+		Overwrite: api.Bool(true),
 	})
+
 	if err != nil {
-		log.Printf("Error MinIO PutObject: %v", err) // Log extra para debug
-		return "", fmt.Errorf("error subiendo a Storage: %v", err)
+		log.Printf("Error Cloudinary Upload: %v", err)
+		return "", fmt.Errorf("error subiendo a la nube: %v", err)
 	}
 
-	return fmt.Sprintf("%s/%s/%s", s.publicURL, s.bucketName, objectName), nil
+	// Retornamos la URL segura (https) que es permanente
+	return resp.SecureURL, nil
 }
 
-// SaveMultipleImages reutiliza SaveImage
+// SaveMultipleImages reutiliza la lógica de SaveImage
 func (s *FileService) SaveMultipleImages(ctx context.Context, files []*multipart.FileHeader) ([]string, error) {
 	var urls []string
+
+	if !s.isEnabled {
+		return urls, fmt.Errorf("servicio no disponible")
+	}
+
 	for _, file := range files {
 		url, err := s.SaveImage(ctx, file)
 		if err != nil {
-			log.Printf("Error subiendo una de las imágenes: %v", err)
-			continue
+			log.Printf("Error subiendo una de las imágenes (%s): %v", file.Filename, err)
+			return nil, err
 		}
 		urls = append(urls, url)
 	}
