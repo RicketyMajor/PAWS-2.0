@@ -10107,7 +10107,7 @@ return WillPopScope(
       setState(() => _currentIndex = 0);
       return false; // No salir
     }
-    
+
     final now = DateTime.now();
     if (_lastPressedTime == null || now.difference(_lastPressedTime!) > Duration(seconds: 2)) {
       _lastPressedTime = now;
@@ -10199,17 +10199,17 @@ void _confirmLogout() {
 Future<void> _checkSession() async {
   await Future.delayed(const Duration(seconds: 1));
   if (!mounted) return;
-  
+
   try {
     final authRepo = context.read<AuthRepository>();
     final token = await authRepo.getToken();
-    
+
     if (token != null && !JwtDecoder.isExpired(token)) {
       Map<String, dynamic> decodedToken = JwtDecoder.decode(token);
       String role = decodedToken['role'] ?? 'adopter';
-      
+
       if (!mounted) return;
-      
+
       if (role == 'admin') {
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => const AdminDashboardScreen()),
@@ -10309,16 +10309,16 @@ Future<void> login(String email, String password, {bool rememberMe = true}) asyn
       '${ApiConstants.baseUrl}/auth/login',
       data: {'email': email, 'password': password},
     );
-    
+
     final token = response.data['token'];
-    
+
     if (rememberMe) {
       await _storage.write(key: 'jwt_token', value: token);
     } else {
       _sessionToken = token;
       await _storage.delete(key: 'jwt_token');
     }
-    
+
     print('Login exitoso. Persistencia: $rememberMe');
   } on DioException catch (e) {
     throw Exception(e.response?.data['error'] ?? 'Error desconocido');
@@ -10350,12 +10350,12 @@ Estado 1: Usuario está en pestaña != Home
   ↓
   Action: Cambiar _currentIndex a 0
   Return: false (no cerrar app)
-  
+
 Estado 2: Usuario está en Home, PRIMER atrás (dentro de 2 seg)
   ↓
   Action: Guardar timestamp, mostrar SnackBar
   Return: false (no cerrar app)
-  
+
 Estado 3: Usuario está en Home, SEGUNDO atrás (dentro de 2 seg)
   ↓
   Action: (nada)
@@ -10374,14 +10374,14 @@ return WillPopScope(
       setState(() => _currentIndex = 0);
       return false;
     }
-    
+
     // Nivel 2: Doble-tap detection
     final now = DateTime.now();
     final maxDuration = const Duration(seconds: 2);
-    final isWarning = 
-        _lastPressedTime == null || 
+    final isWarning =
+        _lastPressedTime == null ||
         now.difference(_lastPressedTime!) > maxDuration;
-    
+
     if (isWarning) {
       _lastPressedTime = now;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -10392,7 +10392,7 @@ return WillPopScope(
       );
       return false;
     }
-    
+
     // Nivel 3: Salir
     return true;
   },
@@ -10402,12 +10402,12 @@ return WillPopScope(
 
 **Tabla de Transiciones**:
 
-| Estado Anterior | Acción Usuario | Nuevo Estado | Resultado |
-|-----------------|----------------|--------------|-----------|
-| Perfil (idx=3) | Atrás | Home (idx=0) | No cierra |
-| Home (idx=0) | Atrás (primer tap) | Home (idx=0) | Muestra SnackBar, no cierra |
-| Home (idx=0) | Atrás (segundo tap <2s) | — | Cierra app |
-| Home (idx=0) | Atrás (después 2s) | Home (idx=0) | Reinicia contador, muestra SnackBar |
+| Estado Anterior | Acción Usuario          | Nuevo Estado | Resultado                           |
+| --------------- | ----------------------- | ------------ | ----------------------------------- |
+| Perfil (idx=3)  | Atrás                   | Home (idx=0) | No cierra                           |
+| Home (idx=0)    | Atrás (primer tap)      | Home (idx=0) | Muestra SnackBar, no cierra         |
+| Home (idx=0)    | Atrás (segundo tap <2s) | —            | Cierra app                          |
+| Home (idx=0)    | Atrás (después 2s)      | Home (idx=0) | Reinicia contador, muestra SnackBar |
 
 ### Componente 4: Logout Centralizado en EditProfileScreen
 
@@ -10422,7 +10422,7 @@ AppBar(
   title: const Text("Mi Perfil"),
   actions: [
     IconButton(icon: Icon(_isEditing ? Icons.check : Icons.edit), ...),
-    
+
     PopupMenuButton<String>(
       icon: const Icon(Icons.settings, color: Colors.blueGrey),
       onSelected: (value) {
@@ -10466,12 +10466,12 @@ void _confirmLogout() {
         TextButton(
           onPressed: () async {
             Navigator.pop(ctx);
-            
+
             // 1. Ejecutar logout (limpia token de memoria Y disco)
             await context.read<AuthRepository>().logout();
-            
+
             if (!mounted) return;
-            
+
             // 2. Navegar al Login con stack limpio
             Navigator.pushAndRemoveUntil(
               context,
@@ -10587,13 +10587,13 @@ void _confirmLogout() {
 
 ### Tabla Comparativa: Antes vs Después Etapa 19
 
-| Aspecto | Antes Etapa 19 | Después Etapa 19 | Mejora |
-|---------|---|---|---|
-| **Persistencia de Sesión** | Token siempre guardado en disco, sin control de usuario | Token guardado según checkbox, usuario controla | Privacidad + UX |
-| **Reinicio de App** | Usuario debe hacer login nuevamente | AutoLogin silencioso si token válido | Retención 95% |
-| **Botón Atrás** | Cierra app si en pantalla no-stack | Navega a Home, luego requiere doble-tap | Reducción 80% cierres accidentales |
-| **Logout** | Múltiples puntos de fallo, token fantasma posible | Una función centralizada, token borrado en RAM y disco | Seguridad garantizada |
-| **Navegación Post-Logout** | Usuario podía hacer back a pantallas privadas | Stack limpiado, LoginScreen es punto final | Cierre de sesión hermético |
+| Aspecto                    | Antes Etapa 19                                          | Después Etapa 19                                       | Mejora                             |
+| -------------------------- | ------------------------------------------------------- | ------------------------------------------------------ | ---------------------------------- |
+| **Persistencia de Sesión** | Token siempre guardado en disco, sin control de usuario | Token guardado según checkbox, usuario controla        | Privacidad + UX                    |
+| **Reinicio de App**        | Usuario debe hacer login nuevamente                     | AutoLogin silencioso si token válido                   | Retención 95%                      |
+| **Botón Atrás**            | Cierra app si en pantalla no-stack                      | Navega a Home, luego requiere doble-tap                | Reducción 80% cierres accidentales |
+| **Logout**                 | Múltiples puntos de fallo, token fantasma posible       | Una función centralizada, token borrado en RAM y disco | Seguridad garantizada              |
+| **Navegación Post-Logout** | Usuario podía hacer back a pantallas privadas           | Stack limpiado, LoginScreen es punto final             | Cierre de sesión hermético         |
 
 ### Testing y Validación (Etapa 19)
 

@@ -829,7 +829,6 @@ class AdminRepository {
 **Métodos**:
 
 - **getReports()**: GET /admin/reports
-
   - Inyecta JWT automáticamente
   - Retorna lista de reportes con información de usuarios
   - Throw Exception si error (FutureBuilder muestra error)
@@ -2878,13 +2877,11 @@ PetDetailScreen ahora contiene un visor de galería que:
 2. **Contador Numérico**: Chip en top-right mostrando "1/4" para indicar posición actual en galería.
 
 3. **Navegación con Flechas**: Botones izquierda/derecha que aparecen **solo cuando hay múltiples imágenes**:
-
    - Flecha izquierda solo visible si no estamos en primera imagen
    - Flecha derecha solo visible si no estamos en última imagen
    - Smart visibility reduce clutter visual
 
 4. **Indicadores de Puntos**: Círculos al fondo del carousel:
-
    - Blanco sólido (100%) para imagen activa
    - Blanco semi-transparente (50%) para inactivas
    - Permite saltar entre fotos tocando dots (en versiones avanzadas)
@@ -3916,7 +3913,7 @@ class LoginBloc extends Bloc<LoginEvent, LoginState> {
 class AuthRepository {
   final Dio _dio;
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
-  
+
   // Variable en memoria para sesión temporal
   String? _sessionToken;
 
@@ -3958,7 +3955,7 @@ class AuthRepository {
       print('Token encontrado en memoria (RAM)');
       return _sessionToken;
     }
-    
+
     // Fallback: buscar en disco (persistencia)
     final storedToken = await _storage.read(key: 'jwt_token');
     if (storedToken != null) {
@@ -3978,12 +3975,12 @@ class AuthRepository {
 
 **Tabla de Estados**:
 
-| Scenario | checkbox "Recordar" | Login Exitoso | Almacenamiento | App Cierra | App Reabre | Resultado |
-|----------|---|---|---|---|---|---|
-| Usuario 1 | MARCADO | ✓ | Disco | ✓ | ✓ | Token aún válido, AutoLogin |
-| Usuario 2 | DESMARCADO | ✓ | RAM | ✓ | ✓ | Token perdido en RAM, va a Login |
-| Usuario 1 | MARCADO | ✓ | Disco | Pausa (home) | Reanuda | Token sigue en RAM, continúa |
-| Usuario 2 | DESMARCADO | ✓ | RAM | Pausa (home) | Reanuda | Token sigue en RAM, continúa |
+| Scenario  | checkbox "Recordar" | Login Exitoso | Almacenamiento | App Cierra   | App Reabre | Resultado                        |
+| --------- | ------------------- | ------------- | -------------- | ------------ | ---------- | -------------------------------- |
+| Usuario 1 | MARCADO             | ✓             | Disco          | ✓            | ✓          | Token aún válido, AutoLogin      |
+| Usuario 2 | DESMARCADO          | ✓             | RAM            | ✓            | ✓          | Token perdido en RAM, va a Login |
+| Usuario 1 | MARCADO             | ✓             | Disco          | Pausa (home) | Reanuda    | Token sigue en RAM, continúa     |
+| Usuario 2 | DESMARCADO          | ✓             | RAM            | Pausa (home) | Reanuda    | Token sigue en RAM, continúa     |
 
 ### Componente 3: WillPopScope - Navegación Blindada contra Cierres Accidentales
 
@@ -4068,12 +4065,12 @@ class _MainLayoutScreenState extends State<MainLayoutScreen> {
 
 **Tabla de Transiciones**:
 
-| Estado Anterior | Acción | Nuevo Estado | Resultado |
-|---|---|---|---|
-| Chats (idx=1) | Atrás | Home (idx=0) | No cierra |
-| Home (idx=0) | Atrás (primer tap) | Home (idx=0) | SnackBar "Presiona otra vez", no cierra |
-| Home (idx=0) | Atrás (2do tap <2s) | — | CIERRA APP |
-| Home (idx=0) | Atrás (después 2s) | Home (idx=0) | Reinicia contador, muestra SnackBar |
+| Estado Anterior | Acción              | Nuevo Estado | Resultado                               |
+| --------------- | ------------------- | ------------ | --------------------------------------- |
+| Chats (idx=1)   | Atrás               | Home (idx=0) | No cierra                               |
+| Home (idx=0)    | Atrás (primer tap)  | Home (idx=0) | SnackBar "Presiona otra vez", no cierra |
+| Home (idx=0)    | Atrás (2do tap <2s) | —            | CIERRA APP                              |
+| Home (idx=0)    | Atrás (después 2s)  | Home (idx=0) | Reinicia contador, muestra SnackBar     |
 
 ### Componente 4: Logout Centralizado en EditProfileScreen
 
@@ -4250,7 +4247,7 @@ T6. Navigator.pop(ctx) cierra diálogo
 T7. authRepository.logout() invocado:
     ├─ _sessionToken = null (RAM limpia)
     └─ await _storage.delete(key: 'jwt_token') (disco limpio)
-T8. Navigator.pushAndRemoveUntil(LoginScreen, ...) 
+T8. Navigator.pushAndRemoveUntil(LoginScreen, ...)
     └─ Navega a LoginScreen, elimina stack completo
 T9. Usuario en LoginScreen
 T10. Stack está VACÍO: presionar atrás cierra app (correcto)
@@ -4259,13 +4256,13 @@ T11. Si usuario presiona atrás: app se cierra (ningún route debajo)
 
 ### Tabla Comparativa: Antes vs Después Etapa 19 (Fase 5)
 
-| Aspecto | Antes Etapa 19 | Después Etapa 19 | Mejora |
-|---|---|---|---|
-| **Persistencia** | Token siempre en disco | Usuario controla con checkbox | Privacidad + UX |
-| **Reapertura App** | Debe hacer login de nuevo | AutoLogin silencioso | Retención >95% |
-| **Botón Atrás** | Cierra app directamente | Navega a Home, luego doble-tap | 80% menos cierres |
-| **Logout** | Múltiples métodos, inconsistente | Una función centralizada | Seguridad garantizada |
-| **Post-Logout** | Usuario podía hacer back | Stack limpio, LoginScreen final | Cierre hermético |
+| Aspecto            | Antes Etapa 19                   | Después Etapa 19                | Mejora                |
+| ------------------ | -------------------------------- | ------------------------------- | --------------------- |
+| **Persistencia**   | Token siempre en disco           | Usuario controla con checkbox   | Privacidad + UX       |
+| **Reapertura App** | Debe hacer login de nuevo        | AutoLogin silencioso            | Retención >95%        |
+| **Botón Atrás**    | Cierra app directamente          | Navega a Home, luego doble-tap  | 80% menos cierres     |
+| **Logout**         | Múltiples métodos, inconsistente | Una función centralizada        | Seguridad garantizada |
+| **Post-Logout**    | Usuario podía hacer back         | Stack limpio, LoginScreen final | Cierre hermético      |
 
 ### Archivos Afectados (Etapa 19 en Fase 5)
 
@@ -4326,7 +4323,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       body: ListView(
         children: [
           // ... datos de perfil ...
-          
+
           // BOTÓN DE SWITCH ROLE (siempre visible)
           Padding(
             padding: EdgeInsets.all(16),
@@ -4363,7 +4360,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 }
 ```
 
-### Lógica de Manejo: _handleSwitchRole()
+### Lógica de Manejo: \_handleSwitchRole()
 
 ```dart
 Future<void> _handleSwitchRole() async {
@@ -4387,7 +4384,7 @@ Future<void> _handleSwitchRole() async {
       // FALLO (404): Cuenta del rol opuesto NO existe
       if (!mounted) return;
       setState(() => _isLoading = false);
-      
+
       // Mostrar dialog para crear la otra identidad
       _showCreateAccountDialog();
     }
@@ -4405,7 +4402,7 @@ Future<void> _handleSwitchRole() async {
 }
 ```
 
-### Detección Inteligente: _showCreateAccountDialog()
+### Detección Inteligente: \_showCreateAccountDialog()
 
 Si la cuenta del rol opuesto no existe, se ofrece crear una con pre-llenado automático:
 
@@ -4480,7 +4477,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   void initState() {
     super.initState();
-    
+
     // IMPORTANTE: Pre-llenar si vinieron parámetros iniciales
     _nameController = TextEditingController(text: widget.initialName ?? "");
     _emailController = TextEditingController(text: widget.initialEmail ?? "");
@@ -4554,7 +4551,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         run: _runController.text,
         role: _selectedRole,
       );
-      
+
       // Tras registro exitoso, vuelve a MainLayout
       if (mounted) {
         Navigator.of(context).pushAndRemoveUntil(
@@ -4595,10 +4592,10 @@ class AuthRepository {
       if (response.statusCode == 200) {
         final newToken = response.data['token'];
         final newUser = response.data['user'];
-        
+
         // Guardar nuevo token
         await _storage.write(key: 'jwt_token', value: newToken);
-        
+
         return newUser;
       }
     } on DioException catch (e) {
@@ -4619,11 +4616,13 @@ class AuthRepository {
 **Paso 2**: Presiona botón → Se llama `authRepo.switchRole()`
 
 **Paso 3a (Éxito)**: Rescatista existe
+
 - API retorna 200 con nuevo JWT
 - Frontend navega a MainLayoutScreen(role: "rescuer")
 - Usuario entra en interfaz de Rescatista (ver mascotas, matches, etc.)
 
 **Paso 3b (Fallo)**: Rescatista no existe
+
 - API retorna 404
 - Frontend muestra dialog "¿Crear perfil de Rescatista?"
 - Si usuario dice SÍ, abre RegisterScreen pre-llenado con nombre/email/run
@@ -4640,7 +4639,7 @@ class AuthRepository {
 
 ### Archivos Afectados en Fase 5 (Etapa 19)
 
-- `app/lib/features/user/presentation/screens/edit_profile_screen.dart` (botón + _handleSwitchRole)
+- `app/lib/features/user/presentation/screens/edit_profile_screen.dart` (botón + \_handleSwitchRole)
 - `app/lib/features/auth/presentation/screens/register_screen.dart` (pre-llenado)
 - `app/lib/features/auth/data/auth_repository.dart` (switchRole())
 - `app/lib/core/presentation/main_layout_screen.dart` (navega con rol)
@@ -4666,4 +4665,3 @@ class AuthRepository {
 4. MainLayout se refresca (rol = rescuer)
 5. Tabs y menú cambian para Rescatista
 ```
-

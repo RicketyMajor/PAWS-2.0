@@ -171,7 +171,10 @@ func main() {
 	// =========================================================================
 
 	r := gin.Default()
-	r.Use(middleware.CORSMiddleware())
+	
+	// --- CAMBIO: Usamos nuestro Middleware Local para solucionar el error de Vercel (401/CORS) ---
+	r.Use(LocalCORSMiddleware()) 
+	
 	r.Static("/uploads", "./uploads")
 
 	api := r.Group("/api/v1")
@@ -251,5 +254,33 @@ func main() {
 	
 	if err := r.Run(":" + port); err != nil {
 		log.Fatal("Error fatal en servidor:", err)
+	}
+}
+
+// --- NUEVA FUNCIÓN: Middleware CORS Robusto ---
+// Esta función soluciona el problema de 401 en OPTIONS interceptando el Preflight.
+func LocalCORSMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// 1. Permitimos el origen dinámico (necesario para Vercel)
+		origin := c.Request.Header.Get("Origin")
+		if origin != "" {
+			c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+		} else {
+			// Fallback
+			c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		}
+
+		// 2. Permitimos credenciales y los headers necesarios (incluyendo Authorization)
+		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
+
+		// 3. ¡LA CLAVE! Si es OPTIONS, cortamos aquí con 204 y NO pasamos al AuthMiddleware
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(204)
+			return
+		}
+
+		c.Next()
 	}
 }
