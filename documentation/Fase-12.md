@@ -753,7 +753,419 @@ Cada 3 meses:
 - [ ] Revisar Vercel analytics (Core Web Vitals)
 - [ ] Verificar Supabase backups (recientes)
 - [ ] Revisar uso de recursos (CPU, memoria, disk)
+- [ ] Revisar uso de recursos (CPU, memoria, disk)
 - [ ] Verificar ningún secret fue leakeado
+
+## COMPLETADO EN ETAPA 20: Migración a Infraestructura Distribuida Gratuita
+
+Etapa 20 reemplaza el monolito Railway con una arquitectura modular de servicios gratuitos especializados, eliminando costos de infraestructura mientras mantiene 100% de funcionalidad. La migración requiere cambios específicos en Backend (CORS robusto, soporte contraseña Redis), Frontend (inyección centralizada de dependencias, interceptores automáticos), y configuración de plataformas.
+
+### Cambio 1: Backend - CORS Middleware Robusto en main.go
+
+**Archivo**: `cmd/api/main.go` (líneas 263-285)
+
+**Problema**: Solicitudes Preflight (OPTIONS) desde navegador (Vercel) eran rechazadas por AuthMiddleware con error 401, provocando que JavaScript bloqueara la petición real (POST/GET).
+
+**Solución**:
+
+```go
+// NUEVA FUNCIÓN: Middleware CORS Robusto
+// Esta función soluciona el problema de 401 en OPTIONS interceptando el Preflight.
+func LocalCORSMiddleware() gin.HandlerFunc {
+    return func(c *gin.Context) {
+        // 1. Permitimos el origen dinámico (necesario para Vercel)
+        origin := c.Request.Header.Get("Origin")
+        if origin != "" {
+            c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+        } else {
+            c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+        }
+
+        // 2. Permitimos credenciales y los headers necesarios (incluyendo Authorization)
+        c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+        c.Writer.Header().Set(
+            "Access-Control-Allow-Headers",
+            "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With",
+        )
+        c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
+
+        // 3. ¡LA CLAVE! Si es OPTIONS, cortamos aquí con 204 y NO pasamos al AuthMiddleware
+        if c.Request.Method == "OPTIONS" {
+            c.AbortWithStatus(204)
+            return
+        }
+
+        c.Next()
+    }
+}
+```
+
+**Integración en main.go** (línea 175):
+
+```go
+r := gin.Default()
+// --- CAMBIO: Usamos nuestro Middleware Local para solucionar el error de Vercel (401/CORS) ---
+r.Use(LocalCORSMiddleware())  // APLICADO ANTES de rutas
+// ... resto de rutas ...
+```
+
+**Ventaja**: Vercel ↔ Render comunican sin errores CORS. Desarrollo local no afectado. Compatible con Preflight automático de navegadores.
+
+### Cambio 2: Backend - Redis Serverless con Soporte de Contraseñas
+
+**Archivo**: `internal/core/services/auth_service.go` (líneas 35-47)
+
+**Problema**: Upstash Redis requiere autenticación. El código original no tenía parámetro Password en redis.NewClient().Options.
+
+**Solución**:
+
+```go
+func NewAuthService(dbOrNil *gorm.DB) *AuthService {
+    redisHost := os.Getenv("REDIS_HOST")
+    redisPort := os.Getenv("REDIS_PORT")
+    redisPass := os.Getenv("REDIS_PASSWORD")  // <--- NUEVO: Leemos la contraseña
+
+    if redisHost == "" { redisHost = "localhost" }
+    if redisPort == "" { redisPort = "6379" }
+    
+    rdb := redis.NewClient(&redis.Options{
+        Addr:     fmt.Sprintf("%s:%s", redisHost, redisPort),
+        Password: redisPass,  // <--- NUEVO: La usamos aquí
+        DB:       0,
+    })
+
+    if dbOrNil == nil {
+        return &AuthService{db: database.DB, redisClient: rdb}
+    }
+    return &AuthService{db: dbOrNil, redisClient: rdb}
+}
+```
+
+**Configuración en Render Dashboard**:
+
+```env
+REDIS_HOST=<upstash-endpoint>.upstash.io
+REDIS_PORT=6379
+REDIS_PASSWORD=<upstash-auth-token>
+```
+
+**Fallback Local** (desarrollo):
+
+```env
+REDIS_PASSWORD=  # Vacío para Redis local sin autenticación
+```
+
+**Ventaja**: OTPService y AuthService conectan a Upstash sin cambios lógicos. Desarrollo local funciona sin cambios. Tokens y OTP persisten en Redis serverless con TTL automático.
+
+### Cambio 3: Frontend - MultiRepositoryProvider Global para Inyección de Dependencias
+
+**Archivo**: `app/lib/main.dart` (líneas 73-110)
+
+**Problema**: Repositorios (Pets, User, Matches) manejaban tokens independientemente. Logout no coordinado. SwitchRole requería refresco manual en múltiples lugares.
+
+**Solución**:
+
+```dart
+@override
+Widget build(BuildContext context) {
+    // --- AQUÍ ESTÁ LA MAGIA DE LA INYECCIÓN CENTRALIZADA ---
+    return MultiRepositoryProvider(
+        providers: [
+            // 1. Creamos el AuthRepository (El Padre de los Tokens)
+            RepositoryProvider(create: (context) => AuthRepository()),
+
+            // 2. Inyectamos AuthRepository en los demás repositorios
+            RepositoryProvider(
+                create: (context) =>
+                    PetsRepository(authRepository: context.read<AuthRepository>()),
+            ),
+            RepositoryProvider(
+                create: (context) =>
+                    UserRepository(authRepository: context.read<AuthRepository>()),
+            ),
+            RepositoryProvider(
+                create: (context) =>
+                    MatchesRepository(authRepository: context.read<AuthRepository>()),
+            ),
+
+            // Otros repos sin dependencia de Auth
+            RepositoryProvider(create: (context) => ChatRepository()),
+            RepositoryProvider(create: (context) => AdminRepository()),
+            RepositoryProvider(create: (context) => SecurityRepository()),
+            RepositoryProvider(create: (context) => ReviewsRepository()),
+        ],
+        child: MaterialApp(
+            // ... configuración ...
+        ),
+    );
+}
+```
+
+**Integración en Pantallas**:
+
+```dart
+// MatchScreen (dentro de main.dart)
+class MatchScreen extends StatelessWidget {
+    @override
+    Widget build(BuildContext context) {
+        return BlocProvider(
+            create: (context) =>
+                PetsBloc(repository: context.read<PetsRepository>()),
+                // PetsRepository ya tiene AuthRepository inyectado
+            child: Scaffold(...),
+        );
+    }
+}
+```
+
+**Ventaja**: Token es fuente única de verdad. Logout afecta a todos. SwitchRole coordina cambio de token centralmente. Fácil testear (inyectar repos mock).
+
+### Cambio 4: Frontend - Interceptor Automático de Authorization en Dio
+
+**Archivo**: `app/lib/features/auth/data/auth_repository.dart` (líneas 1-45)
+
+**Problema**: Cada repositorio debía hacer `await authRepository.getToken()` y pasar manualmente en Options. Código repetitivo, error-prone.
+
+**Solución**:
+
+```dart
+class AuthRepository {
+    final Dio _dio = Dio(
+        BaseOptions(
+            connectTimeout: const Duration(seconds: 10),
+            receiveTimeout: const Duration(seconds: 10),
+        ),
+    );
+
+    final FlutterSecureStorage _storage = const FlutterSecureStorage();
+    String? _sessionToken;  // RAM para sesiones temporales
+
+    AuthRepository() {
+        // 1. Log Interceptor (como antes)
+        _dio.interceptors.add(
+            LogInterceptor(
+                request: true,
+                requestBody: true,
+                responseBody: true,
+                error: true,
+            ),
+        );
+
+        // 2. --- ¡EL ARREGLO MÁGICO! ---
+        // Interceptor que inyecta el token en CADA petición automáticamente
+        _dio.interceptors.add(
+            InterceptorsWrapper(
+                onRequest: (options, handler) async {
+                    // Consultamos el token (ya sea de memoria o disco)
+                    final token = await getToken();
+
+                    // Si existe, lo pegamos en el Header como "Bearer TOKEN"
+                    if (token != null) {
+                        options.headers['Authorization'] = 'Bearer $token';
+                    }
+
+                    return handler.next(options);  // Continuar con la petición
+                },
+            ),
+        );
+    }
+
+    Future<String?> getToken() async {
+        // Prioridad: RAM (sesión temporal) > FlutterSecureStorage (persistente)
+        if (_sessionToken != null) return _sessionToken;
+        return await _storage.read(key: 'jwt_token');
+    }
+}
+```
+
+**Uso en Otros Repositorios** (`app/lib/features/pets/data/pets_repository.dart`):
+
+```dart
+class PetsRepository {
+    final Dio _dio = Dio(...);  // Sin interceptor propio (opcional)
+    final AuthRepository authRepository;  // Dependencia inyectada
+
+    PetsRepository({required this.authRepository});
+
+    Future<Options> _getAuthOptions() async {
+        final token = await authRepository.getToken();
+        if (token == null) throw Exception('Sesión inválida');
+        return Options(headers: {'Authorization': 'Bearer $token'});
+    }
+
+    Future<List<Pet>> getSwipeDeck({double? lat, double? lon}) async {
+        try {
+            final options = await _getAuthOptions();
+            final response = await _dio.get(
+                '${ApiConstants.baseUrl}/matches/candidates',
+                options: options,
+            );
+            // ... parsing ...
+        }
+    }
+}
+```
+
+**Ventaja**: Token inyectado automáticamente sin código boilerplate. SwitchRole actualiza token centralmente, se refleja en siguiente request. Compatible con logout (token = null).
+
+### Cambio 5: Frontend - Blindaje de Firebase para Web
+
+**Archivo**: `app/lib/main.dart` (líneas 28-40)
+
+**Problema**: Firebase.initializeApp() fallaba en web sin configuración, causando excepciones que bloqueaban la app.
+
+**Solución**:
+
+```dart
+void main() async {
+    WidgetsFlutterBinding.ensureInitialized();
+
+    try {
+        await Firebase.initializeApp();
+        if (!kIsWeb) {
+            // Solo en mobile, registra handler para notificaciones en background
+            FirebaseMessaging.onBackgroundMessage(
+                _firebaseMessagingBackgroundHandler,
+            );
+        }
+    } catch (e) {
+        print("Advertencia: Firebase no se pudo inicializar: $e");
+        // IMPORTANTE: No bloqueamos la app, continúa sin notificaciones
+    }
+
+    runApp(const PawsApp());
+}
+```
+
+**Ventaja**: Web se ejecuta sin notificaciones Firebase (sin google-services.json). Mobile mantiene notificaciones push activas. Degradación elegante del servicio.
+
+### Comparativa de Plataformas
+
+| Aspecto | Railway (Antes) | Etapa 20 (Después) | Beneficio |
+|--------|-----------------|-------------------|-----------|
+| **Backend** | Railway Dynos | Render Web Service | $0/mes, 750h gratis |
+| **Base de Datos** | Railway PostgreSQL | Neon.tech Serverless | $0/mes, 3GB gratis, mejor para MVP |
+| **Caché** | Railway Redis | Upstash Redis Serverless | $0/mes, global, con autenticación |
+| **Colas** | Railway RabbitMQ | CloudAMQP Free | $0/mes, 1M msgs/mes |
+| **Frontend Web** | Railway (estática) | Vercel CDN | $0/mes, 200+ edge locations |
+| **Notificaciones** | FCM en Railway | FCM en Google Cloud | Sin cambio, Spark gratis |
+| **Costo Total** | $$$$/mes | $0/mes | Infinita viabilidad económica |
+
+### Flujo de Solicitud Completo (Etapa 20)
+
+```
+1. Adoptante abre https://paws.vercel.app (servida por Vercel CDN)
+   ↓
+2. Flutter Web compilada carga desde JavaScript
+   ↓
+3. Usuario login: email/contraseña
+   ↓
+4. AuthRepository.login() envía POST
+   ↓
+5. Dio envía a paws-backend-g9sh.onrender.com/api/v1/auth/login
+   ↓
+6. Navegador envía Preflight OPTIONS (CORS check)
+   ↓
+7. Render: LocalCORSMiddleware intercepta (línea 175 de main.go)
+   ↓
+8. Valida Origin, retorna CORS headers + 204
+   ↓
+9. Navegador aprueba, envía POST real
+   ↓
+10. AuthMiddleware valida JWT, AuthHandler ejecuta
+    ↓
+11. Backend retorna token
+    ↓
+12. AuthRepository almacena en FlutterSecureStorage
+    ↓
+13. Próximo request: Interceptor inyecta "Authorization: Bearer <token>"
+    ↓
+14. PetsBloc llama PetsRepository.getSwipeDeck()
+    ↓
+15. Dio interceptor inyecta token automáticamente
+    ↓
+16. MatchService retorna mascotas (validó token)
+    ↓
+17. Frontend renderiza swipe deck
+```
+
+### Configuración en Dashboards
+
+**Render Backend Environment Variables**:
+
+```env
+DATABASE_URL=postgresql://user:pass@ep-xxx-xxx.neon.tech/paws_db
+REDIS_HOST=your-endpoint.upstash.io
+REDIS_PORT=6379
+REDIS_PASSWORD=<upstash-auth-token>
+JWT_SECRET=<secreto-fuerte-32-caracteres>
+ENABLE_ASYNC_FEATURES=true
+RABBITMQ_URL=amqps://user:pass@...cloudamqp.com/<vhost>
+PORT=8080
+```
+
+**Vercel Frontend Settings**:
+
+- Root Directory: `app`
+- Build Command: `flutter build web --release`
+- Output Directory: `build/web`
+- Environment: Ninguna variable necesaria (URLs en código)
+
+**Neon.tech Database**:
+
+- Connection Pooler: Session Mode (recomendado)
+- Backups: Automáticos 24 horas
+- Escalado: Automático según uso
+
+**Upstash Redis**:
+
+- REDIS_URL: Proporciona credenciales, parseable por driver Go
+- Tokens: Incluidos en URL como contraseña
+
+### Testing de Etapa 20
+
+```bash
+# 1. Validar Preflight CORS
+curl -i -X OPTIONS https://paws-backend-g9sh.onrender.com/api/v1/auth/login \
+  -H "Origin: https://paws.vercel.app" \
+  -H "Access-Control-Request-Method: POST"
+# Debe retornar 204 + CORS headers
+
+# 2. Validar Login
+curl -X POST https://paws-backend-g9sh.onrender.com/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "test@example.com", "password": "test"}'
+# Debe retornar token
+
+# 3. Validar Token inyectado en siguiente request
+curl https://paws-backend-g9sh.onrender.com/api/v1/profile \
+  -H "Authorization: Bearer <token>"
+# Debe retornar perfil
+
+# 4. Validar Redis (OTP)
+# Login → OTP → Verificación desde Upstash
+
+# 5. Validar PostgreSQL (Neon)
+# Migraciones ejecutadas exitosamente
+```
+
+### Checklist de Migración a Etapa 20
+
+- [ ] Variables de entorno en Render configuradas (Database, Redis, RabbitMQ)
+- [ ] CORS Middleware integrado en main.go (línea 175)
+- [ ] Redis Password soportado en auth_service.go
+- [ ] MultiRepositoryProvider implementado en app/lib/main.dart
+- [ ] Interceptor de Authorization en AuthRepository
+- [ ] Firebase blindado para web en main.dart
+- [ ] Tests Preflight CORS exitosos
+- [ ] Login funciona desde Vercel
+- [ ] OTP se envía y verifica via Upstash Redis
+- [ ] Tokens persisten en FlutterSecureStorage
+- [ ] SwitchRole funciona y token se actualiza centralmente
+- [ ] Logout limpia token y cierra sesión en toda la app
+- [ ] Push notificaciones funciona en mobile
+- [ ] Analytics en Vercel muestran tráfico web
+- [ ] Logs en Render visible en dashboard
 
 ## Referencias y Documentación
 
