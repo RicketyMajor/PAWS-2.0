@@ -10670,13 +10670,13 @@ Etapa 20 representa una transformación arquitectónica crítica: migración del
 
 **Solución Implementada**: Arquitectura distribuida aprovechando servicios con tier gratuito robusto:
 
-| Componente | Antes (Railway) | Después (Etapa 20) | Costo | Razón |
-|------------|-----------------|-------------------|-------|-------|
-| **Backend** | Railway (Dynos) | Render (Web Service gratuito) | $0/mes | 750 horas/mes, suficiente para MVP |
-| **Base de Datos** | Railway PostgreSQL | Neon.tech (PostgreSQL Serverless) | $0/mes | 1 proyecto gratuito, 3 GB storage, scalable |
-| **Caché/Sesión** | Railway Redis | Upstash Redis Serverless | $0/mes | 10,000 comandos/día gratis, serverless, global CDN |
-| **Colas/Mensajería** | Railway RabbitMQ | CloudAMQP (Free) | $0/mes | 1 millón mensajes/mes gratis, confiable |
-| **Frontend Web** | Railway (estática) | Vercel (Next/Flutter Web) | $0/mes | Infinitas builds, CDN global, SSL automático |
+| Componente           | Antes (Railway)    | Después (Etapa 20)                | Costo  | Razón                                              |
+| -------------------- | ------------------ | --------------------------------- | ------ | -------------------------------------------------- |
+| **Backend**          | Railway (Dynos)    | Render (Web Service gratuito)     | $0/mes | 750 horas/mes, suficiente para MVP                 |
+| **Base de Datos**    | Railway PostgreSQL | Neon.tech (PostgreSQL Serverless) | $0/mes | 1 proyecto gratuito, 3 GB storage, scalable        |
+| **Caché/Sesión**     | Railway Redis      | Upstash Redis Serverless          | $0/mes | 10,000 comandos/día gratis, serverless, global CDN |
+| **Colas/Mensajería** | Railway RabbitMQ   | CloudAMQP (Free)                  | $0/mes | 1 millón mensajes/mes gratis, confiable            |
+| **Frontend Web**     | Railway (estática) | Vercel (Next/Flutter Web)         | $0/mes | Infinitas builds, CDN global, SSL automático       |
 
 **Beneficio**: Costo infraestructura = $0/mes. Viabilidad económica infinita mientras se monetiza.
 
@@ -10765,7 +10765,7 @@ func NewAuthService(dbOrNil *gorm.DB) *AuthService {
 
     if redisHost == "" { redisHost = "localhost" }
     if redisPort == "" { redisPort = "6379" }
-    
+
     rdb := redis.NewClient(&redis.Options{
         Addr:     fmt.Sprintf("%s:%s", redisHost, redisPort),
         Password: redisPass,  // <--- NUEVO: La usamos aquí

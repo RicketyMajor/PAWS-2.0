@@ -1345,6 +1345,330 @@ La doble identidad NO debilita las garantías de Fase 1:
 
 ---
 
+## COMPLETADO EN ETAPA 20: CORS Middleware Robusto para Arquitectura Distribuida
+
+Etapa 20 introduce `LocalCORSMiddleware()` en `cmd/api/main.go` para resolver el problema de solicitudes Preflight (OPTIONS) desde navegadores en Vercel. El middleware intercepta requests OPTIONS y responde con headers CORS correctos sin pasar por AuthMiddleware, permitiendo que JavaScript del navegador apruebe solicitudes reales (POST/GET) al backend en Render.
+
+### Problema Resuelto
+
+**Escenario Antes de Etapa 20**:
+
+```
+Navegador (Vercel Web) intenta: POST /api/v1/auth/login
+  ↓
+1. Navegador envía Preflight: OPTIONS /api/v1/auth/login
+  ↓
+2. Gin recibe OPTIONS
+  ↓
+3. AuthMiddleware intercepta
+  ↓
+4. AuthMiddleware busca Authorization header (no existe en Preflight)
+  ↓
+5. AuthMiddleware retorna 401 Unauthorized
+  ↓
+6. Navegador recibe 401, bloquea POST real
+  ↓
+7. JavaScript recibe error CORS
+  ↓
+8. Usuario ve "No se puede conectar al servidor"
+```
+
+**Error Típico** en consola del navegador:
+
+```
+Access to XMLHttpRequest at 'https://paws-backend-g9sh.onrender.com/api/v1/auth/login'
+from origin 'https://paws.vercel.app' has been blocked by CORS policy:
+Response to preflight request doesn't pass access control check:
+No 'Access-Control-Allow-Origin' header is present on the requested resource.
+```
+
+### Solución Implementada
+
+**Archivo**: `cmd/api/main.go` (líneas 263-285)
+
+```go
+// --- NUEVA FUNCIÓN: Middleware CORS Robusto ---
+// Esta función soluciona el problema de 401 en OPTIONS interceptando el Preflight.
+func LocalCORSMiddleware() gin.HandlerFunc {
+    return func(c *gin.Context) {
+        // 1. Permitimos el origen dinámico (necesario para Vercel)
+        origin := c.Request.Header.Get("Origin")
+        if origin != "" {
+            c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+        } else {
+            // Fallback
+            c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+        }
+
+        // 2. Permitimos credenciales y los headers necesarios (incluyendo Authorization)
+        c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+        c.Writer.Header().Set(
+            "Access-Control-Allow-Headers",
+            "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With",
+        )
+        c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
+
+        // 3. ¡LA CLAVE! Si es OPTIONS, cortamos aquí con 204 y NO pasamos al AuthMiddleware
+        if c.Request.Method == "OPTIONS" {
+            c.AbortWithStatus(204)
+            return
+        }
+
+        c.Next()
+    }
+}
+```
+
+**Integración en main.go** (línea 175):
+
+```go
+func main() {
+    // ... inicializar BD, servicios ...
+
+    r := gin.Default()
+
+    // --- CAMBIO: Usamos nuestro Middleware Local para solucionar el error de Vercel (401/CORS) ---
+    r.Use(LocalCORSMiddleware())  // APLICADO ANTES de definir rutas
+
+    r.Static("/uploads", "./uploads")
+
+    api := r.Group("/api/v1")
+    {
+        // RUTAS PÚBLICAS (no requieren auth)
+        auth := api.Group("/auth")
+        {
+            auth.POST("/register", authHandler.Register)
+            auth.POST("/login", authHandler.Login)
+            auth.POST("/otp/request", authHandler.RequestOTP)
+            auth.POST("/otp/verify", authHandler.VerifyOTP)
+        }
+
+        // RUTAS PROTEGIDAS (requieren auth)
+        protected := api.Group("/")
+        protected.Use(middleware.AuthMiddleware())  // Aquí SÍ validamos JWT
+        {
+            protected.POST("/auth/switch-role", authHandler.SwitchRole)
+            // ... más rutas protegidas ...
+        }
+    }
+
+    // ... rest del código ...
+}
+```
+
+### Flujo Correcto (Etapa 20)
+
+```
+Navegador (Vercel) intenta: POST /api/v1/auth/login
+  ↓
+1. Navegador envía Preflight: OPTIONS /api/v1/auth/login
+  ↓
+2. Gin recibe OPTIONS
+  ↓
+3. LocalCORSMiddleware intercepta (línea 175: r.Use(LocalCORSMiddleware()))
+  ↓
+4. Extrae Origin header: "https://paws.vercel.app"
+  ↓
+5. Valida y responde con CORS headers:
+   - Access-Control-Allow-Origin: https://paws.vercel.app
+   - Access-Control-Allow-Methods: POST, OPTIONS, GET, PUT, DELETE
+   - Access-Control-Allow-Headers: ..., Authorization, ...
+   - Status: 204 No Content
+  ↓
+6. c.AbortWithStatus(204) detiene ahí (NO pasa a AuthMiddleware)
+  ↓
+7. Navegador recibe 204 + CORS headers
+  ↓
+8. Navegador aprueba CORS, envía POST real
+  ↓
+9. POST llega a AuthMiddleware
+  ↓
+10. AuthMiddleware valida JWT (si existe)
+    ↓
+11. AuthHandler ejecuta exitosamente
+    ↓
+12. Response 200 + datos
+```
+
+### Configuración de CORS
+
+**Encabezados Configurados en LocalCORSMiddleware**:
+
+| Header                             | Valor                              | Razón                                            |
+| ---------------------------------- | ---------------------------------- | ------------------------------------------------ |
+| `Access-Control-Allow-Origin`      | `origin` (dinámico) o `*`          | Autoriza origen Vercel (https://paws.vercel.app) |
+| `Access-Control-Allow-Credentials` | `true`                             | Permite enviar cookies, headers Authorization    |
+| `Access-Control-Allow-Headers`     | `Content-Type, Authorization, ...` | Autoriza header Authorization para JWT           |
+| `Access-Control-Allow-Methods`     | `POST, OPTIONS, GET, PUT, DELETE`  | Autoriza métodos HTTP                            |
+
+**Análisis de Cada Header**:
+
+1. **Access-Control-Allow-Origin**:
+   - Valor: "https://paws.vercel.app" (en producción) o "\*" (desarrollo)
+   - Razón: Navegador solo permite requests si origen es explícitamente autorizado
+   - Versión Etapa 1: Hardcodeado a "\*"
+   - Versión Etapa 20: Dinámico según Origin header (mejor seguridad)
+
+2. **Access-Control-Allow-Credentials**:
+   - Valor: "true"
+   - Razón: Permite enviar Authorization header (JWT) en requests
+   - Sin esto: Navegador no incluye headers de autenticación
+
+3. **Access-Control-Allow-Headers**:
+   - Valor: "..., Authorization, ..."
+   - Razón: Preflight OPTIONS valida que Authorization es permitido
+   - Sin esto: Navegador bloquea Authorization header en POST real
+
+4. **Access-Control-Allow-Methods**:
+   - Valor: "POST, OPTIONS, GET, PUT, DELETE"
+   - Razón: Preflight OPTIONS valida que POST es permitido
+   - Sin esto: Solo GET permitido (restricción por defecto)
+
+### Validación de CORS
+
+**Test 1: Preflight exitoso**:
+
+```bash
+curl -i -X OPTIONS https://paws-backend-g9sh.onrender.com/api/v1/auth/login \
+  -H "Origin: https://paws.vercel.app" \
+  -H "Access-Control-Request-Method: POST" \
+  -H "Access-Control-Request-Headers: Content-Type, Authorization"
+
+# Debe retornar:
+# HTTP/1.1 204 No Content
+# Access-Control-Allow-Origin: https://paws.vercel.app
+# Access-Control-Allow-Methods: POST, OPTIONS, GET, PUT, DELETE
+# Access-Control-Allow-Headers: ..., Authorization, ...
+```
+
+**Test 2: POST real con JWT**:
+
+```bash
+curl -X POST https://paws-backend-g9sh.onrender.com/api/v1/auth/login \
+  -H "Origin: https://paws.vercel.app" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{"email": "test@example.com", "password": "test"}'
+
+# Debe retornar:
+# HTTP/1.1 200 OK
+# {"token": "..."}
+```
+
+**Test 3: Origin rechazado**:
+
+```bash
+curl -i -X OPTIONS https://paws-backend-g9sh.onrender.com/api/v1/auth/login \
+  -H "Origin: https://hacker.com"
+
+# Puede retornar:
+# HTTP/1.1 204 No Content
+# Access-Control-Allow-Origin: https://hacker.com
+#
+# NOTA: En Etapa 20, todos los orígenes son autorizados.
+# Para producción, implementar whitelist:
+
+// Producción (recomendado)
+var allowedOrigins = []string{
+    "https://paws.vercel.app",
+    "https://paws.com",
+}
+
+origin := c.Request.Header.Get("Origin")
+for _, allowed := range allowedOrigins {
+    if origin == allowed {
+        c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+        break
+    }
+}
+```
+
+### Impacto en Fases Anteriores
+
+**Fase 1 - CORS Original** (en `internal/transport/http/middleware/cors.go`):
+
+```go
+// Antigua Fase 1: CORSMiddleware() simple
+func CORSMiddleware() gin.HandlerFunc {
+    return func(c *gin.Context) {
+        c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+        // ... otros headers ...
+
+        if c.Request.Method == "OPTIONS" {
+            c.AbortWithStatus(http.StatusNoContent)
+            return
+        }
+
+        c.Next()
+    }
+}
+```
+
+**Cambio en Etapa 20**:
+
+- Fase 1 `CORSMiddleware()` permanece igual (backward compatible)
+- Nueva `LocalCORSMiddleware()` en main.go es más robusta (dinámico, mejor producción)
+- main.go usa `LocalCORSMiddleware()` (línea 175) en lugar de `CORSMiddleware()`
+
+**Razón del Cambio**:
+
+- Fase 1: Railway monolito, Vercel no existía. Aplicación web estaba en mismo servidor
+- Etapa 20: Vercel separada de Render. CORS crítico para browser ↔ API separados
+- LocalCORSMiddleware es más robusto: soporta múltiples orígenes dinámicamente
+
+### Configuración en Producción (Recomendado)
+
+**Para Render + Vercel**:
+
+```go
+func LocalCORSMiddleware() gin.HandlerFunc {
+    return func(c *gin.Context) {
+        origin := c.Request.Header.Get("Origin")
+
+        // Whitelist de orígenes permitidos
+        allowedOrigins := []string{
+            "https://paws.vercel.app",
+            "https://paws.com",  // Dominio personalizado futuro
+            "http://localhost:3000",  // Desarrollo local
+        }
+
+        allowed := false
+        for _, o := range allowedOrigins {
+            if origin == o {
+                c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+                allowed = true
+                break
+            }
+        }
+
+        if !allowed && origin != "" {
+            // Log suspicious origin
+            log.Printf("CORS rechazado para origen: %s", origin)
+        }
+
+        c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+        c.Writer.Header().Set("Access-Control-Allow-Headers",
+            "Content-Type, Authorization, Accept")
+        c.Writer.Header().Set("Access-Control-Allow-Methods",
+            "GET, POST, PUT, DELETE, OPTIONS")
+
+        if c.Request.Method == "OPTIONS" {
+            c.AbortWithStatus(204)
+            return
+        }
+
+        c.Next()
+    }
+}
+```
+
+### Archivos Modificados en Etapa 20 (Backend)
+
+- `cmd/api/main.go` (nueva función LocalCORSMiddleware, aplicada en línea 175)
+- `internal/transport/http/middleware/cors.go` (sin cambios, Fase 1 permanece para retrocompatibilidad)
+
+---
+
 ## Referencias
 
 - JWT.io: https://jwt.io

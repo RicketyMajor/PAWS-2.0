@@ -827,7 +827,7 @@ func NewAuthService(dbOrNil *gorm.DB) *AuthService {
 
     if redisHost == "" { redisHost = "localhost" }
     if redisPort == "" { redisPort = "6379" }
-    
+
     rdb := redis.NewClient(&redis.Options{
         Addr:     fmt.Sprintf("%s:%s", redisHost, redisPort),
         Password: redisPass,  // <--- NUEVO: La usamos aquí
@@ -1041,15 +1041,15 @@ void main() async {
 
 ### Comparativa de Plataformas
 
-| Aspecto | Railway (Antes) | Etapa 20 (Después) | Beneficio |
-|--------|-----------------|-------------------|-----------|
-| **Backend** | Railway Dynos | Render Web Service | $0/mes, 750h gratis |
-| **Base de Datos** | Railway PostgreSQL | Neon.tech Serverless | $0/mes, 3GB gratis, mejor para MVP |
-| **Caché** | Railway Redis | Upstash Redis Serverless | $0/mes, global, con autenticación |
-| **Colas** | Railway RabbitMQ | CloudAMQP Free | $0/mes, 1M msgs/mes |
-| **Frontend Web** | Railway (estática) | Vercel CDN | $0/mes, 200+ edge locations |
-| **Notificaciones** | FCM en Railway | FCM en Google Cloud | Sin cambio, Spark gratis |
-| **Costo Total** | $$$$/mes | $0/mes | Infinita viabilidad económica |
+| Aspecto            | Railway (Antes)    | Etapa 20 (Después)       | Beneficio                          |
+| ------------------ | ------------------ | ------------------------ | ---------------------------------- |
+| **Backend**        | Railway Dynos      | Render Web Service       | $0/mes, 750h gratis                |
+| **Base de Datos**  | Railway PostgreSQL | Neon.tech Serverless     | $0/mes, 3GB gratis, mejor para MVP |
+| **Caché**          | Railway Redis      | Upstash Redis Serverless | $0/mes, global, con autenticación  |
+| **Colas**          | Railway RabbitMQ   | CloudAMQP Free           | $0/mes, 1M msgs/mes                |
+| **Frontend Web**   | Railway (estática) | Vercel CDN               | $0/mes, 200+ edge locations        |
+| **Notificaciones** | FCM en Railway     | FCM en Google Cloud      | Sin cambio, Spark gratis           |
+| **Costo Total**    | $$$$/mes           | $0/mes                   | Infinita viabilidad económica      |
 
 ### Flujo de Solicitud Completo (Etapa 20)
 

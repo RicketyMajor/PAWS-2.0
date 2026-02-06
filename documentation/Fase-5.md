@@ -4273,6 +4273,458 @@ T11. Si usuario presiona atrás: app se cierra (ningún route debajo)
 - `app/lib/core/presentation/main_layout_screen.dart` (WillPopScope con doble-tap)
 - `app/lib/features/user/presentation/screens/edit_profile_screen.dart` (logout unificado)
 
+## COMPLETADO EN ETAPA 20: Inyección de Dependencias Global y Interceptores de Autorización
+
+Etapa 20 introduce arquitectura de inyección de dependencias centralizada en main.dart y mecanismo automático de inyección de tokens en Dio (AuthRepository). Estos cambios permiten que múltiples repositorios compartan AuthRepository como fuente única de verdad para tokens, eliminando lógica repetitiva y garantizando consistencia en logout/switchRole.
+
+### Cambio 1: MultiRepositoryProvider Global en main.dart
+
+**Ubicación**: `app/lib/main.dart` (líneas 73-110)
+
+**Problema Anterior**: Cada repositorio (Pets, User, Matches) era responsable de obtener token, guardar token, y limpiar token. Logout no coordinado. SwitchRole requería refresco manual en múltiples pantallas.
+
+**Solución Implementada**:
+
+```dart
+@override
+Widget build(BuildContext context) {
+    // --- INYECCIÓN DE DEPENDENCIAS CENTRALIZADA ---
+    return MultiRepositoryProvider(
+        providers: [
+            // 1. El Padre: AuthRepository (dueño del token)
+            RepositoryProvider(create: (context) => AuthRepository()),
+
+            // 2. Los Hijos: Reciben AuthRepository inyectado
+            RepositoryProvider(
+                create: (context) =>
+                    PetsRepository(authRepository: context.read<AuthRepository>()),
+            ),
+            RepositoryProvider(
+                create: (context) =>
+                    UserRepository(authRepository: context.read<AuthRepository>()),
+            ),
+            RepositoryProvider(
+                create: (context) =>
+                    MatchesRepository(authRepository: context.read<AuthRepository>()),
+            ),
+
+            // 3. Independientes (sin Auth)
+            RepositoryProvider(create: (context) => ChatRepository()),
+            RepositoryProvider(create: (context) => AdminRepository()),
+            RepositoryProvider(create: (context) => SecurityRepository()),
+            RepositoryProvider(create: (context) => ReviewsRepository()),
+        ],
+        child: MaterialApp(
+            title: 'PAWS',
+            debugShowCheckedModeBanner: false,
+            theme: ThemeData(primarySwatch: Colors.pink, useMaterial3: true),
+            home: const AuthCheckScreen(),
+        ),
+    );
+}
+```
+
+**Impacto en Construcción de Repositorios**:
+
+Antes de Etapa 20:
+
+```dart
+// Cada repositorio hacía login por su cuenta (MALO)
+class PetsRepository {
+    Future<List<Pet>> getSwipeDeck() async {
+        // ¿Dónde está el token? ¿En storage local? ¿Cacheado? ¿Expirado?
+        String token = await FlutterSecureStorage().read(key: 'jwt_token');
+        // ... request ...
+    }
+}
+```
+
+Después de Etapa 20:
+
+```dart
+// AuthRepository es la fuente única de verdad
+class PetsRepository {
+    final AuthRepository authRepository;  // Inyectado
+
+    PetsRepository({required this.authRepository});
+
+    Future<List<Pet>> getSwipeDeck() async {
+        // Token garantizado coordinado centralmente
+        final token = await authRepository.getToken();
+        if (token == null) throw Exception('Sesión inválida');
+        // ... request con token ...
+    }
+}
+```
+
+**Ventajas**:
+
+1. **Fuente Única de Verdad**: AuthRepository es la única autoridad de tokens
+2. **Logout Coordinado**: logout() afecta a todos los repositorios automáticamente
+3. **SwitchRole Transparente**: Cambio de rol = actualización centralizada
+4. **Testeable**: Inyectar mock AuthRepository en tests
+5. **Escalable**: Agregar nuevo repositorio = solo pasar authRepository en constructor
+
+### Cambio 2: Interceptor Automático de Authorization en AuthRepository
+
+**Ubicación**: `app/lib/features/auth/data/auth_repository.dart` (líneas 1-45)
+
+**Problema Anterior**: Cada método en cada repositorio debía hacer:
+
+```dart
+// Repetitivo y error-prone
+final token = await authRepository.getToken();
+final options = Options(headers: {'Authorization': 'Bearer $token'});
+final response = await _dio.get(url, options: options);
+```
+
+**Solución Implementada**:
+
+```dart
+class AuthRepository {
+    final Dio _dio = Dio(
+        BaseOptions(
+            connectTimeout: const Duration(seconds: 10),
+            receiveTimeout: const Duration(seconds: 10),
+        ),
+    );
+
+    final FlutterSecureStorage _storage = const FlutterSecureStorage();
+    String? _sessionToken;  // RAM para sesiones temporales (Recuérdame=false)
+
+    AuthRepository() {
+        // 1. Log Interceptor (como antes)
+        _dio.interceptors.add(
+            LogInterceptor(
+                request: true,
+                requestBody: true,
+                responseBody: true,
+                error: true,
+            ),
+        );
+
+        // 2. --- ¡EL INTERCEPTOR MÁGICO! ---
+        // Inyecta token en CADA petición automáticamente
+        _dio.interceptors.add(
+            InterceptorsWrapper(
+                onRequest: (options, handler) async {
+                    // Consultamos el token (RAM o Disco)
+                    final token = await getToken();
+
+                    // Si existe, inyectamos en header
+                    if (token != null) {
+                        options.headers['Authorization'] = 'Bearer $token';
+                    }
+
+                    return handler.next(options);  // Continuar petición
+                },
+            ),
+        );
+    }
+
+    // Token con prioridad: RAM > Disco
+    Future<String?> getToken() async {
+        if (_sessionToken != null) return _sessionToken;
+        return await _storage.read(key: 'jwt_token');
+    }
+
+    // Login: Lógica de persistencia (Recuérdame checkbox)
+    Future<void> login(
+        String email,
+        String password, {
+        bool rememberMe = true,
+    }) async {
+        try {
+            final response = await _dio.post(
+                '${ApiConstants.baseUrl}/auth/login',
+                data: {'email': email, 'password': password},
+            );
+
+            final token = response.data['token'];
+
+            if (rememberMe) {
+                await _storage.write(key: 'jwt_token', value: token);
+            } else {
+                _sessionToken = token;
+                await _storage.delete(key: 'jwt_token');
+            }
+        } on DioException catch (e) {
+            throw Exception(e.response?.data['error'] ?? 'Error desconocido');
+        }
+    }
+
+    // Logout: Limpia RAM y Disco
+    Future<void> logout() async {
+        _sessionToken = null;
+        await _storage.delete(key: 'jwt_token');
+    }
+}
+```
+
+**Impacto en Otros Repositorios**:
+
+```dart
+class PetsRepository {
+    final Dio _dio = Dio(...);  // Sin interceptor (opcional)
+    final AuthRepository authRepository;
+
+    PetsRepository({required this.authRepository});
+
+    Future<Options> _getAuthOptions() async {
+        // Reutilizamos getToken() centralizado
+        final token = await authRepository.getToken();
+        if (token == null) throw Exception('Sesión inválida');
+        return Options(headers: {'Authorization': 'Bearer $token'});
+    }
+
+    Future<List<Pet>> getSwipeDeck({double? lat, double? lon}) async {
+        final options = await _getAuthOptions();
+        // El interceptor de AuthRepository inyecta token automáticamente
+        // NO es necesario pasar options si _dio es el de AuthRepository
+        // Pero si usamos _dio propio, debemos pasar options
+        final response = await _dio.get(
+            '${ApiConstants.baseUrl}/matches/candidates',
+            options: options,  // Mejor práctica: ser explícito
+        );
+        // ... parsing ...
+    }
+}
+```
+
+**Alternativa Simplificada** (si todos usan Dio de AuthRepository):
+
+```dart
+class PetsRepository {
+    final Dio _dio;  // Reutilizar Dio con interceptor
+    final AuthRepository authRepository;
+
+    PetsRepository({required this.authRepository})
+        : _dio = authRepository._dio;  // Reutilizar Dio (aceso privado, requiere refactor)
+
+    Future<List<Pet>> getSwipeDeck({double? lat, double? lon}) async {
+        // Token inyectado automáticamente por interceptor
+        final response = await _dio.get(
+            '${ApiConstants.baseUrl}/matches/candidates',
+            queryParameters: {'lat': lat, 'lon': lon},
+        );
+        // ... parsing ...
+    }
+}
+```
+
+**Ventajas del Interceptor**:
+
+1. **Sin Código Repetitivo**: Token inyectado automáticamente
+2. **Consistencia**: Todos los requests llevan Authorization si hay token
+3. **SwitchRole Transparente**: Nuevo token automáticamente inyectado
+4. **Logout Automático**: Si token es null, no se inyecta header
+5. **Testeable**: Mock AuthRepository mock interceptor
+
+### Integración de Ambos Cambios
+
+**Flujo Completo**:
+
+```
+main.dart start
+  ↓
+1. MultiRepositoryProvider crea AuthRepository
+  ↓
+2. MultiRepositoryProvider crea PetsRepository(authRepository: AuthRepository)
+  ↓
+3. LoginScreen obtiene AuthRepository via context.read<AuthRepository>()
+  ↓
+4. Usuario login → AuthRepository.login()
+  ↓
+5. Token guardado en RAM o Storage según Recuérdame
+  ↓
+6. Siguiente pantalla: MatchScreen obtiene PetsRepository via context.read<PetsRepository>()
+  ↓
+7. MatchScreen → PetsBloc → PetsRepository.getSwipeDeck()
+  ↓
+8. Dio.get() ejecutado
+  ↓
+9. Interceptor de AuthRepository ejecuta onRequest
+  ↓
+10. onRequest hace await authRepository.getToken() → obtiene token
+  ↓
+11. Interceptor inyecta "Authorization: Bearer <token>" en headers
+  ↓
+12. Request llega al backend con token válido
+  ↓
+13. Backend responde 200 + datos
+  ↓
+14. Response llega a PetsRepository
+  ↓
+15. PetsBloc procesa datos y actualiza UI
+```
+
+**SwitchRole Transparente**:
+
+```
+EditProfileScreen → toca "Cambiar a Rescatista"
+  ↓
+UserRepository.switchRole()
+  ↓
+Backend retorna newToken
+  ↓
+AuthRepository.login() actualiza token (mismo código)
+  ↓
+Interceptor en siguientes requests inyecta newToken automáticamente
+  ↓
+Todas las pantallas ven datos del nuevo rol (sin refresh manual)
+```
+
+**Logout Coordinado**:
+
+```
+EditProfileScreen → toca "Logout"
+  ↓
+AuthRepository.logout()
+  ↓
+_sessionToken = null
+  ↓
+_storage.delete(key: 'jwt_token')
+  ↓
+Navigator.pushAndRemoveUntil(LoginScreen, ...)
+  ↓
+PetsBloc, UserBloc, MatchesBloc ya no tienen token
+  ↓
+Siguientes requests van sin Authorization (o 401 desde backend)
+```
+
+### Configuración de Endpoints (EnvironmentConfig)
+
+**Archivo**: `app/lib/core/config/environment_config.dart`
+
+```dart
+class EnvironmentConfig {
+  // Etapa 20: Todas las plataformas apuntan a Render en la nube
+  static const String _renderUrl =
+      'https://paws-backend-g9sh.onrender.com/api/v1';
+  static const String _renderWsUrl =
+      'wss://paws-backend-g9sh.onrender.com/api/v1';
+
+  static String get baseUrl {
+    if (kIsWeb) {
+      // Web: Render (CORS validado en LocalCORSMiddleware)
+      return _renderUrl;
+    } else if (Platform.isAndroid) {
+      // Android: Render (simulador o dispositivo físico)
+      return _renderUrl;
+    } else {
+      // iOS, Desktop: Render
+      return _renderUrl;
+    }
+  }
+
+  static String get wsUrl {
+    if (kIsWeb) {
+      return kReleaseMode ? _renderWsUrl : 'ws://localhost:8080/api/v1';
+    } else if (Platform.isAndroid) {
+      return _renderWsUrl;
+    } else {
+      return _renderWsUrl;
+    }
+  }
+}
+```
+
+**Antes de Etapa 20** (problemas de hardcoding):
+
+```dart
+class ApiConstants {
+    // PROBLEMA: Si backend está en Railway, iOS vs Web necesitan URLs diferentes
+    static const String baseUrl = "http://10.0.2.2:8080/api/v1";  // Solo Android
+}
+```
+
+**Después de Etapa 20** (solución con Render):
+
+```dart
+class EnvironmentConfig {
+    // SOLUCIÓN: Todas las plataformas apuntan a Render
+    // Web obtiene HTTPS automático
+    // Mobile obtiene misma URL
+    static const String _renderUrl = 'https://paws-backend-g9sh.onrender.com/api/v1';
+}
+```
+
+### Blindaje de Firebase para Web
+
+**Archivo**: `app/lib/main.dart` (líneas 28-40)
+
+```dart
+void main() async {
+    WidgetsFlutterBinding.ensureInitialized();
+
+    try {
+        // Firebase.initializeApp() intenta leer google-services.json
+        // En web dev, puede no existir o tener configuración incompleta
+        await Firebase.initializeApp();
+
+        // Background messaging solo en mobile
+        if (!kIsWeb) {
+            FirebaseMessaging.onBackgroundMessage(
+                _firebaseMessagingBackgroundHandler,
+            );
+        }
+    } catch (e) {
+        // NO bloqueamos: Web funciona sin FCM, mobile mantiene notificaciones
+        print("Advertencia: Firebase no se pudo inicializar: $e");
+    }
+
+    runApp(const PawsApp());
+}
+```
+
+**Ventaja**: Web (Vercel) se ejecuta sin dependencia de Firebase. Mobile (Android/iOS) mantiene notificaciones push via FCM.
+
+### Testing de Inyección de Dependencias
+
+```dart
+// test/lib/main_test.dart
+
+void main() {
+    group('Dependency Injection', () {
+        testWidgets('AuthRepository es singleton', (WidgetTester tester) async {
+            await tester.pumpWidget(const PawsApp());
+
+            // Acceder AuthRepository
+            final auth1 = find.byType(AuthRepository);
+            expect(auth1, findsOneWidget);
+
+            // Verificar que es el mismo en toda la app
+            final auth2 = find.byType(AuthRepository);
+            expect(auth1, equals(auth2));
+        });
+
+        testWidgets('PetsRepository recibe AuthRepository', (WidgetTester tester) async {
+            await tester.pumpWidget(const PawsApp());
+
+            // PetsRepository debe tener AuthRepository
+            // Verificar inyectando mock y validando comportamiento
+        });
+
+        testWidgets('Logout limpia AuthRepository globalmente', (WidgetTester tester) async {
+            // 1. Login
+            // 2. Verificar token en AuthRepository
+            // 3. Logout
+            // 4. Verificar token = null en AuthRepository
+            // 5. Siguiente request sin Authorization header
+        });
+    });
+}
+```
+
+### Archivos Modificados en Etapa 20 (Frontend)
+
+- `app/lib/main.dart` (MultiRepositoryProvider, Firebase blindaje)
+- `app/lib/features/auth/data/auth_repository.dart` (Interceptor, login/logout)
+- `app/lib/features/pets/data/pets_repository.dart` (Construcción con authRepository)
+- `app/lib/features/user/data/user_repository.dart` (Construcción con authRepository)
+- `app/lib/features/pets/data/matches_repository.dart` (Construcción con authRepository)
+- `app/lib/core/config/environment_config.dart` (URLs Render para todas las plataformas)
+
 ## Referencias y Recursos
 
 - **Flutter Bloc Pattern**: https://bloclibrary.dev/
