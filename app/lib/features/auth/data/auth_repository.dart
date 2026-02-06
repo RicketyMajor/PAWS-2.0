@@ -17,12 +17,31 @@ class AuthRepository {
   String? _sessionToken;
 
   AuthRepository() {
+    // 1. AGREGO EL LOG INTERCEPTOR (Como tenías antes)
     _dio.interceptors.add(
       LogInterceptor(
         request: true,
         requestBody: true,
         responseBody: true,
         error: true,
+      ),
+    );
+
+    // 2. --- ¡EL ARREGLO MÁGICO! ---
+    // Agregamos un interceptor que inyecta el token en CADA petición.
+    _dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) async {
+          // Consultamos el token (ya sea de memoria o disco)
+          final token = await getToken();
+
+          // Si existe, lo pegamos en el Header como "Bearer TOKEN"
+          if (token != null) {
+            options.headers['Authorization'] = 'Bearer $token';
+          }
+
+          return handler.next(options); // Continuar con la petición
+        },
       ),
     );
   }
@@ -64,12 +83,10 @@ class AuthRepository {
   // --- SWITCH ROLE ---
   Future<Map<String, dynamic>?> switchRole() async {
     try {
-      final token = await getToken(); // Usamos el getter inteligente
-      if (token == null) throw Exception("No hay sesión activa");
-
+      // NOTA: Ya no necesitamos pasar el header manualmente aquí,
+      // el interceptor lo hará por nosotros. Pero si quieres dejarlo explícito, no daña.
       final response = await _dio.post(
-        '${ApiConstants.baseUrl}${ApiConstants.switchRole}',
-        options: Options(headers: {'Authorization': 'Bearer $token'}),
+        '${ApiConstants.baseUrl}/auth/switch-role',
       );
 
       if (response.statusCode == 200) {
@@ -111,9 +128,6 @@ class AuthRepository {
     _sessionToken = null;
     await _storage.delete(key: 'jwt_token');
   }
-
-  // ... (Resto de métodos: register, verifyOtp, forgotPassword, etc. se mantienen IGUAL) ...
-  // COPIA AQUÍ EL RESTO DE TUS MÉTODOS EXISTENTES (register, verifyOtp, etc) SIN CAMBIOS
 
   Future<void> register({
     required String email,

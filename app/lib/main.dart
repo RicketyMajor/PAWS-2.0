@@ -1,8 +1,9 @@
+import 'package:flutter/foundation.dart'; // Para kIsWeb
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:jwt_decoder/jwt_decoder.dart'; // Importante para leer el rol
+import 'package:jwt_decoder/jwt_decoder.dart';
 
 // Imports de tus Repositorios
 import 'features/auth/data/auth_repository.dart';
@@ -13,13 +14,14 @@ import 'features/pets/data/matches_repository.dart';
 
 // Imports de Pantallas
 import 'features/auth/presentation/screens/login_screen.dart';
-import 'core/presentation/main_layout_screen.dart'; // Layout Principal
-import 'features/admin/presentation/screens/admin_dashboard_screen.dart'; // Dashboard Admin
+import 'core/presentation/main_layout_screen.dart';
+import 'features/admin/presentation/screens/admin_dashboard_screen.dart';
 
 import 'features/admin/data/admin_repository.dart';
 import 'features/security/data/security_repository.dart';
 import 'features/reviews/data/reviews_repository.dart';
 
+// Handler simple para background (solo móvil)
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   print("Notificación en Segundo Plano: ${message.messageId}");
 }
@@ -27,11 +29,23 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // --- INICIALIZACIÓN ROBUSTA DE FIREBASE ---
   try {
+    // Si tienes firebase_options.dart generado, úsalo aquí.
+    // Si no, este bloque try-catch evitará que la app web explote al inicio.
     await Firebase.initializeApp();
-    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
+    // Solo registramos el handler si no estamos en web para evitar errores de Service Worker faltantes
+    if (!kIsWeb) {
+      FirebaseMessaging.onBackgroundMessage(
+        _firebaseMessagingBackgroundHandler,
+      );
+    }
   } catch (e) {
-    print("Error inicializando Firebase: $e");
+    print(
+      "Advertencia: Firebase no se pudo inicializar (Normal en Web dev sin config): $e",
+    );
+    // La app continuará ejecutándose sin Firebase
   }
 
   runApp(const PawsApp());
@@ -52,18 +66,35 @@ class _PawsAppState extends State<PawsApp> {
   }
 
   Future<void> _setupFCM() async {
-    FirebaseMessaging messaging = FirebaseMessaging.instance;
-    NotificationSettings settings = await messaging.requestPermission(
-      alert: true,
-      badge: true,
-      sound: true,
-    );
+    try {
+      // Verificamos si Firebase está activo antes de llamar a Messaging
+      if (Firebase.apps.isEmpty) return;
 
-    if (settings.authorizationStatus == AuthorizationStatus.authorized) {
-      String? token = await messaging.getToken();
-      if (token != null) {
-        print("FCM Token: $token");
+      FirebaseMessaging messaging = FirebaseMessaging.instance;
+
+      // Pedimos permisos con gracia
+      NotificationSettings settings = await messaging.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+
+      if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+        // En Web, getToken requiere un VAPID key público, si no lo tienes, fallará.
+        // Lo envolvemos en try-catch para que no moleste en consola.
+        try {
+          String? token = await messaging.getToken();
+          if (token != null) {
+            print("FCM Token: $token");
+          }
+        } catch (e) {
+          print(
+            "No se pudo obtener FCM Token (Probablemente falta configuración Web): $e",
+          );
+        }
       }
+    } catch (e) {
+      print("Error configurando FCM: $e");
     }
   }
 
@@ -98,7 +129,6 @@ class _PawsAppState extends State<PawsApp> {
             ),
           ),
         ),
-        // CORRECCIÓN: En lugar de LoginScreen directo, usamos el verificador
         home: const AuthCheckScreen(),
       ),
     );
@@ -121,7 +151,6 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
   }
 
   Future<void> _checkSession() async {
-    // Pequeño delay para que se vea el logo (opcional, mejora UX)
     await Future.delayed(const Duration(seconds: 1));
 
     if (!mounted) return;
@@ -131,7 +160,6 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
       final token = await authRepo.getToken();
 
       if (token != null && !JwtDecoder.isExpired(token)) {
-        // Token válido -> Redirigir según Rol
         Map<String, dynamic> decodedToken = JwtDecoder.decode(token);
         String role = decodedToken['role'] ?? 'adopter';
 
@@ -147,14 +175,12 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
           );
         }
       } else {
-        // No hay token o expiró -> Login
         if (!mounted) return;
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => const LoginScreen()),
         );
       }
     } catch (e) {
-      // Error leyendo token -> Login
       if (mounted) {
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => const LoginScreen()),
