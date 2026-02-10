@@ -87,3 +87,13 @@ func (s *ChatService) containsForbiddenContent(text string) bool {
 	}
 	return false
 }
+
+// --- NUEVO MÉTODO: Marcar mensajes como leídos ---
+func (s *ChatService) MarkAsRead(matchID, userID uint) error {
+	// Actualiza todos los mensajes de ESTE match
+	// donde el Sender NO sea el usuario actual ( userID != sender_id )
+	// y que aún no estén leídos ( is_read = false )
+	return s.db.Model(&domain.Message{}).
+		Where("match_id = ? AND sender_id != ? AND is_read = ?", matchID, userID, false).
+		Update("is_read", true).Error
+}

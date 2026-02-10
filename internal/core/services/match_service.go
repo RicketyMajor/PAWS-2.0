@@ -50,7 +50,7 @@ func (s *MatchService) GetSwipeDeck(userID uint, lat, lon float64) ([]domain.Pet
 	}
 
 	var pets []domain.Pet
-	
+
 	// Construcción de la Query
 	query := s.db.Table("pets p").
 		Select("p.*").
@@ -130,21 +130,39 @@ func (s *MatchService) Unmatch(userID, matchID uint) error {
 // GetAcceptedMatches (Para el ADOPTANTE)
 func (s *MatchService) GetAcceptedMatches(adopterID uint) ([]domain.Match, error) {
 	var matches []domain.Match
-	
+
 	err := s.db.Preload("Pet.User").
 		Preload("Pet.Images").
 		Preload("Pet", func(db *gorm.DB) *gorm.DB {
 			return db.Unscoped()
 		}).
-		Where("adopter_id = ? AND status IN (?, ?, ?)", 
+		Where("adopter_id = ? AND status IN (?, ?, ?)",
 			adopterID, MatchAccepted, MatchRescuerLeft, MatchPetDeleted).
 		Order("updated_at DESC").
 		Find(&matches).Error
-	
+
+	if err != nil {
+		return nil, err
+	}
+
+	// --- LÓGICA DE PROCESAMIENTO (Soft Delete + Unread Count) ---
 	for i := range matches {
+		// 1. Verificar si la mascota fue borrada
 		if !matches[i].Pet.DeletedAt.Time.IsZero() {
-			matches[i].Pet.Status = domain.PetStatus("deleted") 
+			matches[i].Pet.Status = domain.PetStatus("deleted")
 		}
+
+		// 2. Contar mensajes sin leer
+		// Contamos mensajes donde:
+		// MatchID es este match
+		// SenderID NO soy yo (adopterID) -> O sea, me escribieron a mí
+		// IsRead es falso
+		var count int64
+		s.db.Model(&domain.Message{}).
+			Where("match_id = ? AND sender_id != ? AND is_read = ?", matches[i].ID, adopterID, false).
+			Count(&count)
+
+		matches[i].UnreadCount = int(count)
 	}
 	return matches, err
 }
@@ -152,7 +170,7 @@ func (s *MatchService) GetAcceptedMatches(adopterID uint) ([]domain.Match, error
 // GetRescuerMatches (Para el RESCATISTA)
 func (s *MatchService) GetRescuerMatches(rescuerID uint) ([]domain.Match, error) {
 	var matches []domain.Match
-	
+
 	err := s.db.Table("matches").
 		Select("matches.*").
 		Joins("JOIN pets ON matches.pet_id = pets.id").
@@ -161,22 +179,39 @@ func (s *MatchService) GetRescuerMatches(rescuerID uint) ([]domain.Match, error)
 		Preload("Pet", func(db *gorm.DB) *gorm.DB {
 			return db.Unscoped()
 		}).
-		Where("pets.user_id = ? AND matches.status IN (?, ?, ?)", 
+		Where("pets.user_id = ? AND matches.status IN (?, ?, ?)",
 			rescuerID, MatchAccepted, MatchAdopterLeft, MatchPetDeleted).
 		Order("matches.updated_at DESC").
 		Find(&matches).Error
-	
+
+	if err != nil {
+		return nil, err
+	}
+
+	// --- LÓGICA DE PROCESAMIENTO (Soft Delete + Unread Count) ---
 	for i := range matches {
+		// 1. Verificar si la mascota fue borrada
 		if !matches[i].Pet.DeletedAt.Time.IsZero() {
 			matches[i].Pet.Status = domain.PetStatus("deleted")
 		}
+
+		// 2. Contar mensajes sin leer
+		// SenderID NO soy yo (rescuerID) -> Me escribieron a mí
+		var count int64
+		s.db.Model(&domain.Message{}).
+			Where("match_id = ? AND sender_id != ? AND is_read = ?", matches[i].ID, rescuerID, false).
+			Count(&count)
+
+		matches[i].UnreadCount = int(count)
 	}
 	return matches, err
 }
 
 func (s *MatchService) Swipe(adopterID, petID uint, isLike bool) error {
 	status := domain.MatchPending
-	if !isLike { status = domain.MatchRejected }
+	if !isLike {
+		status = domain.MatchRejected
+	}
 	var match domain.Match
 	err := s.db.Where("adopter_id = ? AND pet_id = ?", adopterID, petID).First(&match).Error
 	if err == nil {
@@ -189,7 +224,9 @@ func (s *MatchService) Swipe(adopterID, petID uint, isLike bool) error {
 
 func (s *MatchService) RespondMatch(rescuerID, matchID uint, accept bool) error {
 	status := domain.MatchRejected
-	if accept { status = MatchAccepted }
+	if accept {
+		status = MatchAccepted
+	}
 	if err := s.db.Model(&domain.Match{}).Where("id = ?", matchID).Update("status", status).Error; err != nil {
 		return err
 	}
@@ -223,7 +260,7 @@ func (s *MatchService) GetAdopterPendingMatches(adopterID uint) ([]domain.Match,
 func (s *MatchService) GetPendingRequests(rescuerID uint) ([]domain.Match, error) {
 	var matches []domain.Match
 	err := s.db.Table("matches").
-		Select("matches.*"). 
+		Select("matches.*").
 		Joins("JOIN pets ON matches.pet_id = pets.id").
 		Preload("Adopter").Preload("Pet.Images").Preload("Pet").
 		Where("pets.user_id = ? AND matches.status = ?", rescuerID, domain.MatchPending).

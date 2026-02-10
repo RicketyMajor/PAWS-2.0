@@ -3,8 +3,9 @@ package http
 import (
 	"net/http"
 	"strconv"
-	"github.com/gin-gonic/gin"
+
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/services"
+	"github.com/gin-gonic/gin"
 )
 
 type SocialHandler struct {
@@ -39,11 +40,18 @@ func getUserIDSafe(c *gin.Context) (uint, bool) {
 func (h *SocialHandler) CreateReview(c *gin.Context) {
 	// Seguridad: Obtener ID del usuario autenticado
 	idVal, exists := c.Get("userID")
-	if !exists { c.JSON(http.StatusUnauthorized, gin.H{"error": "Auth required"}); return }
-	
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Auth required"})
+		return
+	}
+
 	// Conversión segura de tipo
 	var userID uint
-	if v, ok := idVal.(float64); ok { userID = uint(v) } else { userID = idVal.(uint) }
+	if v, ok := idVal.(float64); ok {
+		userID = uint(v)
+	} else {
+		userID = idVal.(uint)
+	}
 
 	var req struct {
 		MatchID uint    `json:"match_id" binding:"required"`
@@ -91,4 +99,27 @@ func (h *SocialHandler) GetChatHistory(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, messages)
+}
+
+// --- NUEVO HANDLER: MARCAR COMO LEÍDO ---
+func (h *SocialHandler) MarkAsRead(c *gin.Context) {
+	userID, ok := getUserIDSafe(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Usuario no identificado"})
+		return
+	}
+
+	matchIDStr := c.Param("id")
+	matchID, err := strconv.Atoi(matchIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID de match inválido"})
+		return
+	}
+
+	if err := h.chatService.MarkAsRead(uint(matchID), userID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error marcando mensajes como leídos"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Mensajes marcados como leídos"})
 }

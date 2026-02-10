@@ -98,16 +98,24 @@ func main() {
 	// -------------------------------------------------------------------------
 	var mqClient *messaging.RabbitMQClient
 	var err error
-	
+
 	rabbitUser := os.Getenv("RABBITMQ_USER")
 	rabbitPass := os.Getenv("RABBITMQ_PASSWORD")
 	rabbitHost := os.Getenv("RABBITMQ_HOST")
 	rabbitPort := os.Getenv("RABBITMQ_PORT")
 
-	if rabbitUser == "" { rabbitUser = "guest" }
-	if rabbitPass == "" { rabbitPass = "guest" }
-	if rabbitHost == "" { rabbitHost = "localhost" }
-	if rabbitPort == "" { rabbitPort = "5672" }
+	if rabbitUser == "" {
+		rabbitUser = "guest"
+	}
+	if rabbitPass == "" {
+		rabbitPass = "guest"
+	}
+	if rabbitHost == "" {
+		rabbitHost = "localhost"
+	}
+	if rabbitPort == "" {
+		rabbitPort = "5672"
+	}
 
 	rabbitURL := fmt.Sprintf("amqp://%s:%s@%s:%s/", rabbitUser, rabbitPass, rabbitHost, rabbitPort)
 
@@ -135,17 +143,17 @@ func main() {
 	// 2. INYECCIÓN DE DEPENDENCIAS
 	// =========================================================================
 
-	otpService      := services.NewOTPService(mqClient) 
-	authService     := services.NewAuthService(database.DB)
-	petService      := services.NewPetService(database.DB)
-	userService     := services.NewUserService(database.DB)
-	chatService     := services.NewChatService(database.DB)
-	reviewService   := services.NewReviewService(database.DB)
-	fileService     := services.NewFileService()
+	otpService := services.NewOTPService(mqClient)
+	authService := services.NewAuthService(database.DB)
+	petService := services.NewPetService(database.DB)
+	userService := services.NewUserService(database.DB)
+	chatService := services.NewChatService(database.DB)
+	reviewService := services.NewReviewService(database.DB)
+	fileService := services.NewFileService()
 	identityService := services.NewIdentityService()
 
-	reportService   := services.NewReportService(database.DB, authService)
-	matchService    := services.NewMatchService(database.DB, petService, mqClient)
+	reportService := services.NewReportService(database.DB, authService)
+	matchService := services.NewMatchService(database.DB, petService, mqClient)
 
 	hub := httpTransport.NewHub(chatService, mqClient)
 	go hub.Run()
@@ -154,16 +162,16 @@ func main() {
 	// 3. HANDLERS
 	// =========================================================================
 
-	authHandler     := httpTransport.NewAuthHandler(authService, otpService)
-	petHandler 		:= httpTransport.NewPetHandler(petService, fileService)
-	userHandler     := httpTransport.NewUserHandler(userService, matchService)
-	matchHandler    := httpTransport.NewMatchHandler(matchService)
-	socialHandler   := httpTransport.NewSocialHandler(chatService, reviewService)
-	reportHandler   := httpTransport.NewReportHandler(reportService)
-	uploadHandler   := httpTransport.NewUploadHandler(fileService)
+	authHandler := httpTransport.NewAuthHandler(authService, otpService)
+	petHandler := httpTransport.NewPetHandler(petService, fileService)
+	userHandler := httpTransport.NewUserHandler(userService, matchService)
+	matchHandler := httpTransport.NewMatchHandler(matchService)
+	socialHandler := httpTransport.NewSocialHandler(chatService, reviewService)
+	reportHandler := httpTransport.NewReportHandler(reportService)
+	uploadHandler := httpTransport.NewUploadHandler(fileService)
 	identityHandler := httpTransport.NewIdentityHandler(identityService)
-	wsHandler       := httpTransport.NewWSHandler(hub)
-	adminHandler    := httpTransport.NewAdminHandler(reportService)
+	wsHandler := httpTransport.NewWSHandler(hub)
+	adminHandler := httpTransport.NewAdminHandler(reportService)
 	notificationHandler := httpTransport.NewNotificationHandler(userService)
 
 	// =========================================================================
@@ -171,10 +179,10 @@ func main() {
 	// =========================================================================
 
 	r := gin.Default()
-	
+
 	// --- CAMBIO: Usamos nuestro Middleware Local para solucionar el error de Vercel (401/CORS) ---
-	r.Use(LocalCORSMiddleware()) 
-	
+	r.Use(LocalCORSMiddleware())
+
 	r.Static("/uploads", "./uploads")
 
 	api := r.Group("/api/v1")
@@ -192,7 +200,7 @@ func main() {
 
 		// BUSCADOR PÚBLICO DE BLACKLIST
 		api.GET("/blacklist/search", reportHandler.SearchBlacklist)
-		
+
 		petsPublic := api.Group("/pets")
 		{
 			petsPublic.GET("", petHandler.GetAll)
@@ -202,7 +210,7 @@ func main() {
 
 		// RUTAS PROTEGIDAS
 		protected := api.Group("/")
-		protected.Use(middleware.AuthMiddleware()) 
+		protected.Use(middleware.AuthMiddleware())
 		{
 			protected.POST("/auth/switch-role", authHandler.SwitchRole)
 			protected.PUT("/profile", userHandler.UpdateProfile)
@@ -221,6 +229,7 @@ func main() {
 				match.POST("/respond", matchHandler.Respond)
 				match.GET("/:id/messages", socialHandler.GetChatHistory)
 				match.GET("/rescuer", matchHandler.GetRescuerMatches)
+				match.POST("/:id/read", socialHandler.MarkAsRead)
 				match.GET("/adopter", matchHandler.GetAdopterMatches)
 				match.POST("/unmatch", matchHandler.Unmatch)
 			}
@@ -234,24 +243,24 @@ func main() {
 
 		// ADMIN
 		admin := protected.Group("/admin")
-		admin.Use(middleware.RequireRole("admin")) 
+		admin.Use(middleware.RequireRole("admin"))
 		{
-			admin.GET("/reports", adminHandler.GetReports)       
-			admin.GET("/reports/:id", adminHandler.GetReportDetails) 
-			admin.POST("/reports/:id/resolve", adminHandler.Resolve) 
+			admin.GET("/reports", adminHandler.GetReports)
+			admin.GET("/reports/:id", adminHandler.GetReportDetails)
+			admin.POST("/reports/:id/resolve", adminHandler.Resolve)
 		}
 	}
 
 	// =========================================================================
 	// 5. ARRANCAR
 	// =========================================================================
-	
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 	log.Printf("Servidor PAWS iniciado en puerto %s", port)
-	
+
 	if err := r.Run(":" + port); err != nil {
 		log.Fatal("Error fatal en servidor:", err)
 	}
