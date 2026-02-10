@@ -180,12 +180,10 @@ func (s *PetService) GetAll() ([]domain.Pet, error) {
 **Detalles**:
 
 1. **Preload("User")**: Carga también el usuario propietario (JOIN interno)
-
    - Sin Preload, el campo User estaría nulo
    - GORM ejecuta: `SELECT * FROM pets ... JOIN users ...`
 
 2. **Where("status = ?", domain.StatusAvailable)**: Filtra solo mascotas disponibles
-
    - `?` es placeholder para evitar SQL injection
    - `StatusAvailable` es constante "available"
 
@@ -222,12 +220,10 @@ func (s *FileService) SaveImage(file *multipart.FileHeader) (string, error) {
 **Seguridad e Implementación**:
 
 1. **Validación de Extensión**: Solo JPG, JPEG, PNG
-
    - Previene upload de ejecutables (.exe, .sh, etc.)
    - Convertir a minúsculas evita bypass con ".JPG"
 
 2. **UUID para Nombre**:
-
    - `uuid.New()` genera identificador único de 128 bits
    - Evita colisiones (probabilidad astronómica)
    - Imposible adivinar nombres de archivos
@@ -370,7 +366,6 @@ func AuthMiddleware() gin.HandlerFunc {
 1. **Intercepta Requests**: Se ejecuta ANTES que el handler real
 
 2. **Validación en Cadena**:
-
    - Header presente?
    - Formato "Bearer X"?
    - Token válido?
@@ -380,7 +375,6 @@ func AuthMiddleware() gin.HandlerFunc {
 3. **AbortWithStatusJSON**: Si falla en cualquier punto, envía error y DETIENE la ejecución
 
 4. **c.Set() / c.Get()**: Almacena datos en contexto de Gin
-
    - Disponibles en handlers vía `c.Get("userID")`
    - Thread-safe para cada request
 
@@ -449,12 +443,10 @@ func (h *PetHandler) GetAll(c *gin.Context) {
 **Puntos Clave**:
 
 1. **Extracción de UserID**: Del JWT en el middleware
-
    - JWT devuelve `sub` como float64
    - Convertimos a uint para BD
 
 2. **Creación Automática de Usuario**: UserID se asigna implícitamente
-
    - El rescatista no necesita proporcionar ID
    - Se infiere del token JWT
 
@@ -2094,9 +2086,9 @@ func (s *MatchService) GetSwipeDeck(userID uint, lat, lon float64) ([]domain.Pet
         Where("p.status = ?", domain.StatusAvailable).
         Where("p.deleted_at IS NULL").
         Where("u.run <> ?", currentUser.Run)  // FILTRO ESPEJO: Excluye por RUT
-    
+
     query = query.Order("p.created_at DESC").Limit(50)
-    
+
     var pets []domain.Pet
     if err := query.Preload("Images").Find(&pets).Error; err != nil {
         return nil, err
@@ -2109,12 +2101,12 @@ func (s *MatchService) GetSwipeDeck(userID uint, lat, lon float64) ([]domain.Pet
 
 ### Garantía de Privacidad
 
-| Escenario | RUT | Rol | ¿Ve propia mascota? | Razón |
-|---|---|---|---|---|
-| Adoptante en GetSwipeDeck | RUT-001 | adopter | NO | u.run <> RUT-001 |
-| Rescatista en GetSwipeDeck | RUT-001 | rescuer | NO | u.run <> RUT-001 |
-| Cambio a Rescatista (mismo RUT) | RUT-001 | rescuer | NO | u.run <> RUT-001 |
-| Otro usuario busca | RUT-002 | any | SÍ | u.run <> RUT-002 ✓ |
+| Escenario                       | RUT     | Rol     | ¿Ve propia mascota? | Razón              |
+| ------------------------------- | ------- | ------- | ------------------- | ------------------ |
+| Adoptante en GetSwipeDeck       | RUT-001 | adopter | NO                  | u.run <> RUT-001   |
+| Rescatista en GetSwipeDeck      | RUT-001 | rescuer | NO                  | u.run <> RUT-001   |
+| Cambio a Rescatista (mismo RUT) | RUT-001 | rescuer | NO                  | u.run <> RUT-001   |
+| Otro usuario busca              | RUT-002 | any     | SÍ                  | u.run <> RUT-002 ✓ |
 
 ### Integración con GET /pets/my
 
@@ -2124,6 +2116,252 @@ El Filtro Espejo es complementario a `GET /pets/my`:
 - **GET /pets/my**: Ve PROPIAS MASCOTAS (Sin filtro, control total)
 
 Juntos garantizan:
+
 - Usuario ve SUS mascotas en `/pets/my`
 - Usuario ve mascotas AJENAS en `/swipedeck`
 - Usuario NUNCA ve propias mascotas en `/swipedeck`
+
+---
+
+## COMPLETADO EN ETAPA 21: Almacenamiento Persistente con Cloudinary
+
+Etapa 21 resuelve el problema crítico de **persistencia de imágenes** en Render Web Service. Las imágenes subidas al directorio `./uploads` local desaparecían cada 15 minutos durante reinicios automáticos de Render. Esta etapa introduce **Cloudinary** como sistema de almacenamiento cloud permanente, reemplazando completamente el MinIO/almacenamiento local.
+
+### El Problema: Almacenamiento Efímero en Render
+
+**Contexto**: Render Web Service proporciona un sistema de archivos efímero (ephemeral). Cualquier archivo guardado en disco se destruye cuando:
+
+1. Render reinicia el dyno (cada 15 minutos por defecto)
+2. Deployment nuevo se activa
+3. Servidor se escala horizontalmente
+
+**Impacto Observable**:
+
+```
+Rescatista sube 10 fotos de mascota (Etapa 2)
+  ↓ guardadas en ./uploads/uuid-1.jpg, uuid-2.jpg, ...
+  ↓ URLs referencias en BD: /uploads/uuid-1.jpg
+
+Render reinicia automáticamente en 15 minutos
+  ↓
+./uploads/ directory se destruye completamente
+  ↓
+URLs guardadas en BD apuntan a archivos inexistentes
+  ↓
+Frontend intenta GET /uploads/uuid-1.jpg → 404 Not Found
+  ↓
+Galería de mascotas completamente vacía
+  ↓
+Rescatista no puede ver sus propias fotos subidas
+  ↓
+Pérdida permanente de datos (imposible recuperar)
+```
+
+**Escopo del Problema**:
+
+- Afecta TODAS las mascotas subidas en Etapa 2+
+- Afecta fotos de perfil de usuarios
+- Afecta documentos de verificación de identidad
+- No es un bug del código, sino una limitación arquitectónica de Render free tier
+
+### La Solución: Cloudinary CDN Global
+
+**Cloudinary** es un servicio especializado de almacenamiento y distribución de imágenes. En lugar de guardar archivos en disco local, FileService envía imágenes a Cloudinary API, que las persiste globalmente y las sirve desde CDN.
+
+**Ventajas claves**:
+
+1. **Persistencia Global**: Imágenes se almacenan permanentemente (no efímeras)
+2. **CDN 200+ Locations**: Distribuye automáticamente a centros de datos globales
+3. **HTTPS por Defecto**: Todas las URLs son HTTPS (seguridad)
+4. **Transformaciones On-the-fly**: Resize, crop, compress vía parámetros URL
+5. **Escalabilidad Infinita**: Maneja millones de imágenes sin degradación
+6. **Redundancia Geográfica**: Backup automático en múltiples datacenters
+7. **Freemium Tier**: 10 GB gratuitos por mes (suficiente para MVP)
+
+### Reescritura de FileService con Cloudinary
+
+**Ubicación**: `internal/core/services/file_service.go` (completamente reescrito en Etapa 21)
+
+#### Imports y Inicialización
+
+```go
+import (
+    "github.com/cloudinary/cloudinary-go/v2"
+    "github.com/cloudinary/cloudinary-go/v2/api"
+    "github.com/cloudinary/cloudinary-go/v2/api/uploader"
+)
+
+type FileService struct {
+    cld       *cloudinary.Cloudinary  // Cliente Cloudinary para API calls
+    isEnabled bool                    // Fallback flag si CLOUDINARY_URL no disponible
+}
+
+func NewFileService() *FileService {
+    // Variable de entorno contiene credenciales Cloudinary
+    cldURL := os.Getenv("CLOUDINARY_URL")
+
+    // Graceful degradation si no está configurada
+    if cldURL == "" {
+        log.Println("ADVERTENCIA: CLOUDINARY_URL no configurada. Almacenamiento deshabilitado.")
+        return &FileService{isEnabled: false}
+    }
+
+    // Cloudinary.NewFromURL() parsea automáticamente la URL
+    // URL format: cloudinary://api_key:api_secret@cloud_name
+    cld, err := cloudinary.NewFromURL(cldURL)
+    if err != nil {
+        log.Printf("Error inicializando cliente Cloudinary: %v\n", err)
+        return &FileService{isEnabled: false}
+    }
+
+    log.Println("✓ Cloudinary conectado exitosamente")
+    return &FileService{cld: cld, isEnabled: true}
+}
+```
+
+#### SaveImage(): Upload Individual
+
+```go
+func (s *FileService) SaveImage(ctx context.Context, file *multipart.FileHeader) (string, error) {
+    if !s.isEnabled {
+        return "", fmt.Errorf("servicio no disponible")
+    }
+
+    ext := strings.ToLower(filepath.Ext(file.Filename))
+    validExts := map[string]bool{".jpg": true, ".jpeg": true, ".png": true}
+    if !validExts[ext] {
+        return "", fmt.Errorf("formato no permitido: %s", ext)
+    }
+
+    if file.Size > 10*1024*1024 {
+        return "", fmt.Errorf("archivo demasiado grande (máximo 10 MB)")
+    }
+
+    src, err := file.Open()
+    if err != nil {
+        return "", fmt.Errorf("error abriendo archivo: %w", err)
+    }
+    defer src.Close()
+
+    uniqueFilename := uuid.New().String()
+
+    uploadParams := uploader.UploadParams{
+        PublicID:     uniqueFilename,
+        Folder:       "paws_uploads",
+        ResourceType: "image",
+        Overwrite:    api.Bool(true),
+        Quality:      "auto",
+        FetchFormat:  "auto",
+    }
+
+    resp, err := s.cld.Upload.Upload(ctx, src, uploadParams)
+    if err != nil {
+        log.Printf("Error Cloudinary: %v", err)
+        return "", fmt.Errorf("error subiendo imagen: %w", err)
+    }
+
+    return resp.SecureURL, nil
+}
+```
+
+#### SaveMultipleImages(): Upload en Batch
+
+```go
+func (s *FileService) SaveMultipleImages(ctx context.Context, files []*multipart.FileHeader) ([]string, error) {
+    if !s.isEnabled {
+        return nil, fmt.Errorf("servicio no disponible")
+    }
+
+    if len(files) > 10 {
+        return nil, fmt.Errorf("máximo 10 fotos permitidas")
+    }
+    if len(files) == 0 {
+        return nil, fmt.Errorf("se requiere al menos 1 foto")
+    }
+
+    var urls []string
+
+    for i, file := range files {
+        log.Printf("Procesando foto %d/%d", i+1, len(files))
+
+        url, err := s.SaveImage(ctx, file)
+        if err != nil {
+            return nil, fmt.Errorf("error en foto %d: %w", i+1, err)
+        }
+        urls = append(urls, url)
+    }
+
+    log.Printf("✓ %d imágenes subidas a Cloudinary", len(urls))
+    return urls, nil
+}
+```
+
+### Integración PetService.Create()
+
+```go
+func (s *PetService) Create(input CreatePetInput) (*domain.Pet, error) {
+    mainPhoto := ""
+    if len(input.ImageURLs) > 0 {
+        mainPhoto = input.ImageURLs[0]
+    }
+
+    newPet := domain.Pet{
+        UserID:   input.UserID,
+        Name:     input.Name,
+        PhotoURL: mainPhoto,
+    }
+
+    err := s.db.Transaction(func(tx *gorm.DB) error {
+        if err := tx.Create(&newPet).Error; err != nil {
+            return err
+        }
+
+        var images []domain.PetImage
+        for i, url := range input.ImageURLs {
+            images = append(images, domain.PetImage{
+                PetID:   newPet.ID,
+                URL:     url,
+                IsCover: (i == 0),
+            })
+        }
+
+        if len(images) > 0 {
+            if err := tx.Create(&images).Error; err != nil {
+                return err
+            }
+        }
+
+        return nil
+    })
+
+    if err != nil {
+        return nil, err
+    }
+
+    s.db.Preload("User").Preload("Images").First(&newPet, newPet.ID)
+    return &newPet, nil
+}
+```
+
+### Arquitectura: Antes (MinIO) vs Después (Cloudinary)
+
+**ANTES**: Archivos en ./uploads (ephemeral, desaparece en 15 min)
+**DESPUÉS**: URLs HTTPS permanentes desde Cloudinary CDN global (200+ locations)
+
+### Configuración en Render
+
+1. Crear cuenta Cloudinary (free): https://cloudinary.com
+2. Dashboard → Settings → API Keys
+3. Copiar "API Environment variable" (formato: `cloudinary://...`)
+4. Render dashboard → Environment → Add `CLOUDINARY_URL`
+5. Paste y Redeploy
+
+### Status Etapa 21
+
+- ✓ FileService reescrito con Cloudinary SDK
+- ✓ NewFileService() lee CLOUDINARY_URL
+- ✓ SaveImage() y SaveMultipleImages() con Cloudinary API
+- ✓ Transacciones atómicas en PetService
+- ✓ Backward compatibility (PhotoURL + PetImage)
+- ✓ Feature parity: Web = Mobile para persistencia de imágenes
+- ✓ URLs permanentes HTTPS desde CDN global
