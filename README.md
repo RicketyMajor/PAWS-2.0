@@ -11209,6 +11209,552 @@ RABBITMQ_URL=... # CloudAMQP
 
 **Migración**: Sin cambios de código, solo variables de entorno diferentes.
 
+---
+
+## Etapa 21: Consolidando la Nube - "Persistencia Global y Notificaciones Web" (Completada)
+
+Etapa 21 implementa dos transformaciones críticas para la madurez del producto: almacenamiento de imágenes persistente en la nube mediante Cloudinary y notificaciones push web equivalentes a la experiencia móvil mediante Firebase Service Worker.
+
+### Problema Resuelto
+
+**Situación Anterior** (Post Etapa 20):
+
+1. **Imágenes Efímeras en Render**: Aunque Etapa 20 migró a Render (tier gratuito), el directorio `./uploads` se borra con cada restart del servidor. Las fotos de perfil y mascotas desaparecen. Usuarios pierden sus datos. MinIO local ya no es opción (requiere infraestructura propia).
+
+2. **Notificaciones Web Incompletas**: La versión web en Vercel recibe notificaciones de chat/matches solo mientras la pestaña está activa (FCM requiere un Service Worker en el navegador que maneje eventos background). Android/iOS funciona perfectamente. Los usuarios en desktop descubren matchs solo al abrir la app, perdiendo oportunidades en tiempo real.
+
+**Solución Implementada**:
+
+1. Reescribir `FileService` para usar **Cloudinary** (almacenamiento persistente en CDN). Todas las imágenes (perfil, mascotas, documentos) se envían a la nube. URLs retornadas son HTTPS permanentes. Sin reinicializaciones mágicas que borren datos.
+
+2. Crear **firebase-messaging-sw.js** (Service Worker) para web. Registrarlo en `index.html`. Cuando FCM envía notificación, el navegador (incluso con pestaña de fondo) la muestra. Experience unificada: mobile + web tienen feature parity en notificaciones.
+
+### Cambios Críticos en el Código
+
+#### 1. Backend (Go): File Service con Cloudinary
+
+**Problema de Render Gratuito**:
+
+Render Web Service gratis destruye la carpeta `/app/uploads` en cada reinicio (que ocurre automáticamente cada 15 minutos sin tráfico). Las URLs devueltas (`/uploads/uuid.jpg`) quedan rotas.
+
+**Solución Implementada** (`internal/core/services/file_service.go`, líneas 1-106):
+
+**Antes (Etapa 20 / anteriores)**:
+
+```go
+// MinIO local (requería infraestructura)
+type FileService struct {
+    minioClient *minio.Client
+    bucketName  string
+}
+
+func (s *FileService) SaveImage(file *multipart.FileHeader) (string, error) {
+    // Guardaba en ./uploads local
+    // Perdía datos en cada restart de Render
+}
+```
+
+**Ahora (Etapa 21)**:
+
+```go
+package services
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "mime/multipart"
+    "os"
+    "path/filepath"
+    "strings"
+
+    "github.com/cloudinary/cloudinary-go/v2"
+    "github.com/cloudinary/cloudinary-go/v2/api"
+    "github.com/cloudinary/cloudinary-go/v2/api/uploader"
+    "github.com/google/uuid"
+)
+
+type FileService struct {
+    cld       *cloudinary.Cloudinary  // Cliente de Cloudinary
+    isEnabled bool
+}
+
+// Inicialización
+func NewFileService() *FileService {
+    // 1. Leer configuración desde variables de entorno
+    cldURL := os.Getenv("CLOUDINARY_URL")
+
+    if cldURL == "" {
+        log.Println("ADVERTENCIA: CLOUDINARY_URL no configurada. Imágenes no se guardarán.")
+        return &FileService{isEnabled: false}
+    }
+
+    // 2. Cloudinary provee un SDK que parsea automáticamente la URL
+    cld, err := cloudinary.NewFromURL(cldURL)
+    if err != nil {
+        log.Printf("Error inicializando Cloudinary: %v\n", err)
+        return &FileService{isEnabled: false}
+    }
+
+    log.Println("Servicio de almacenamiento (Cloudinary) conectado exitosamente.")
+
+    return &FileService{
+        cld:       cld,
+        isEnabled: true,
+    }
+}
+
+// Subida de imagen individual
+func (s *FileService) SaveImage(ctx context.Context, file *multipart.FileHeader) (string, error) {
+    if !s.isEnabled {
+        return "", fmt.Errorf("servicio de almacenamiento desactivado")
+    }
+
+    // Validar extensión
+    ext := strings.ToLower(filepath.Ext(file.Filename))
+    if ext != ".jpg" && ext != ".jpeg" && ext != ".png" {
+        return "", fmt.Errorf("formato inválido (solo JPG/PNG)")
+    }
+
+    // Abrir archivo
+    src, err := file.Open()
+    if err != nil {
+        return "", fmt.Errorf("error leyendo archivo: %v", err)
+    }
+    defer src.Close()
+
+    // Generar nombre único (UUID)
+    uniqueFilename := uuid.New().String()
+
+    // Subir a Cloudinary
+    resp, err := s.cld.Upload.Upload(ctx, src, uploader.UploadParams{
+        PublicID:     uniqueFilename,
+        Folder:       "paws_uploads",              // Carpeta en Cloudinary
+        ResourceType: "image",
+        Overwrite:    api.Bool(true),              // Reemplazar si ya existe
+    })
+
+    if err != nil {
+        log.Printf("Error en Cloudinary: %v", err)
+        return "", fmt.Errorf("error subiendo a la nube: %v", err)
+    }
+
+    // Retornar URL segura (HTTPS)
+    // Ejemplo: https://res.cloudinary.com/account/image/upload/paws_uploads/uuid.jpg
+    return resp.SecureURL, nil
+}
+
+// Subida múltiple (para mascotas con galería)
+func (s *FileService) SaveMultipleImages(ctx context.Context, files []*multipart.FileHeader) ([]string, error) {
+    var urls []string
+
+    if !s.isEnabled {
+        return urls, fmt.Errorf("servicio no disponible")
+    }
+
+    for _, file := range files {
+        url, err := s.SaveImage(ctx, file)
+        if err != nil {
+            log.Printf("Error subiendo imagen (%s): %v", file.Filename, err)
+            return nil, err
+        }
+        urls = append(urls, url)
+    }
+    return urls, nil
+}
+```
+
+**Configuración en Render Dashboard**:
+
+```env
+CLOUDINARY_URL=cloudinary://key:secret@account
+# O simplemente: CLOUDINARY_URL=cloudinary://123456789:ABC-xyz@cloudinary_account
+```
+
+**Flujo**:
+
+```
+Usuario sube foto de perfil en Vercel
+  ↓
+PetHandler.Create() o UserHandler.UpdateProfile()
+  ↓
+FileService.SaveImage()
+  ↓
+Abre conexión HTTP a Cloudinary API
+  ↓
+Sube archivo binario
+  ↓
+Cloudinary responde con URL permanente: https://res.cloudinary.com/.../paws_uploads/uuid.jpg
+  ↓
+Backend retorna URL al frontend
+  ↓
+Frontend almacena URL en BD (como string en Pet.PhotoURL o User.PhotoURL)
+  ↓
+URL persiste incluso si Render reinicia (no depende de ./uploads local)
+  ↓
+Cloudinary CDN entrega imagen optimizada globalmente
+```
+
+**Ventajas**:
+
+- **Persistencia Total**: Imágenes nunca desaparecen, aunque Render reinicie 1000 veces.
+- **CDN Global**: Cloudinary distribuye imágenes a 200+ edge locations. Descarga rápida de cualquier país.
+- **Optimización Automática**: Cloudinary redimensiona, comprime, genera WebP, etc. automáticamente.
+- **HTTPS**: Todas las URLs son seguras (https://res.cloudinary.com/...).
+- **Fallback**: Si CLOUDINARY_URL no está configurada, FileService simplemente retorna error (graceful degradation).
+
+#### 2. Frontend (Web): Service Worker para Notificaciones
+
+**Problema de Web**:
+
+Firebase Cloud Messaging requiere un **Service Worker** en el navegador. Este requiere un archivo especial que el navegador ejecuta en background (incluso con la app cerrada o pestaña inactiva). Sin él, notificaciones solo llegan mientras la app está activa.
+
+**Solución Implementada**:
+
+**Nuevo Archivo**: `app/web/firebase-messaging-sw.js`
+
+```javascript
+importScripts(
+  "https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js",
+);
+importScripts(
+  "https://www.gstatic.com/firebasejs/9.22.0/firebase-messaging-compat.js",
+);
+
+// Configuración de Firebase (igual que en index.html)
+const firebaseConfig = {
+  apiKey: "AIzaSyDx9gdPBOwqfg2BFxeg6shpR68w9jpergg",
+  authDomain: "paws-app-3187d.firebaseapp.com",
+  projectId: "paws-app-3187d",
+  storageBucket: "paws-app-3187d.firebasestorage.app",
+  messagingSenderId: "976358685710",
+  appId: "1:976358685710:web:3d0880e1c4fca1bf2fd05f",
+  measurementId: "G-3KYXY1HQ2Q",
+};
+
+// Inicializar Firebase en el Service Worker
+firebase.initializeApp(firebaseConfig);
+
+// Obtener referencia a Messaging
+const messaging = firebase.messaging();
+
+// Manejador para notificaciones que llegan en background
+// Se ejecuta aunque el navegador esté cerrado (si el usuario lo permite)
+messaging.onBackgroundMessage(function (payload) {
+  console.log(
+    "[firebase-messaging-sw.js] Notificación en background:",
+    payload,
+  );
+
+  // Personalizar la notificación visual del navegador
+  const notificationTitle = payload.notification.title;
+  const notificationOptions = {
+    body: payload.notification.body,
+    icon: "/icons/Icon-192.png", // Icono que sale en la notificación
+    badge: "/icons/Icon-96.png", // Badge pequenio en notificación
+  };
+
+  // Mostrar la notificación en el sistema operativo
+  // En Chrome/Windows: aparece en la bandeja del sistema
+  // En macOS: aparece en Notification Center
+  // En Linux: aparece en el notification daemon
+  self.registration.showNotification(notificationTitle, notificationOptions);
+});
+```
+
+**Actualización**: `app/web/index.html`
+
+```html
+<!DOCTYPE html>
+<html>
+  <head>
+    <base href="$FLUTTER_BASE_HREF" />
+    <meta charset="UTF-8" />
+    <meta content="IE=Edge" http-equiv="X-UA-Compatible" />
+    <meta name="description" content="PAWS - Adopción de Mascotas" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <meta name="apple-mobile-web-app-title" content="paws_app" />
+    <link rel="apple-touch-icon" href="icons/Icon-192.png" />
+    <link rel="icon" type="image/png" href="favicon.png" />
+
+    <title>PAWS - Plataforma de Adopción</title>
+    <link rel="manifest" href="manifest.json" />
+  </head>
+  <body>
+    <!-- Scripts de Firebase (compat = soporte para navegadores antiguos) -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-messaging-compat.js"></script>
+
+    <script>
+      const firebaseConfig = {
+        apiKey: "AIzaSyDx9gdPBOwqfg2BFxeg6shpR68w9jpergg",
+        authDomain: "paws-app-3187d.firebaseapp.com",
+        projectId: "paws-app-3187d",
+        storageBucket: "paws-app-3187d.firebasestorage.app",
+        messagingSenderId: "976358685710",
+        appId: "1:976358685710:web:3d0880e1c4fca1bf2fd05f",
+        measurementId: "G-3KYXY1HQ2Q",
+      };
+
+      // Inicializar Firebase en la ventana principal
+      firebase.initializeApp(firebaseConfig);
+    </script>
+
+    <!-- Bootstrap de Flutter (genera la aplicación) -->
+    <script src="flutter_bootstrap.js" async></script>
+
+    <!-- NUEVO - Registrar el Service Worker para notificaciones en background -->
+    <script>
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", function () {
+          // El navegador descargará y ejecutará firebase-messaging-sw.js
+          navigator.serviceWorker
+            .register("firebase-messaging-sw.js")
+            .then(function (registration) {
+              console.log(
+                "Service Worker registrado exitosamente:",
+                registration,
+              );
+            })
+            .catch(function (error) {
+              console.log("Error registrando Service Worker:", error);
+            });
+        });
+      }
+    </script>
+  </body>
+</html>
+```
+
+**Flujo**:
+
+```
+1. Usuario en Vercel carga la página
+  ↓
+2. index.html se descarga
+  ↓
+3. Script registra Service Worker: navigator.serviceWorker.register('firebase-messaging-sw.js')
+  ↓
+4. Navegador descarga firebase-messaging-sw.js
+  ↓
+5. Service Worker se ejecuta en background (separado de la app Flutter)
+  ↓
+6. Backend envía notificación via FCM a navegador
+  ↓
+7. Navegador la recibe (incluso con pestaña cerrada o en segundo plano)
+  ↓
+8. Llama a messaging.onBackgroundMessage() en firebase-messaging-sw.js
+  ↓
+9. Se muestra notificación en el sistema operativo (Windows/Mac/Linux)
+  ↓
+10. Usuario toca notificación → navegador abre PAWS app y navega a chat/match
+```
+
+**Ventajas**:
+
+- **Web = Mobile**: Usuarios en desktop reciben notificaciones igual que en Android/iOS.
+- **Background**: Funciona con pestaña cerrada o minimizada. No pierde notificaciones.
+- **Automático**: Una vez registrado, no requiere intervención del usuario.
+- **Seguro**: Service Worker ejecuta en sandbox, sin acceso a datos sensibles.
+
+#### 3. Frontend (Flutter): Integración con Vercel
+
+**Cambio en main.dart** (ya implementado desde Etapa 20):
+
+```dart
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  try {
+    await Firebase.initializeApp();
+    if (!kIsWeb) {  // <--- Solo en mobile
+      FirebaseMessaging.onBackgroundMessage(
+        _firebaseMessagingBackgroundHandler,
+      );
+    }
+    // Web no registra handler aquí (lo hace el Service Worker)
+  } catch (e) {
+    print("Firebase: $e");
+  }
+
+  runApp(const PawsApp());
+}
+```
+
+La combinación es:
+
+- **Mobile (Android/iOS)**: Firebase SDK nativo + handler en Dart
+- **Web (Vercel)**: Firebase JS + Service Worker + handler en JavaScript
+
+### Arquitectura de Almacenamiento - Comparativa
+
+**Antes (Etapa 20 + anteriores)**:
+
+```
+Usuario sube foto
+  ↓
+Backend (Render)
+  ↓
+Guarda en ./uploads/ (disco local de Render)
+  ↓
+URL: http://localhost:8080/uploads/uuid.jpg
+  ↓
+PROBLEMA: Render reinicia cada N horas → ./uploads se borra
+  ↓
+Foto desaparece de BD (URL muerta)
+  ↓
+Usuario pierde datos
+```
+
+**Ahora (Etapa 21)**:
+
+```
+Usuario sube foto
+  ↓
+Backend (Render)
+  ↓
+FileService.SaveImage() envía a Cloudinary API
+  ↓
+Cloudinary recibe, almacena en cloud, responde con URL
+  ↓
+URL: https://res.cloudinary.com/account/image/upload/paws_uploads/uuid.jpg
+  ↓
+Backend almacena URL en Base de Datos
+  ↓
+Render puede reiniciar 1M veces: URL sigue siendo válida
+  ↓
+Cloudinary CDN distribuye imagen globalmente
+  ↓
+Usuario siempre ve su foto, sin importar restarts
+```
+
+### Arquitectura de Notificaciones - Comparativa
+
+**Antes (Etapa 20 y anteriores)**:
+
+```
+Android/iOS (Mobile):
+  ┌─────────────────────────────────────────────┐
+  │ Backend (RabbitMQ) → FCM → Push a dispositivo │
+  │ Usuario minimiza app → Notificación sigue      │
+  │ Funciona perfecto                              │
+  └─────────────────────────────────────────────┘
+
+Web (Vercel):
+  ┌─────────────────────────────────────────────┐
+  │ Backend (RabbitMQ) → FCM → Navegador          │
+  │ PERO: Sin Service Worker, solo si tab activa  │
+  │ Usuario minimiza → Notificación pierde         │
+  │ User experience inconsistenta                  │
+  └─────────────────────────────────────────────┘
+```
+
+**Ahora (Etapa 21)**:
+
+```
+Android/iOS (Mobile):
+  ┌──────────────────────────────────────────────────┐
+  │ Backend → FCM → Push Notification                │
+  │ Firebase SDK (Dart) en background handler        │
+  │ Funciona siempre, incluso app cerrada           │
+  └──────────────────────────────────────────────────┘
+          ↑
+          │ AHORA FEATURE PARITY
+          ↓
+Web (Vercel):
+  ┌──────────────────────────────────────────────────┐
+  │ Backend → FCM → Service Worker (firebase-sw.js)  │
+  │ Service Worker escucha en background             │
+  │ messaging.onBackgroundMessage() muestra notif    │
+  │ Funciona siempre, incluso tab cerrada o mín      │
+  └──────────────────────────────────────────────────┘
+
+USER EXPERIENCE: Igual en mobile + web
+```
+
+### Configuración en Dashboards
+
+**Render (Backend)**:
+
+```env
+# Variables de Entorno (agregar)
+CLOUDINARY_URL=cloudinary://key:secret@account
+
+# Ejemplo real:
+CLOUDINARY_URL=cloudinary://123456789:ABCXYZ@my_cloudinary_account
+```
+
+**Cloudinary Account**:
+
+- Registrarse en https://cloudinary.com (gratuito)
+- Copiar CLOUDINARY_URL desde settings
+- Paste en Render environment variables
+- Cloudinary auto-crea carpeta "paws_uploads" en primer upload
+
+**Vercel (Frontend)**:
+
+Sin cambios. Los archivos `app/web/firebase-messaging-sw.js` e `app/web/index.html` se deployean automáticamente.
+
+### Archivos Modificados en Etapa 21
+
+**Backend**:
+
+- `internal/core/services/file_service.go` (reescrito: MinIO → Cloudinary)
+
+**Frontend**:
+
+- `app/web/firebase-messaging-sw.js` (NUEVO: Service Worker para notificaciones)
+- `app/web/index.html` (ACTUALIZADO: registra Service Worker)
+- `app/lib/main.dart` (sin cambios, ya tiene blindaje kIsWeb desde Etapa 20)
+
+### Validación de Etapa 21
+
+**Backend - Cloudinary**:
+
+```bash
+# Reboot de Render
+curl https://paws-backend-g9sh.onrender.com/health
+
+# Upload de imagen (debe retornar URL de Cloudinary, no ./uploads)
+curl -X POST https://paws-backend-g9sh.onrender.com/api/v1/files/upload \
+  -H "Authorization: Bearer TOKEN" \
+  -F "file=@test.jpg"
+
+# Respuesta esperada:
+# {"url": "https://res.cloudinary.com/account/image/upload/paws_uploads/uuid.jpg"}
+
+# Verificar persistencia (foto sigue existiendo)
+curl https://res.cloudinary.com/account/image/upload/paws_uploads/uuid.jpg
+# Status 200 OK (no 404)
+```
+
+**Frontend - Web Notifications**:
+
+```javascript
+// Abrir Console del navegador (F12) en https://paws.vercel.app
+
+// Verificar Service Worker registrado
+navigator.serviceWorker.getRegistrations().then((registrations) => {
+  console.log("Service Workers:", registrations);
+});
+
+// Enviar notificación de prueba (si Render permite)
+// Hacer login, recibir match, verificar que notificación aparece
+// incluso con pestaña cerrada
+```
+
+### Ventajas Etapa 21
+
+1. **Imágenes Eternas**: Nunca más "foto perdida por restart". Persistencia 100%.
+2. **Optimización Automática**: Cloudinary comprime, redimensiona, convierte WebP automáticamente.
+3. **Distribución Global**: CDN de Cloudinary (200+ edge locations) entrega imágenes rápido desde cualquier país.
+4. **Web Notifications = Mobile**: Usuarios en desktop reciben alertas igual que en phone.
+5. **Feature Parity**: Web y Mobile tienen experiencia de usuario idéntica en notificaciones.
+6. **Eficiencia**: Sin manejar uploads en servidor, reduce carga en Render.
+7. **Seguridad**: URLs de Cloudinary son HTTPS. No hay archivos locales sin proteccción.
+8. **Escalabilidad**: Cloudinary maneja cualquier volumen de imágenes (gratuito hasta cierto límite, luego pago mínimo).
+
 ## Plan de Desarrollo
 
 Este proyecto se desarrolla en fases:
@@ -11240,8 +11786,7 @@ Este proyecto se desarrolla en fases:
 - **Etapa 19** (Completada): Persistencia inteligente de sesión (checkbox "Recuérdame" controla token en RAM vs disco), AuthCheckScreen en startup para autoLogin silencioso, WillPopScope blindada contra cierres accidentales (navega a Home antes de salir, doble-tap en Home), logout centralizado en AuthRepository (borra memoria + storage), navegación limpia post-logout (pushAndRemoveUntil elimina stack), 4 componentesintegrados: verificación silenciosa, control de persistencia, navegación blindada, gestión centralizada
 - **Etapa 19** (Completada): Módulo de doble identidad Adoptante ↔ Rescatista, índices compuestos UNIQUE(run, role) + UNIQUE(email, role) para base de datos flexible, limpieza automática de constraints legacy (dropLegacyConstraints), endpoint SwitchRole para cambio instantáneo sin contraseña, filtro espejo en GetSwipeDeck para blindaje por RUT, privacidad de datos en GET /pets/my, registro simplificado con pre-llenado de datos, corrección de navegación tras OTP
 - **Etapa 20** (Completada): Migración de infraestructura de Railway a arquitectura distribuida gratuita (Render, Neon.tech, Upstash, CloudAMQP, Vercel), CORS middleware robusto para solicitudes preflight desde Vercel, inyección automática de tokens Bearer en Dio (AuthRepository), MultiRepositoryProvider global para inyección de dependencias centralizada (AuthRepository como autoridad de tokens), soporte para contraseñas en Redis Serverless (Upstash), blindaje de Firebase initialization para web, 4 componentes críticos: CORS avanzado, inyección de dependencias, interceptores de autorización automática, configuración dinámica de endpoints cloud
-
-## Documentación Adicional
+- **Etapa 21** (Completada): Consolidación de nube con almacenamiento persistente (Cloudinary para imágenes, reemplazo de MinIO), notificaciones push web equivalentes a mobile (firebase-messaging-sw.js Service Worker en Vercel), HTTPS CDN global para imágenes, feature parity notificaciones entre web y mobile, 2 componentes: Cloudinary file service, web Service Worker notifications
 
 - [Fase 0](documentation/Fase-0.md): Infraestructura, Docker, estructura base
 - [Fase 1](documentation/Fase-1.md): Autenticación, seguridad, JWT y Bcrypt
