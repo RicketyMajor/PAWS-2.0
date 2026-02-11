@@ -9,6 +9,9 @@ class Match {
   final String? message;
   final DateTime? createdAt;
 
+  // --- NUEVO CAMPO ---
+  final int unreadCount;
+
   final Pet? pet;
   final User? adopter;
 
@@ -19,13 +22,13 @@ class Match {
     required this.status,
     this.message,
     this.createdAt,
+    this.unreadCount = 0, // Valor por defecto
     this.pet,
     this.adopter,
   });
 
   factory Match.fromJson(Map<String, dynamic> json) {
     return Match(
-      // Parseo seguro de enteros para evitar crash con "null"
       id: _parseInt(json['id']),
       adopterId: _parseInt(json['adopter_id']),
       petId: _parseInt(json['pet_id']),
@@ -35,6 +38,9 @@ class Match {
       createdAt: json['created_at'] != null
           ? DateTime.tryParse(json['created_at'])
           : null,
+
+      // Mapeamos el campo virtual del backend
+      unreadCount: _parseInt(json['unread_count']),
 
       pet: json['pet'] != null ? Pet.fromJson(json['pet']) : null,
       adopter: json['adopter'] != null ? User.fromJson(json['adopter']) : null,
@@ -47,6 +53,9 @@ class Match {
   bool get isAdopterLeft => status == 'adopter_left';
   bool get isRescuerLeft => status == 'rescuer_left';
   bool get isCancelled => status == 'cancelled';
+
+  // Helper para saber si tiene mensajes nuevos
+  bool get hasUnreadMessages => unreadCount > 0;
 
   String get blockReason {
     switch (status) {

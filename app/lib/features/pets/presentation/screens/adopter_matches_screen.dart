@@ -4,10 +4,13 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../../../core/constants/api_constants.dart';
 import '../../../../core/utils/image_helper.dart';
 import '../../../chat/presentation/screens/chat_screen.dart';
-import '../../domain/match_model.dart'; // Importamos Match
+import '../../domain/match_model.dart';
 
 class AdopterMatchesScreen extends StatefulWidget {
-  const AdopterMatchesScreen({super.key});
+  // Callback para avisar al padre (MainLayout) cuántos mensajes hay
+  final Function(int)? onBadgeUpdate;
+
+  const AdopterMatchesScreen({super.key, this.onBadgeUpdate});
 
   @override
   State<AdopterMatchesScreen> createState() => _AdopterMatchesScreenState();
@@ -45,11 +48,19 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
           options: options,
         );
         if (mounted) {
+          final matches = (resAccepted.data as List)
+              .map((json) => Match.fromJson(json))
+              .toList();
+
           setState(() {
-            _acceptedMatches = (resAccepted.data as List)
-                .map((json) => Match.fromJson(json))
-                .toList();
+            _acceptedMatches = matches;
           });
+
+          // --- CÁLCULO DE BADGES ---
+          // Sumamos el total de mensajes no leídos
+          final totalUnread = matches.fold(0, (sum, m) => sum + m.unreadCount);
+          // Avisamos al padre (MainLayout)
+          widget.onBadgeUpdate?.call(totalUnread);
         }
       } catch (e) {
         print("Error cargando chats activos: $e");
@@ -117,55 +128,102 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
       itemBuilder: (context, index) {
         final match = _acceptedMatches[index];
         final pet = match.pet;
-
         final rescuerName = pet?.ownerName ?? 'Rescatista';
         final rescuerPhoto = pet?.ownerPhotoUrl;
 
+        // Estilo dinámico según si hay mensajes nuevos
+        final hasUnread = match.hasUnreadMessages;
+        final backgroundColor = hasUnread
+            ? Colors.pink[50]
+            : Colors.white; // Más iluminado si no leído
+
         return Card(
+          color: backgroundColor, // Fondo iluminado
           margin: const EdgeInsets.only(bottom: 12),
-          elevation: 2,
+          elevation: hasUnread ? 4 : 1, // Más sombra si es importante
           child: ListTile(
             contentPadding: const EdgeInsets.all(12),
-            leading: CircleAvatar(
-              radius: 28,
-              backgroundImage: ImageHelper.getProvider(pet?.imageUrl),
-              backgroundColor: Colors.grey[200],
+            leading: Stack(
+              children: [
+                CircleAvatar(
+                  radius: 28,
+                  backgroundImage: ImageHelper.getProvider(pet?.imageUrl),
+                  backgroundColor: Colors.grey[200],
+                ),
+                // Indicador visual en la foto (opcional, pero se ve bien)
+                if (hasUnread)
+                  Positioned(
+                    right: 0,
+                    top: 0,
+                    child: Container(
+                      width: 12,
+                      height: 12,
+                      decoration: BoxDecoration(
+                        color: Colors.red,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 2),
+                      ),
+                    ),
+                  ),
+              ],
             ),
             title: Text(
               pet?.name ?? 'Mascota',
               style: TextStyle(
-                // --- VISUAL: TACHADO SI ESTÁ BORRADO ---
                 decoration: match.isPetDeleted
                     ? TextDecoration.lineThrough
                     : null,
                 color: match.isPetDeleted ? Colors.grey : Colors.black,
-                fontWeight: FontWeight.bold,
+                // Negrita si hay mensajes nuevos
+                fontWeight: hasUnread ? FontWeight.w900 : FontWeight.bold,
               ),
             ),
             subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text("Rescatista: $rescuerName"),
-                // --- VISUAL: AVISO DE ESTADO ---
+                Text(
+                  hasUnread
+                      ? "${match.unreadCount} mensajes nuevos"
+                      : "Rescatista: $rescuerName",
+                  style: TextStyle(
+                    color: hasUnread
+                        ? const Color(0xFFE91E63)
+                        : Colors.grey[700],
+                    fontWeight: hasUnread ? FontWeight.bold : FontWeight.normal,
+                  ),
+                ),
                 if (match.isPetDeleted)
                   const Text(
                     "⚠️ Publicación eliminada",
-                    style: TextStyle(
-                      color: Colors.red,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: TextStyle(color: Colors.red, fontSize: 12),
                   ),
                 if (match.isRescuerLeft)
                   const Text(
-                    "⚠️ Rescatista abandonó el chat",
+                    "⚠️ Rescatista abandonó",
                     style: TextStyle(color: Colors.orange, fontSize: 12),
                   ),
               ],
             ),
-            trailing: const Icon(Icons.chevron_right, color: Colors.grey),
+            // Badge numérico a la derecha
+            trailing: hasUnread
+                ? Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFE91E63), // Color primario
+                      shape: BoxShape.circle,
+                    ),
+                    child: Text(
+                      match.unreadCount.toString(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  )
+                : const Icon(Icons.chevron_right, color: Colors.grey),
+
             onTap: () async {
-              // Navegación con espera para recargar al volver
               await Navigator.push(
                 context,
                 MaterialPageRoute(
@@ -174,14 +232,12 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
                     peerName: rescuerName,
                     peerId: pet?.ownerId ?? 0,
                     peerPhotoUrl: rescuerPhoto,
-                    // Pasamos los flags de estado
                     isPetDeleted: match.isPetDeleted,
                     isPeerLeft: match.isRescuerLeft,
                   ),
                 ),
               );
-              // Recargar lista al volver
-              _loadAllData();
+              _loadAllData(); // Recargar al volver (actualizar badge)
             },
           ),
         );

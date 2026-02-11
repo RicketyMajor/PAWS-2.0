@@ -7,7 +7,6 @@ import '../../features/user/presentation/screens/edit_profile_screen.dart';
 import '../../features/pets/presentation/screens/rescuer_home_screen.dart';
 import '../../features/pets/presentation/screens/match_requests_screen.dart';
 import '../../features/chat/presentation/screens/rescuer_chats_screen.dart';
-// Ya no necesitamos importar los repositorios aquí porque los provee main.dart
 
 class MainLayoutScreen extends StatefulWidget {
   final String role;
@@ -20,28 +19,47 @@ class MainLayoutScreen extends StatefulWidget {
 
 class _MainLayoutScreenState extends State<MainLayoutScreen> {
   int _currentIndex = 0;
+
+  // Contadores globales
   int _unreadChats = 0;
   int _pendingRequests = 0;
-  DateTime? _lastPressedTime; // Variable para controlar el doble tap
+
+  DateTime? _lastPressedTime;
+
+  // --- CALLBACKS PARA ACTUALIZAR BADGES DESDE LOS HIJOS ---
+
+  void _updateUnreadCount(int count) {
+    // Solo hacemos setState si el valor cambió para evitar re-renders infinitos
+    if (_unreadChats != count) {
+      setState(() {
+        _unreadChats = count;
+      });
+    }
+  }
+
+  // (Opcional) Podrías implementar algo similar para _pendingRequests en MatchRequestsScreen
 
   @override
   Widget build(BuildContext context) {
     final isAdopter = widget.role == 'adopter';
 
     // Definición de Pantallas
-    // CORRECCIÓN: Eliminamos los RepositoryProvider locales.
-    // Las pantallas ahora usarán los repositorios globales inyectados en main.dart.
+    // AHORA PASAMOS EL CALLBACK
     final screens = isAdopter
         ? [
             const MatchScreen(),
-            const AdopterMatchesScreen(),
-            const EditProfileScreen(), // Ya tiene acceso a UserRepository global
+            AdopterMatchesScreen(
+              onBadgeUpdate: _updateUnreadCount,
+            ), // <-- Conectado
+            const EditProfileScreen(),
           ]
         : [
             const RescuerHomeScreen(),
-            const RescuerChatsScreen(), // Ya tiene acceso a MatchesRepository global
-            const MatchRequestsScreen(), // Ya tiene acceso a MatchesRepository global
-            const EditProfileScreen(), // Ya tiene acceso a UserRepository global
+            RescuerChatsScreen(
+              onBadgeUpdate: _updateUnreadCount,
+            ), // <-- Conectado
+            const MatchRequestsScreen(),
+            const EditProfileScreen(),
           ];
 
     // Definición de Íconos con BADGES
@@ -52,6 +70,7 @@ class _MainLayoutScreenState extends State<MainLayoutScreen> {
               label: 'Descubrir',
             ),
             NavigationDestination(
+              // Usamos el contador dinámico _unreadChats
               icon: _buildBadgedIcon(Icons.favorite, _unreadChats),
               label: 'Matches',
             ),
@@ -66,6 +85,7 @@ class _MainLayoutScreenState extends State<MainLayoutScreen> {
               label: 'Mascotas',
             ),
             NavigationDestination(
+              // Usamos el contador dinámico _unreadChats
               icon: _buildBadgedIcon(Icons.chat, _unreadChats),
               label: 'Chats',
             ),
@@ -79,25 +99,15 @@ class _MainLayoutScreenState extends State<MainLayoutScreen> {
             ),
           ];
 
-    // --- MANEJO DEL BOTÓN ATRÁS ---
     return WillPopScope(
       onWillPop: () async {
-        // 1. Si no estamos en la pestaña Home (índice 0), volvemos a ella
         if (_currentIndex != 0) {
-          setState(() {
-            _currentIndex = 0;
-          });
-          return false; // Retornamos false para NO salir de la app
+          setState(() => _currentIndex = 0);
+          return false;
         }
-
-        // 2. Estamos en Home. Verificamos tiempo para doble tap.
         final now = DateTime.now();
-        final maxDuration = const Duration(seconds: 2);
-        final isWarning =
-            _lastPressedTime == null ||
-            now.difference(_lastPressedTime!) > maxDuration;
-
-        if (isWarning) {
+        if (_lastPressedTime == null ||
+            now.difference(_lastPressedTime!) > const Duration(seconds: 2)) {
           _lastPressedTime = now;
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -105,10 +115,9 @@ class _MainLayoutScreenState extends State<MainLayoutScreen> {
               duration: Duration(seconds: 2),
             ),
           );
-          return false; // No salimos aún
+          return false;
         }
-
-        return true; // Salimos de la app
+        return true;
       },
       child: Scaffold(
         body: IndexedStack(index: _currentIndex, children: screens),
@@ -117,10 +126,6 @@ class _MainLayoutScreenState extends State<MainLayoutScreen> {
           onDestinationSelected: (index) {
             setState(() {
               _currentIndex = index;
-              // Limpieza de notificaciones visuales al entrar
-              if (isAdopter && index == 1) _unreadChats = 0;
-              if (!isAdopter && index == 1) _unreadChats = 0;
-              if (!isAdopter && index == 2) _pendingRequests = 0;
             });
           },
           destinations: items,
@@ -131,7 +136,6 @@ class _MainLayoutScreenState extends State<MainLayoutScreen> {
     );
   }
 
-  // Widget Helper para crear el ícono con punto rojo
   Widget _buildBadgedIcon(IconData icon, int count) {
     if (count == 0) return Icon(icon);
 
