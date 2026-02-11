@@ -175,23 +175,19 @@ func (h *Hub) Run() {
 **Flujo Detallado**:
 
 1. **Usuario A envía mensaje**:
-
    - WebSocket del Cliente A envía bytes al ReadPump
    - ReadPump valida (filtra malas palabras)
    - Envía a `h.Broadcast`
 
 2. **Hub recibe en Broadcast**:
-
    - En lugar de enviar directo a clientes locales,
    - Publica en Redis: `PUBLISH paws_chat "mensaje de A"`
 
 3. **Redis distribuye**:
-
    - Todos los Servidores escuchando `paws_chat` reciben
    - Incluso Servidor Go #1 (donde originó el mensaje)
 
 4. **subscribeToRedis() recibe**:
-
    - Loop infinito escuchando el canal
    - Para cada mensaje, recorre todos los Clients locales
    - Envía a canal `client.Send`
@@ -243,15 +239,12 @@ func (c *Client) ReadPump() {
 **Puntos Clave**:
 
 1. **SetReadLimit**: Limita tamaño de mensaje a 512 bytes
-
    - Previene ataques de memoria (DoS)
 
 2. **SetReadDeadline**: Timeout para lectura
-
    - Detecta clientes desconectados
 
 3. **SetPongHandler**: Responde a pings de servidor
-
    - Mantiene la conexión viva
 
 4. **Filtro de Malas Palabras**: Inspección en tiempo real
@@ -305,7 +298,6 @@ func (c *Client) WritePump() {
    Detecta clientes muertos (desconexiones no limpias)
 
 2. **Batching de Mensajes**:
-
    - Si hay 5 mensajes en cola `Send`
    - Envía todos en 1 paquete TCP
    - Reduce overhead de red
@@ -339,21 +331,17 @@ func containsBadWords(message []byte) bool {
 **Seguridad Implementada**:
 
 1. **Inspección de Bytes**: Antes de que el mensaje llegue a Redis
-
    - ReadPump valida ANTES de `Hub.Broadcast`
    - Ningún servidor distribuido lo ve
 
 2. **Case-Insensitive**: Normalización a minúsculas
-
    - Previene bypass: "TONTO", "ToNtO", etc.
 
 3. **Substring Matching**: `bytes.Contains()`
-
    - Detecta palabras dentro de textos
    - Ejemplo: "eres un tonto" → bloqueado
 
 4. **Shadowban Silencioso**:
-
    - Usuario NO recibe error
    - Solo log del lado del servidor
    - `continue` en ReadPump mata el mensaje
@@ -365,6 +353,7 @@ func containsBadWords(message []byte) bool {
    case c.Send <- errorMessage:
    }
    ```
+
    - Usuario ve notificación sin saber qué pasó
 
 ### 6. Handler WebSocket (transport/http/ws_handler.go)
@@ -417,7 +406,6 @@ func (h *WSHandler) HandleConnections(c *gin.Context) {
    ```
 
 2. **Conversión de UserID**:
-
    - JWT devuelve float64: `1.0`
    - Convertimos a int: `1`
    - Formateamos a string: `"user_1"`
@@ -998,11 +986,9 @@ Para entender el enrutamiento inteligente:
 1. **Authenticity**: Solo usuarios en el Match pueden escribir
    - Validación: senderID debe ser AdopterID o Pet.UserID
 2. **Confidentiality**: Mensajes privados entre dos usuarios
-
    - Enrutamiento específico, no broadcast a todos
 
 3. **Integrity**: Mensajes no se pierden
-
    - Persistencia garantizada en PostgreSQL antes de enviar
 
 4. **Non-repudiation**: Usuario no puede negar que escribió
@@ -1585,7 +1571,7 @@ RABBITMQ_PASSWORD=guest
 1. **Incremento de Badge Count**: Mantener contador de notificaciones no leídas en icono de app
 2. **Deep Linking**: Tocar notificación abre chat específico, no solo la app
 3. **Retry Logic**: Si FCM falla, reintentar con backoff exponencial
-4. **Read Receipts**: Informar al remitente cuándo el destinatario leyó mensaje
+4. **Read Receipts**: ~~Informar al remitente cuándo el destinatario leyó mensaje~~ COMPLETADO EN ETAPA 22 (indicador "Visto" selectivo en último mensaje, triggers automáticos en ChatScreen)
 5. **Typing Indicator**: Mostrar cuando usuario está escribiendo (nuevo tipo de evento)
 
 ## Referencias

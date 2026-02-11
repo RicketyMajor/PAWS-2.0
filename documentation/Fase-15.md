@@ -1260,15 +1260,12 @@ LIMIT 20;
 ### Limitaciones Conocidas
 
 1. **Single Server Only**: Si escalas horizontalmente (múltiples servers backend), cada servidor solo conoce sus clientes locales
-
    - Solución futura: Redis Pub/Sub o NATS para comunicación inter-servidor
 
 2. **In-Memory Clients Map**: Si servidor se reinicia, todas las conexiones se pierden
-
    - Solución futura: Persistencia de sesiones en Redis
 
 3. **No Hay Tipeo "escribiendo..."**: Implementación actual no soporta
-
    - Solución futura: Agregar tipo "typing" en protocolo
 
 4. **Mensajes No Entregados**: Si cliente se desconecta antes de recibir, no hay reintento
@@ -1902,6 +1899,390 @@ Impacto en UX: Mensajes coherentes con perspectiva de usuario.
 | Visualización en listas     | COMPLETADO | Tachado + subtítulos        | ✓        |         |
 
 **Etapa 16 Status: 100% Implementado y Verificado**
+
+## COMPLETADO EN ETAPA 22: Notificaciones Visuales Inteligentes y Confirmación de Lectura ("Visto")
+
+Etapa 22 implementa un sistema de dos capas para informar al usuario sobre estado de mensajes: notificaciones visuales (badges con contadores de no leídos) y confirmación de lectura (indicador "Visto" selectivo). El enfoque prioriza claridad visual sin contaminación de ruido.
+
+### Problema Resuelto 1: Falta de Visualización de Mensajes Nuevos
+
+**Situación Pre-Etapa 22**: El usuario debía navegar a la lista de chats para descubrir nuevos mensajes. Sin indicador global, era fácil perder conversaciones importantes. La aplicación no diferenciaba matches con mensajes nuevos vs activos sin novedad.
+
+**Solución Etapa 22 - Sistema A (Badges)**: Cada vez que se carga la lista de matches (AdopterMatchesScreen / RescuerChatsScreen), el backend inyecta un campo virtual `unreadCount` en cada match objeto. Este campo representa el número exacto de mensajes no leídos EN ESTE MATCH, calculado mediante una subquery rápida. La pantalla suma todos los contadores y comunica al padre (MainLayoutScreen) el total global. MainLayoutScreen renderiza un círculo rojo en la barra de navegación con el número agregado.
+
+**Implementación Backend**:
+
+```go
+// internal/core/services/match_service.go
+// En GetAdopterMatches()
+var count int64
+s.db.Model(&domain.Message{}).
+    Where("match_id = ? AND sender_id != ? AND is_read = ?",
+          matches[i].ID, adopterID, false).
+    Count(&count)
+matches[i].UnreadCount = int(count)
+
+// El campo UnreadCount en domain.Match:
+// UnreadCount int `json:"unread_count" gorm:"-"`
+// (gorm:"-" significa: no guardes en tabla, solo en JSON)
+```
+
+**Ventajas de Campo Virtual**:
+
+- Calculado en tiempo de lectura, nunca se persiste en tabla
+- Cada cliente obtiene su perspectiva correcta (sus propios no leídos)
+- O(n) queries para n matches, aceptable en listas pequeñas
+- Totalmente determinista: siempre refleja estado actual de BD
+- Sin consistencia eventual: valor siempre correcto
+
+**Implementación Frontend - Suma y Callback**:
+
+```dart
+// app/lib/features/pets/presentation/screens/adopter_matches_screen.dart
+// En _loadAllData():
+
+final matches = (resAccepted.data as List)
+    .map((json) => Match.fromJson(json))
+    .toList();
+
+// Sumar todosunreadCounts
+final totalUnread = matches.fold(0, (sum, m) => sum + m.unreadCount);
+
+// Invocar callback al padre
+widget.onBadgeUpdate?.call(totalUnread);
+```
+
+**Callback Pattern Explicado**:
+
+AdopterMatchesScreen y RescuerChatsScreen son pantallas HIJO dentro de MainLayoutScreen (padre). No pueden mutar el estado del padre directamente. En su lugar, reciben un callback `onBadgeUpdate` como parámetro de constructor. Cuando tienen datos, llaman `widget.onBadgeUpdate?.call(totalCount)`. El padre implementa:
+
+```dart
+// app/lib/core/presentation/main_layout_screen.dart
+void _updateUnreadCount(int count) {
+  if (_unreadChats != count) {
+    setState(() {
+      _unreadChats = count;
+    });
+  }
+}
+
+// Pasar callback al hijo
+AdopterMatchesScreen(onBadgeUpdate: _updateUnreadCount)
+
+// Renderizar con contador
+NavigationDestination(
+  icon: _buildBadgedIcon(Icons.favorite, _unreadChats),
+  label: 'Matches',
+)
+
+// Helper para construir ícono con badge
+Widget _buildBadgedIcon(IconData icon, int count) {
+  if (count == 0) return Icon(icon);
+
+  return Stack(
+    children: [
+      Icon(icon),
+      Positioned(
+        right: 0, top: 0,
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.red,
+            shape: BoxShape.circle,
+          ),
+          child: Text(
+            count > 9 ? '9+' : '$count',
+            style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+          ),
+        ),
+      ),
+    ],
+  );
+}
+```
+
+**Propagación de Cambios**: Cada vez que usuario navega a la pestaña de matches, se llama `_loadAllData()` que recalcula badges. Si nuevo mensaje llegó vía WebSocket, el siguiente recalculation lo verá. Patrón simple pero efectivo sin necesidad de escuchas complejas.
+
+### Problema Resuelto 2: Falta de Confirmación de Entrega/Lectura
+
+**Situación Pre-Etapa 22**: El usuario enviaba un mensaje. El app mostraba "Enviado". Pero no había forma de saber si la otra persona lo leyó. En apps como WhatsApp, dos checkmarks grises = enviado, dos azules = leído. PAWS carecía de este feedback fundamental.
+
+**Solución Etapa 22 - Sistema B (Visto)**:
+
+**Fase 1 - Trigger Automático**: Al entrar a ChatScreen (initState), el frontend dispara silenciosamente: `POST /matches/:id/read`. Backend busca todos los mensajes de ESTE MATCH que (a) NO fueron enviados por el usuario actual (sender_id != currentUserId), y (b) aún no están marcados (is_read = false). Los actualiza a is_read = true en una sola transacción.
+
+**Fase 2 - Renderizado Selectivo**: En ChatBubble, solo mostramos "Visto" si se cumplen TRES condiciones simultáneamente:
+
+- Es mi mensaje (isMe == true)
+- Es el último de la lista (index == 0 con reverse)
+- Está marcado como leído en BD (msg.isRead == true)
+
+**Implementación Frontend - Trigger**:
+
+```dart
+// app/lib/features/chat/presentation/screens/chat_screen.dart
+class _ChatScreenState extends State<ChatScreen> {
+  @override
+  void initState() {
+    super.initState();
+    _loadMyUserId();
+    _markChatAsRead();  // <-- NUEVO
+  }
+
+  void _markChatAsRead() {
+    context.read<ChatRepository>().markAsRead(widget.matchId);
+  }
+}
+```
+
+**Implementación Frontend - Repository**:
+
+```dart
+// app/lib/features/chat/data/chat_repository.dart
+Future<void> markAsRead(int matchId) async {
+  try {
+    final token = await _storage.read(key: 'jwt_token');
+    await _dio.post(
+      '${ApiConstants.baseUrl}/matches/$matchId/read',
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
+  } catch (e) {
+    print("Error marcando como leído: $e");  // Silent fail
+  }
+}
+```
+
+**Implementación Backend - Handler**:
+
+```go
+// internal/transport/http/social_handler.go
+func (h *SocialHandler) MarkAsRead(c *gin.Context) {
+  userID, ok := getUserIDSafe(c)
+  if !ok {
+    c.JSON(http.StatusUnauthorized, gin.H{"error": "No identificado"})
+    return
+  }
+
+  matchIDStr := c.Param("id")
+  matchID, err := strconv.Atoi(matchIDStr)
+  if err != nil {
+    c.JSON(http.StatusBadRequest, gin.H{"error": "ID inválido"})
+    return
+  }
+
+  if err := h.chatService.MarkAsRead(uint(matchID), userID); err != nil {
+    c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+    return
+  }
+
+  c.JSON(http.StatusOK, gin.H{"message": "Marcado como leído"})
+}
+```
+
+**Implementación Backend - Service**:
+
+```go
+// internal/core/services/chat_service.go
+func (s *ChatService) MarkAsRead(matchID, userID uint) error {
+  // Actualiza TODOS los mensajes donde:
+  // - Pertenecen a este match
+  // - NO fueron enviados por el usuario actual
+  // - Aún no están marcados como leídos
+
+  return s.db.Model(&domain.Message{}).
+    Where("match_id = ? AND sender_id != ? AND is_read = ?",
+          matchID, userID, false).
+    Update("is_read", true).Error
+}
+```
+
+**Implementación Frontend - Renderizado Selectivo**:
+
+```dart
+// app/lib/features/chat/presentation/screens/chat_screen.dart
+ListView.builder(
+  reverse: true,
+  itemCount: state.messages.length,
+  itemBuilder: (context, index) {
+    final msg = state.messages[index];
+    final isMe = msg.senderId == _myUserId;
+
+    // Triple condition check:
+    bool showSeen = (index == 0 && isMe && msg.isRead);
+
+    return ChatBubble(
+      message: msg,
+      isMe: isMe,
+      isSeen: showSeen,
+    );
+  },
+)
+```
+
+**Implementación Frontend - ChatBubble**:
+
+```dart
+// app/lib/features/chat/presentation/widgets/chat_bubble.dart
+class ChatBubble extends StatelessWidget {
+  final ChatMessage message;
+  final bool isMe;
+  final bool isSeen;  // NUEVO
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: Column(
+        crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        children: [
+          Container(
+            // [mensaje dentro]
+          ),
+          // SOLO si isSeen es true:
+          if (isSeen && isMe)
+            Padding(
+              padding: const EdgeInsets.only(right: 14, bottom: 4),
+              child: Text(
+                "Visto",
+                style: TextStyle(
+                  color: Colors.grey[400],
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+```
+
+**Por qué Triple-Condition Check**:
+
+- Mostrar "Visto" en TODOS los mensajes genera ruido visual: "Visto Visto Visto Visto Visto" (5 mensajes)
+- Validar `index == 0` mostrar SOLO último mensaje: usuario ve claramente CUÁL mensaje fue leído
+- Validar `isMe` evitar confusión: "Visto" indica que EL OTRO leyó MI mensaje, no lo contrario
+- Validar `msg.isRead` no mentir: si BD dice false, no mostramos "Visto"
+- Todas falsan = NO renderizar = claridad visual, sin contaminación
+
+**Flujo Completo de Etapa 22**:
+
+1. Usuario A abre ChatScreen con Usuario B
+2. `initState()` dispara `POST /matches/:id/read` (silent)
+3. Backend actualiza `messages.is_read = true` (para mensajes de B)
+4. ChatBloc refresca view llamando `getHistory()`
+5. ListView.builder recalcula `isSeen` para el último mensaje de A
+6. Si condiciones se cumplen, ChatBubble renderiza "Visto" en pequeño gris
+7. A continuación, Usuario B envía mensaje nuevo
+8. Index cambia (nuevo mensaje es index 0), "Visto" desaparece automáticamente
+
+### Integración Arquitectónica - Etapa 22
+
+| Componente                                      | Cambios                                                                               |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `MatchService.GetAdopterMatches()` (Backend Go) | Agregó bucle que cuenta mensajes no leídos, asigna UnreadCount a cada match           |
+| `MatchService.GetRescuerMatches()` (Backend Go) | Mismo patrón: subquery inline de contadores                                           |
+| `domain.Match` (Backend Go)                     | Campo `UnreadCount int json:"unread_count" gorm:"-"` (virtual, no persiste)           |
+| `Match.fromJson()` (Frontend Dart)              | Ya parseaba unreadCount desde JSON                                                    |
+| `AdopterMatchesScreen` (Frontend Flutter)       | Callback `onBadgeUpdate`, invoca con suma total en \_loadAllData()                    |
+| `RescuerChatsScreen` (Frontend Flutter)         | Mismo patrón: callback + suma de badges                                               |
+| `MainLayoutScreen` (Frontend Flutter)           | State `_unreadChats`, callback `_updateUnreadCount()`, \_buildBadgedIcon() para badge |
+| `ChatScreen.initState()` (Frontend Flutter)     | Llama `_markChatAsRead()` que invoca `ChatRepository.markAsRead()`                    |
+| `ChatRepository.markAsRead()` (Frontend Dart)   | NUEVO método: `POST /matches/:id/read` con token automático                           |
+| `SocialHandler.MarkAsRead()` (Backend Go)       | NUEVO endpoint: recibe matchID, delega a ChatService.MarkAsRead()                     |
+| `ChatService.MarkAsRead()` (Backend Go)         | NUEVO método: UPDATE messages SET is_read = true WHERE...                             |
+| `ChatBubble` (Frontend Flutter)                 | Parámetro `isSeen`, renderiza "Visto" solo si (isSeen && isMe)                        |
+
+### Archivos Modificados en Etapa 22
+
+**Backend (Go)**:
+
+- `internal/core/services/match_service.go`: GetAdopterMatches() y GetRescuerMatches() con lógica de conteo en bucle
+- `internal/core/services/chat_service.go`: Nuevo método MarkAsRead()
+- `internal/transport/http/social_handler.go`: Nuevo handler MarkAsRead()
+- `internal/core/domain/match.go`: Campo UnreadCount virtual
+
+**Frontend (Flutter)**:
+
+- `app/lib/features/pets/domain/match_model.dart`: Parámetro unreadCount en constructor
+- `app/lib/features/pets/presentation/screens/adopter_matches_screen.dart`: Callback onBadgeUpdate + suma de badges
+- `app/lib/features/chat/presentation/screens/rescuer_chats_screen.dart`: Callback onBadgeUpdate + suma de badges
+- `app/lib/core/presentation/main_layout_screen.dart`: State \_unreadChats, \_buildBadgedIcon(), callback receiver
+- `app/lib/features/chat/presentation/screens/chat_screen.dart`: initState() con \_markChatAsRead() call
+- `app/lib/features/chat/data/chat_repository.dart`: Nuevo método markAsRead()
+- `app/lib/features/chat/presentation/widgets/chat_bubble.dart`: Parámetro isSeen, renderizado condicional
+
+### Validación de Etapa 22
+
+**Backend - Contadores**:
+
+```bash
+# Login y obtener token
+TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "adopter@example.com", "password": "pass"}' \
+  | jq -r '.token')
+
+# Obtener matches con unreadCount
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8080/api/v1/matches/adopter | jq '.[] | {id, pet_id, unread_count}'
+
+# Respuesta esperada:
+# [{"id": 1, "pet_id": 5, "unread_count": 3}]
+```
+
+**Backend - MarkAsRead**:
+
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8080/api/v1/matches/1/read
+
+# Verificar que unreadCount bajó a 0 en siguiente query
+```
+
+**Frontend - Verificación Manual**:
+
+- Badge circular rojo aparece solo en matches con unreadCount > 0
+- Badge muestra número correcto (suma de todos los unreadCounts)
+- Badge desaparece tras abrir chat y volver (MarkAsRead ejecutado)
+- MainLayout badge se actualiza con total global
+- "Visto" aparece gris pequeño SOLO en último mensaje propio
+- "Visto" desaparece cuando nuevo mensaje llega
+
+### Problemas Resueltos vs Fase 15
+
+| Situación Pre-Etapa 22                    | Solución Etapa 22                                         |
+| ----------------------------------------- | --------------------------------------------------------- |
+| No hay visualización de nuevos mensajes   | Badge con contador en barra de navegación                 |
+| Usuario pierde conversaciones importantes | Callback: padre siempre ve total global                   |
+| Sin confirmación de que mensaje fue leído | "Visto" en último mensaje cuando usuario abre chat        |
+| Backend sin forma de marcar leído         | POST /matches/:id/read + MarkAsRead() service             |
+| ChatBubble renderizaba todo plano         | Lógica triple-condition: isMe AND isLastInList AND isRead |
+| Ruido visual de "Visto" repetido          | Solo último mensaje muestra estado                        |
+
+### Ventajas Arquitectónicas - Etapa 22
+
+1. **Virtual Fields**: UnreadCount calculado sin mutation de BD. Bajo costo, siempre consistente
+2. **Callback Pattern**: Comunicación limpia padre-hijo sin BLoC extra. Escalable a otros contadores
+3. **Silent Trigger**: MarkAsRead() sin feedback visual. Usuario no ve "marcando..."
+4. **Triple Validation**: "Visto" solo cuando es apropiado. UX clara sin contaminación
+5. **O(1) Lookup**: Cuando nuevo mensaje llega vía WebSocket, ChatBloc recalcula isSeen automáticamente
+6. **Backward Compatible**: Modelos ya tenían campos is_read. Etapa 22 solo agrega lógica
+
+### Estado Final - Etapa 22
+
+| Funcionalidad                      | Estado     | Implementación | Frontend | Backend |
+| ---------------------------------- | ---------- | -------------- | -------- | ------- |
+| Contadores virtuales de no leídos  | COMPLETADO | MatchService   | Sí       | Sí      |
+| Agregación de badges vía callbacks | COMPLETADO | Callback+State | Sí       |         |
+| MarkAsRead automático              | COMPLETADO | initState()    | Sí       |         |
+| Marcación en BD                    | COMPLETADO | ChatService    |          | Sí      |
+| "Visto" selectivo                  | COMPLETADO | ChatBubble     | Sí       |         |
+| Triple-condition validation        | COMPLETADO | Chat logic     | Sí       |         |
+| Propagación de cambios             | COMPLETADO | Callback+Hub   | Sí       | Sí      |
+| Integración con WebSocket          | COMPLETADO | ChatBloc       | Sí       |         |
+
+**Etapa 22 Status: 100% Implementado y Verificado**
 
 ## Referencias
 
