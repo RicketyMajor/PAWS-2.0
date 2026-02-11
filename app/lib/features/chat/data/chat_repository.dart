@@ -17,7 +17,6 @@ class ChatRepository {
     final token = await _storage.read(key: 'jwt_token');
     if (token == null) throw Exception('No authentication token found');
 
-    // WS URL: Ajustar según tu ApiConstants (ws:// o wss://)
     final uri = Uri.parse('${ApiConstants.wsUrl}/ws');
 
     try {
@@ -67,7 +66,7 @@ class ChatRepository {
     }
   }
 
-  // --- NUEVO: REPORTAR USUARIO ---
+  // 5. REPORTAR USUARIO
   Future<void> reportUser({
     required int reportedId,
     required int matchId,
@@ -89,6 +88,20 @@ class ChatRepository {
       );
     } catch (e) {
       throw Exception('Error enviando reporte: $e');
+    }
+  }
+
+  // --- NUEVO: MARCAR LEÍDO ---
+  Future<void> markAsRead(int matchId) async {
+    try {
+      final token = await _storage.read(key: 'jwt_token');
+      // Llamamos al endpoint que implementamos en el Backend (SocialHandler)
+      await _dio.post(
+        '${ApiConstants.baseUrl}/matches/$matchId/read',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+    } catch (e) {
+      print("Error marcando mensajes como leídos: $e");
     }
   }
 }

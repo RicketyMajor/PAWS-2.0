@@ -6,12 +6,12 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../data/chat_repository.dart';
 import '../../domain/message_model.dart';
 import '../../../pets/data/matches_repository.dart';
-import '../../../reviews/data/reviews_repository.dart'; // Asegúrate de que la ruta sea correcta según tu estructura
+import '../../../reviews/data/reviews_repository.dart';
 
 import '../bloc/chat_bloc.dart';
 import '../../../../core/utils/image_helper.dart';
 import '../widgets/chat_bubble.dart';
-import '../../../reviews/presentation/widgets/star_rating_input.dart'; // <--- IMPORTAR
+import '../../../reviews/presentation/widgets/star_rating_input.dart';
 
 class ChatScreen extends StatefulWidget {
   final int matchId;
@@ -47,6 +47,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _loadMyUserId();
+    _markChatAsRead(); // <--- ACCIÓN: Marcar como leído al entrar
   }
 
   Future<void> _loadMyUserId() async {
@@ -57,6 +58,11 @@ class _ChatScreenState extends State<ChatScreen> {
         _myUserId = decodedToken['user_id'] ?? int.parse(decodedToken['sub']);
       });
     }
+  }
+
+  // Llama al repositorio para actualizar el estado en el backend
+  void _markChatAsRead() {
+    context.read<ChatRepository>().markAsRead(widget.matchId);
   }
 
   @override
@@ -81,7 +87,6 @@ class _ChatScreenState extends State<ChatScreen> {
               isRescuer: widget.isRescuer,
             ),
           ),
-
       child: BlocListener<ChatBloc, ChatState>(
         listener: (context, state) {
           if (state is ChatLoaded) {
@@ -103,9 +108,9 @@ class _ChatScreenState extends State<ChatScreen> {
               );
             }
 
-            // Feedback Reseñas (NUEVO)
+            // Feedback Reseñas
             if (state.reviewStatus == ReviewStatus.success) {
-              Navigator.pop(context); // Cerrar diálogo de estrellas
+              Navigator.pop(context);
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
                   content: Text("¡Calificación enviada! ⭐"),
@@ -162,7 +167,6 @@ class _ChatScreenState extends State<ChatScreen> {
               BlocBuilder<ChatBloc, ChatState>(
                 builder: (context, state) {
                   bool isLocked = (state is ChatLoaded && state.isLocked);
-                  // Si el chat está eliminado (PetDeleted), no se puede calificar (según tu lógica)
                   bool canRate = !widget.isPetDeleted;
 
                   return PopupMenuButton<String>(
@@ -178,7 +182,6 @@ class _ChatScreenState extends State<ChatScreen> {
                     },
                     itemBuilder: (BuildContext context) {
                       return [
-                        // Opción 1: Calificar (NUEVA)
                         if (canRate)
                           const PopupMenuItem(
                             value: 'rate',
@@ -193,7 +196,6 @@ class _ChatScreenState extends State<ChatScreen> {
                               ],
                             ),
                           ),
-                        // Opción 2: Reportar
                         const PopupMenuItem(
                           value: 'report',
                           child: Row(
@@ -204,7 +206,6 @@ class _ChatScreenState extends State<ChatScreen> {
                             ],
                           ),
                         ),
-                        // Opción 3: Eliminar
                         PopupMenuItem(
                           value: 'unmatch',
                           child: Row(
@@ -239,14 +240,28 @@ class _ChatScreenState extends State<ChatScreen> {
                       return const Center(child: CircularProgressIndicator());
                     if (state is ChatLoaded) {
                       if (state.messages.isEmpty) return _buildEmptyChat();
+
                       return ListView.builder(
                         controller: _scrollController,
-                        reverse: true,
+                        reverse:
+                            true, // Importante: index 0 es el ÚLTIMO mensaje (abajo)
                         itemCount: state.messages.length,
                         itemBuilder: (context, index) {
                           final msg = state.messages[index];
                           final isMe = msg.senderId == _myUserId;
-                          return ChatBubble(message: msg, isMe: isMe);
+
+                          // --- LÓGICA DEL VISTO ---
+                          // Mostramos "Visto" SOLO si:
+                          // 1. Es el mensaje más reciente (index == 0)
+                          // 2. Lo envié yo (isMe)
+                          // 3. Está marcado como leído en BD (msg.isRead)
+                          bool showSeen = (index == 0 && isMe && msg.isRead);
+
+                          return ChatBubble(
+                            message: msg,
+                            isMe: isMe,
+                            isSeen: showSeen, // Pasamos el flag
+                          );
                         },
                       );
                     }
@@ -272,7 +287,9 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  // --- DIALOGO DE CALIFICACIÓN (NUEVO) ---
+  // ... (Resto de métodos: _showRatingDialog, _showReportDialog, etc. permanecen IGUAL)
+  // COPIA AQUÍ EL RESTO DE TUS MÉTODOS DEL ARCHIVO ORIGINAL (_showRatingDialog, _confirmUnmatch, etc.)
+
   void _showRatingDialog(BuildContext chatContext) {
     double _currentRating = 0.0;
     String _comment = "";
@@ -280,11 +297,9 @@ class _ChatScreenState extends State<ChatScreen> {
     showDialog(
       context: chatContext,
       builder: (dialogContext) {
-        // Necesario pasar el BLoC al diálogo
         return BlocProvider.value(
           value: BlocProvider.of<ChatBloc>(chatContext),
           child: StatefulBuilder(
-            // StatefulBuilder para actualizar las estrellas visualmente
             builder: (context, setState) {
               return AlertDialog(
                 title: const Text(
@@ -300,8 +315,6 @@ class _ChatScreenState extends State<ChatScreen> {
                         style: TextStyle(color: Colors.grey, fontSize: 12),
                       ),
                       const SizedBox(height: 16),
-
-                      // WIDGET INTERACTIVO DE ESTRELLAS
                       StarRatingInput(
                         rating: _currentRating,
                         size: 40,
@@ -321,7 +334,6 @@ class _ChatScreenState extends State<ChatScreen> {
                               : Colors.grey,
                         ),
                       ),
-
                       const SizedBox(height: 24),
                       TextField(
                         decoration: const InputDecoration(
@@ -363,7 +375,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                   ),
                                 );
                               }
-                            : null, // Deshabilitado si no hay estrellas
+                            : null,
                         child: const Text("Enviar Calificación"),
                       );
                     },
@@ -377,13 +389,11 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  // --- DIALOGO DE REPORTE ---
   void _showReportDialog(BuildContext chatContext) {
     final _formKey = GlobalKey<FormState>();
-    String selectedCategory = 'abuse'; // Default
+    String selectedCategory = 'abuse';
     String description = '';
 
-    // Mapeo de valores técnicos a texto legible
     final Map<String, String> categories = {
       'abuse': 'Maltrato Animal',
       'scam': 'Estafa / Fraude',
@@ -395,7 +405,6 @@ class _ChatScreenState extends State<ChatScreen> {
     showDialog(
       context: chatContext,
       builder: (dialogContext) {
-        // Usamos BlocProvider.value para pasar el BLoC existente al diálogo
         return BlocProvider.value(
           value: BlocProvider.of<ChatBloc>(chatContext),
           child: AlertDialog(
@@ -457,7 +466,6 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
               BlocBuilder<ChatBloc, ChatState>(
                 builder: (context, state) {
-                  // Si está cargando, mostramos spinner en el botón
                   if (state is ChatLoaded &&
                       state.reportStatus == ReportStatus.loading) {
                     return const CircularProgressIndicator();
@@ -477,7 +485,6 @@ class _ChatScreenState extends State<ChatScreen> {
                             description: description,
                           ),
                         );
-                        // No hacemos pop aquí, esperamos al listener de éxito
                       }
                     },
                     child: const Text("Enviar Reporte"),
@@ -490,8 +497,6 @@ class _ChatScreenState extends State<ChatScreen> {
       },
     );
   }
-
-  // ... (Resto de métodos existentes: _buildLockedWidget, _buildInputArea, _sendMessage, etc.) ...
 
   Widget _buildLockedWidget(String reason) {
     return Container(
