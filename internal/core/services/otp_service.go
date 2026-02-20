@@ -24,20 +24,26 @@ type OTPService struct {
 	mqClient    *messaging.RabbitMQClient
 }
 
+// --- NUEVA CONEXIÓN UNIFICADA ---
 func NewOTPService(mq *messaging.RabbitMQClient) *OTPService {
-	redisHost := os.Getenv("REDIS_HOST")
-	redisPort := os.Getenv("REDIS_PORT")
-	
-	if redisHost == "" { redisHost = "localhost" }
-	if redisPort == "" { redisPort = "6379" }
+	redisURL := os.Getenv("REDIS_URL")
+	var rdb *redis.Client
 
-	addr := fmt.Sprintf("%s:%s", redisHost, redisPort)
-
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     addr,
-		Password: "",
-		DB:       0,
-	})
+	if redisURL != "" {
+		opt, err := redis.ParseURL(redisURL)
+		if err != nil {
+			log.Fatalf("Error parseando REDIS_URL en OTPService: %v", err)
+		}
+		rdb = redis.NewClient(opt)
+	} else {
+		// Fallback para desarrollo local
+		log.Println("REDIS_URL no detectada, usando localhost:6379 para OTP")
+		rdb = redis.NewClient(&redis.Options{
+			Addr:     "localhost:6379",
+			Password: "",
+			DB:       0,
+		})
+	}
 
 	return &OTPService{
 		redisClient: rdb,
@@ -92,12 +98,12 @@ func (s *OTPService) sendOTP(email, subject, bodyTemplate string) (string, error
 func (s *OTPService) VerifyOTP(email, inputCode string) bool {
 	ctx := context.Background()
 	key := fmt.Sprintf("otp:%s", email)
-	
+
 	val, err := s.redisClient.Get(ctx, key).Result()
 	if err == redis.Nil || err != nil {
 		return false
 	}
-	
+
 	if val == inputCode {
 		s.redisClient.Del(ctx, key) // Borrar tras uso exitoso
 		return true

@@ -5,14 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log" // <-- Asegúrate de tener este import
 	"os"
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
-	"github.com/golang-jwt/jwt/v5"
+	"gorm.io/gorm"
 
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/domain"
 	"github.com/RicketyMajor/PAWS-2.0/internal/platform/database"
@@ -32,19 +33,27 @@ type AuthService struct {
 	redisClient *redis.Client
 }
 
+// --- NUEVA CONEXIÓN UNIFICADA ---
 func NewAuthService(dbOrNil *gorm.DB) *AuthService {
-	redisHost := os.Getenv("REDIS_HOST")
-	redisPort := os.Getenv("REDIS_PORT")
-	redisPass := os.Getenv("REDIS_PASSWORD") // <--- NUEVO: Leemos la contraseña
+	redisURL := os.Getenv("REDIS_URL")
+	var rdb *redis.Client
 
-	if redisHost == "" { redisHost = "localhost" }
-	if redisPort == "" { redisPort = "6379" }
-	
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     fmt.Sprintf("%s:%s", redisHost, redisPort),
-		Password: redisPass, // <--- NUEVO: La usamos aquí
-		DB:       0,
-	})
+	if redisURL != "" {
+		// La librería parsea automáticamente el host, puerto, password y TLS (rediss://)
+		opt, err := redis.ParseURL(redisURL)
+		if err != nil {
+			log.Fatalf("Error parseando REDIS_URL en AuthService: %v", err)
+		}
+		rdb = redis.NewClient(opt)
+	} else {
+		// Fallback para desarrollo local
+		log.Println("REDIS_URL no detectada, usando localhost:6379 para Auth")
+		rdb = redis.NewClient(&redis.Options{
+			Addr:     "localhost:6379",
+			Password: "",
+			DB:       0,
+		})
+	}
 
 	if dbOrNil == nil {
 		return &AuthService{db: database.DB, redisClient: rdb}
@@ -76,11 +85,17 @@ func (s *AuthService) UpdatePassword(email, newPassword string) error {
 func (s *AuthService) InitiateRegistration(name, email, password, run, role string) error {
 	// 1. Verificar Blacklist Global (por RUT)
 	isBanned, err := s.CheckBlacklist(run)
-	if err != nil { return err }
-	if isBanned { return fmt.Errorf("registro denegado (Evil PAWS)") }
+	if err != nil {
+		return err
+	}
+	if isBanned {
+		return fmt.Errorf("registro denegado (Evil PAWS)")
+	}
 
 	roleNormalized := strings.ToLower(role)
-	if roleNormalized == "" { roleNormalized = "adopter" }
+	if roleNormalized == "" {
+		roleNormalized = "adopter"
+	}
 
 	// 2. CAMBIO DE LÓGICA: Verificar existencia ESPECÍFICA para este Rol.
 	// Buscamos si ya existe alguien con este (RUT o Email) Y que tenga el MISMO ROL.
@@ -94,7 +109,9 @@ func (s *AuthService) InitiateRegistration(name, email, password, run, role stri
 	// Si no lo encuentra (error RecordNotFound), procedemos.
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 
 	tempData := registrationCache{
 		Name:     name,
@@ -105,11 +122,13 @@ func (s *AuthService) InitiateRegistration(name, email, password, run, role stri
 	}
 
 	userData, err := json.Marshal(tempData)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 
 	ctx := context.Background()
 	key := fmt.Sprintf("pending_user:%s:%s", email, roleNormalized)
-	
+
 	err = s.redisClient.Set(ctx, key, userData, 10*time.Minute).Err()
 	if err != nil {
 		return fmt.Errorf("error guardando registro temporal: %v", err)
@@ -121,7 +140,7 @@ func (s *AuthService) InitiateRegistration(name, email, password, run, role stri
 // CompleteRegistration: Recupera de Redis y guarda en Postgres
 func (s *AuthService) CompleteRegistration(email string) (*domain.User, error) {
 	ctx := context.Background()
-	
+
 	keys := []string{
 		fmt.Sprintf("pending_user:%s:adopter", email),
 		fmt.Sprintf("pending_user:%s:rescuer", email),
@@ -175,7 +194,9 @@ func (s *AuthService) Login(email, password string) (string, error) {
 	if err := s.db.Where("email = ?", email).First(&user).Error; err != nil {
 		return "", errors.New("credenciales inválidas")
 	}
-	if user.IsBanned { return "", errors.New("cuenta suspendida") }
+	if user.IsBanned {
+		return "", errors.New("cuenta suspendida")
+	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
 		return "", errors.New("credenciales inválidas")
@@ -217,7 +238,9 @@ func (s *AuthService) SwitchRole(currentUserID uint) (string, *domain.User, erro
 func (s *AuthService) CheckBlacklist(run string) (bool, error) {
 	var entry domain.BlacklistEntry
 	if err := s.db.Where("run = ?", run).First(&entry).Error; err != nil {
-		if err == gorm.ErrRecordNotFound { return false, nil }
+		if err == gorm.ErrRecordNotFound {
+			return false, nil
+		}
 		return false, err
 	}
 	return true, nil
@@ -231,7 +254,9 @@ func (s *AuthService) GenerateTokenForUser(user *domain.User) (string, error) {
 		"exp":     time.Now().Add(time.Hour * 24).Unix(),
 	})
 	secret := os.Getenv("JWT_SECRET")
-	if secret == "" { secret = "secreto_default" }
+	if secret == "" {
+		secret = "secreto_default"
+	}
 	return token.SignedString([]byte(secret))
 }
 
