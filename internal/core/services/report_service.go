@@ -5,8 +5,8 @@ import (
 	"errors"
 	"time"
 
-	"gorm.io/gorm"
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/domain"
+	"gorm.io/gorm"
 )
 
 type ReportService struct {
@@ -36,7 +36,33 @@ func (s *ReportService) CreateReport(reporterID, reportedID, matchID uint, categ
 		Status:      "pending",
 	}
 
-	return s.db.Create(&report).Error
+	// Guardar el reporte
+	if err := s.db.Create(&report).Error; err != nil {
+		return err
+	}
+
+	// --- LÓGICA DE MODERACIÓN AUTOMÁTICA (THREE STRIKES) ---
+	var reportCount int64
+	s.db.Model(&domain.Report{}).Where("reported_id = ?", reportedID).Count(&reportCount)
+
+	if reportCount >= 3 {
+		// 1. Marcar al usuario como baneado
+		s.db.Model(&domain.User{}).Where("id = ?", reportedID).Update("is_banned", true)
+
+		// 2. Agregar a la lista negra global
+		var user domain.User
+		if err := s.db.First(&user, reportedID).Error; err == nil {
+			entry := domain.BlacklistEntry{
+				Run:    user.Run,
+				Name:   user.Name,
+				Reason: "Baneo Automático: Acumulación de múltiples reportes",
+			}
+			// Usamos FirstOrCreate para evitar errores si ya estaba en la lista
+			s.db.Where("run = ?", user.Run).FirstOrCreate(&entry)
+		}
+	}
+
+	return nil
 }
 
 // GetReportDetails: Para el Dashboard. Trae el reporte y el CHAT asociado.
@@ -84,7 +110,7 @@ func (s *ReportService) ResolveReport(adminID, reportID uint, action string, pub
 			if publicBlacklist {
 				var user domain.User
 				tx.First(&user, report.ReportedID)
-				
+
 				entry := domain.BlacklistEntry{
 					Run:    user.Run,
 					Name:   user.Name,
@@ -98,7 +124,7 @@ func (s *ReportService) ResolveReport(adminID, reportID uint, action string, pub
 		if report.MatchID != 0 {
 			var messages []domain.Message
 			tx.Where("match_id = ?", report.MatchID).Order("created_at asc").Find(&messages)
-			
+
 			// Serializamos a JSON para guardarlo como texto congelado
 			evidenceJSON, _ := json.Marshal(messages)
 			report.EvidenceSnapshot = string(evidenceJSON)
@@ -109,7 +135,7 @@ func (s *ReportService) ResolveReport(adminID, reportID uint, action string, pub
 		report.Status = "resolved"
 		report.ResolverID = &adminID
 		report.ResolvedAt = &now
-		
+
 		return tx.Save(&report).Error
 	})
 }

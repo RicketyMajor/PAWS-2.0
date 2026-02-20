@@ -236,6 +236,11 @@ func (s *AuthService) SwitchRole(currentUserID uint) (string, *domain.User, erro
 }
 
 func (s *AuthService) CheckBlacklist(run string) (bool, error) {
+	// 1. Validación defensiva para evitar consultas inútiles
+	if strings.TrimSpace(run) == "" {
+		return false, errors.New("el RUN no puede estar vacío")
+	}
+
 	var entry domain.BlacklistEntry
 	if err := s.db.Where("run = ?", run).First(&entry).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
