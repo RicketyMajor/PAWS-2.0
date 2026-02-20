@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"os"
 
@@ -99,37 +98,24 @@ func main() {
 	var mqClient *messaging.RabbitMQClient
 	var err error
 
-	rabbitUser := os.Getenv("RABBITMQ_USER")
-	rabbitPass := os.Getenv("RABBITMQ_PASSWORD")
-	rabbitHost := os.Getenv("RABBITMQ_HOST")
-	rabbitPort := os.Getenv("RABBITMQ_PORT")
-
-	if rabbitUser == "" {
-		rabbitUser = "guest"
+	// --- NUEVA CONEXIÓN UNIFICADA ---
+	rabbitURL := os.Getenv("RABBITMQ_URL")
+	if rabbitURL == "" {
+		// Fallback para desarrollo local
+		rabbitURL = "amqp://guest:guest@localhost:5672/"
 	}
-	if rabbitPass == "" {
-		rabbitPass = "guest"
-	}
-	if rabbitHost == "" {
-		rabbitHost = "localhost"
-	}
-	if rabbitPort == "" {
-		rabbitPort = "5672"
-	}
-
-	rabbitURL := fmt.Sprintf("amqp://%s:%s@%s:%s/", rabbitUser, rabbitPass, rabbitHost, rabbitPort)
 
 	if os.Getenv("ENABLE_ASYNC_FEATURES") == "true" {
-		log.Printf("Intentando conectar a RabbitMQ en: %s:%s...", rabbitHost, rabbitPort)
+		log.Println("Intentando conectar a RabbitMQ...")
 		mqClient, err = messaging.ConnectRabbitMQ(rabbitURL)
 		if err != nil {
 			log.Printf("RabbitMQ error: %v. \nEl sistema funcionará en MODO SÍNCRONO.", err)
 		} else {
 			defer mqClient.Close()
-			log.Println("Conectado a RabbitMQ")
+			log.Println("Conectado a RabbitMQ exitosamente")
 		}
 	} else {
-		log.Println("ℹAsync Features desactivadas. Usando modo síncrono.")
+		log.Println("Async Features desactivadas. Usando modo síncrono.")
 	}
 
 	emailClient := email.NewEmailClient()
