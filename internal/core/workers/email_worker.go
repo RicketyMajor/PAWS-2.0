@@ -42,7 +42,7 @@ func StartEmailConsumer(mq *messaging.RabbitMQClient, emailClient *email.EmailCl
 			err := json.Unmarshal(d.Body, &event)
 			if err != nil {
 				log.Printf("Error decodificando evento: %v", err)
-				d.Ack(false) // Confirmamos para sacarlo de la cola aunque esté malo (Dead Letter en prod)
+				_ = d.Ack(false) // Confirmamos para sacarlo de la cola aunque esté malo
 				continue
 			}
 
@@ -53,7 +53,7 @@ func StartEmailConsumer(mq *messaging.RabbitMQClient, emailClient *email.EmailCl
 				// d.Nack(false, true) // Reencolar si falla (Cuidado con loops infinitos)
 			} else {
 				// Confirmar éxito a RabbitMQ
-				d.Ack(false)
+				_ = d.Ack(false)
 			}
 		}
 	}()

@@ -2,12 +2,13 @@ package services
 
 import (
 	"errors"
+
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/domain"
 	"gorm.io/gorm"
 )
 
 type PetService struct {
-	db *gorm.DB 
+	db *gorm.DB
 }
 
 func NewPetService(db *gorm.DB) *PetService {
@@ -15,15 +16,15 @@ func NewPetService(db *gorm.DB) *PetService {
 }
 
 type CreatePetInput struct {
-	Name        string
-	Type        string
-	Breed       string
-	Age         int
-	Description string
-	Latitude    float64
-	Longitude   float64
-	Address     string
-	UserID      uint
+	Name         string
+	Type         string
+	Breed        string
+	Age          int
+	Description  string
+	Latitude     float64
+	Longitude    float64
+	Address      string
+	UserID       uint
 	IsVaccinated bool
 	IsSterilized bool
 	IsDewormed   bool
@@ -32,54 +33,54 @@ type CreatePetInput struct {
 	GoodWithKids bool
 	GoodWithDogs bool
 	EnergyLevel  string
-    ImageURLs    []string 
+	ImageURLs    []string
 }
 
 func (s *PetService) Create(input CreatePetInput) (*domain.Pet, error) {
-    mainPhoto := ""
-    if len(input.ImageURLs) > 0 {
-        mainPhoto = input.ImageURLs[0]
-    }
+	mainPhoto := ""
+	if len(input.ImageURLs) > 0 {
+		mainPhoto = input.ImageURLs[0]
+	}
 
 	newPet := domain.Pet{
-		Name:          input.Name,
-		Type:          input.Type,
-		Breed:         input.Breed,
-		Description:   input.Description,
-		Age:           input.Age,
-		Latitude:      input.Latitude,
-		Longitude:     input.Longitude,
-		Address:       input.Address,
-		UserID:        input.UserID,
-		IsVaccinated:  input.IsVaccinated,
-		IsSterilized:  input.IsSterilized,
-		IsDewormed:    input.IsDewormed,
-		SpecialNeeds:  input.SpecialNeeds,
-		RequiresYard:  input.RequiresYard,
-		GoodWithKids:  input.GoodWithKids,
-		GoodWithDogs:  input.GoodWithDogs,
-		EnergyLevel:   input.EnergyLevel,
-        // Usamos campos compatibles
-		PhotoURL:      mainPhoto, 
-		Status:        domain.StatusAvailable,
+		Name:         input.Name,
+		Type:         input.Type,
+		Breed:        input.Breed,
+		Description:  input.Description,
+		Age:          input.Age,
+		Latitude:     input.Latitude,
+		Longitude:    input.Longitude,
+		Address:      input.Address,
+		UserID:       input.UserID,
+		IsVaccinated: input.IsVaccinated,
+		IsSterilized: input.IsSterilized,
+		IsDewormed:   input.IsDewormed,
+		SpecialNeeds: input.SpecialNeeds,
+		RequiresYard: input.RequiresYard,
+		GoodWithKids: input.GoodWithKids,
+		GoodWithDogs: input.GoodWithDogs,
+		EnergyLevel:  input.EnergyLevel,
+		// Usamos campos compatibles
+		PhotoURL: mainPhoto,
+		Status:   domain.StatusAvailable,
 	}
 
 	if err := s.db.Create(&newPet).Error; err != nil {
 		return nil, err
 	}
 
-    // Guardar imágenes en tabla relacionada
-    if len(input.ImageURLs) > 0 {
-        var images []domain.PetImage
-        for i, url := range input.ImageURLs {
-            images = append(images, domain.PetImage{
-                PetID:   newPet.ID,
-                URL:     url,
-                IsCover: (i == 0),
-            })
-        }
-        s.db.Create(&images)
-    }
+	// Guardar imágenes en tabla relacionada
+	if len(input.ImageURLs) > 0 {
+		var images []domain.PetImage
+		for i, url := range input.ImageURLs {
+			images = append(images, domain.PetImage{
+				PetID:   newPet.ID,
+				URL:     url,
+				IsCover: (i == 0),
+			})
+		}
+		s.db.Create(&images)
+	}
 
 	return &newPet, nil
 }
@@ -115,17 +116,17 @@ func (s *PetService) GetNearby(lat, lng, dist float64) ([]domain.Pet, error) {
 		WHERE status = ? AND deleted_at IS NULL 
 		ORDER BY distance ASC
 	`
-	
+
 	err := s.db.Raw(query, lat, lng, lat, domain.StatusAvailable).Scan(&pets).Error
 	if err != nil {
 		return nil, err
 	}
-	
+
 	for i := range pets {
-		s.db.Model(&pets[i]).Association("Images").Find(&pets[i].Images)
-		s.db.Model(&pets[i]).Association("User").Find(&pets[i].User)
+		_ = s.db.Model(&pets[i]).Association("Images").Find(&pets[i].Images)
+		_ = s.db.Model(&pets[i]).Association("User").Find(&pets[i].User)
 	}
-	
+
 	return pets, nil
 }
 

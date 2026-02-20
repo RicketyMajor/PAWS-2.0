@@ -8,11 +8,10 @@ import (
 
 	firebase "firebase.google.com/go"
 	"firebase.google.com/go/messaging"
-	"google.golang.org/api/option"
 
-	rabbit "github.com/RicketyMajor/PAWS-2.0/internal/infrastructure/messaging"
-	"github.com/RicketyMajor/PAWS-2.0/internal/core/services"
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/domain"
+	"github.com/RicketyMajor/PAWS-2.0/internal/core/services"
+	rabbit "github.com/RicketyMajor/PAWS-2.0/internal/infrastructure/messaging"
 	"gorm.io/gorm"
 )
 
@@ -25,12 +24,14 @@ func StartNotificationConsumer(mq *rabbit.RabbitMQClient, db *gorm.DB) {
 	}
 
 	conf := &firebase.Config{ProjectID: projectID}
-	
-	// Cargar credenciales
-	opt := option.WithCredentialsFile("firebase-service-account.json")
-	
-	// Inicializar App con Configuración explícita
-	app, err := firebase.NewApp(context.Background(), conf, opt)
+
+	// --- SOLUCIÓN SEGURA Y MODERNA ---
+	// Establecemos la variable de entorno estándar de Google Cloud (ADC).
+	// Esto evita tener que usar la librería "option" y elimina las funciones obsoletas.
+	_ = os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "firebase-service-account.json")
+
+	// Inicializar App con Configuración explícita (Firebase detectará la variable automáticamente)
+	app, err := firebase.NewApp(context.Background(), conf)
 	if err != nil {
 		log.Printf("Error inicializando Firebase en Backend: %v. Las notificaciones no funcionarán.", err)
 		return
@@ -45,7 +46,7 @@ func StartNotificationConsumer(mq *rabbit.RabbitMQClient, db *gorm.DB) {
 	// 2. Conectar a RabbitMQ
 	ch := mq.GetChannel()
 	// Declaramos la cola por seguridad
-	_, err = ch.QueueDeclare(
+	_, _ = ch.QueueDeclare(
 		"push_notifications", // nombre
 		true,                 // durable
 		false,                // delete when unused
@@ -53,7 +54,7 @@ func StartNotificationConsumer(mq *rabbit.RabbitMQClient, db *gorm.DB) {
 		false,                // no-wait
 		nil,                  // arguments
 	)
-	
+
 	msgs, err := ch.Consume(
 		"push_notifications",
 		"", false, false, false, false, nil,
@@ -70,7 +71,7 @@ func StartNotificationConsumer(mq *rabbit.RabbitMQClient, db *gorm.DB) {
 			var event services.NotificationEvent
 			if err := json.Unmarshal(d.Body, &event); err != nil {
 				log.Printf("Error decodificando evento push: %v", err)
-				d.Ack(false)
+				_ = d.Ack(false)
 				continue
 			}
 
@@ -78,18 +79,18 @@ func StartNotificationConsumer(mq *rabbit.RabbitMQClient, db *gorm.DB) {
 			var user domain.User
 			if err := db.Select("fcm_token").First(&user, event.UserID).Error; err != nil {
 				log.Printf("Usuario %d no encontrado o sin token", event.UserID)
-				d.Ack(false)
+				_ = d.Ack(false)
 				continue
 			}
 
 			if user.FCMToken == "" {
-				d.Ack(false)
+				_ = d.Ack(false)
 				continue
 			}
 
 			// --- LÓGICA ESTILO WHATSAPP (Agrupación) ---
 			var androidConfig *messaging.AndroidConfig
-			
+
 			// Si el evento es de tipo "message" (Chat), configuramos el TAG
 			if event.Type == "message" {
 				androidConfig = &messaging.AndroidConfig{
@@ -110,7 +111,7 @@ func StartNotificationConsumer(mq *rabbit.RabbitMQClient, db *gorm.DB) {
 				},
 				Android: androidConfig, // Inyectamos la configuración aquí
 				Data: map[string]string{
-					"type": event.Type, 
+					"type": event.Type,
 				},
 			})
 
@@ -119,8 +120,8 @@ func StartNotificationConsumer(mq *rabbit.RabbitMQClient, db *gorm.DB) {
 			} else {
 				log.Printf("Notificación enviada a usuario %d: %s", event.UserID, event.Title)
 			}
-			
-			d.Ack(false)
+
+			_ = d.Ack(false)
 		}
 	}()
 }

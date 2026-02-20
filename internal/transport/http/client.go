@@ -43,8 +43,7 @@ func (c *Client) readPump() {
 		c.conn.Close()
 	}()
 	c.conn.SetReadLimit(maxMessageSize)
-	// ... (configuración de tiempos igual que antes) ...
-	
+
 	for {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
@@ -53,7 +52,7 @@ func (c *Client) readPump() {
 			}
 			break
 		}
-		
+
 		// CAMBIO AQUÍ: Enviamos el wrapper con "c" (el cliente) y el mensaje
 		c.hub.broadcast <- &ClientMessageWrapper{
 			Client:  c,
@@ -63,7 +62,6 @@ func (c *Client) readPump() {
 }
 
 // writePump bombea mensajes del Hub al websocket.
-// (El Hub dice "envía esto" -> writePump lo agarra -> lo escribe en el socket del usuario)
 func (c *Client) writePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
@@ -73,10 +71,10 @@ func (c *Client) writePump() {
 	for {
 		select {
 		case message, ok := <-c.send:
-			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			_ = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
 				// El Hub cerró el canal
-				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				_ = c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
 
@@ -84,19 +82,22 @@ func (c *Client) writePump() {
 			if err != nil {
 				return
 			}
-			w.Write(message)
+
+			// Usamos dos guiones bajos: uno para los bytes escritos, otro para el error
+			_, _ = w.Write(message)
 
 			// Agregar mensajes en cola al mismo paquete WebSocket si los hay
 			n := len(c.send)
 			for i := 0; i < n; i++ {
-				w.Write(<-c.send)
+				_, _ = w.Write(<-c.send)
 			}
 
 			if err := w.Close(); err != nil {
 				return
 			}
+
 		case <-ticker.C:
-			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			_ = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}

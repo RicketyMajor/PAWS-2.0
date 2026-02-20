@@ -241,7 +241,7 @@ func (s *MatchService) RespondMatch(rescuerID, matchID uint, accept bool) error 
 					Type:   "match",
 				}
 				body, _ := json.Marshal(event)
-				s.mqClient.Publish("push_notifications", body)
+				_ = s.mqClient.Publish("push_notifications", body)
 			}
 		}()
 	}
