@@ -2,10 +2,11 @@ import '../config/environment_config.dart';
 import 'package:flutter/foundation.dart';
 
 class ApiConstants {
+  // kReleaseMode es 'true' en Vercel y en el APK de Release, pero 'false' en tu emulador
   static const String baseUrl = kReleaseMode
-      ? 'https://paws-backend-g9sh.onrender.com/api/v1'
-      : 'https://paws-backend-g9sh.onrender.com/api/v1';
-  //: 'http://10.0.2.2:8080/api/v1';
+      ? 'https://paws-backend-g9sh.onrender.com/api/v1' // PRODUCCIÓN (Nube)
+      : 'http://10.0.2.2:8080/api/v1'; // DESARROLLO (Localhost de tu PC)
+
   static String get wsUrl => EnvironmentConfig.wsUrl;
 
   // Endpoints Auth
