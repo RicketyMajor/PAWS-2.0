@@ -17,7 +17,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version: "1.24.13" 
 
       # 1. LINTER (Fase 7.1 - Faltante)
       # Analiza el código buscando malas prácticas
