@@ -102,10 +102,16 @@ class _PawsAppState extends State<PawsApp> {
         ),
 
         // Otros repos (Si alguno necesita Auth, haz lo mismo)
-        RepositoryProvider(create: (context) => ChatRepository()),
+        RepositoryProvider(
+          create: (context) =>
+              ChatRepository(authRepository: context.read<AuthRepository>()),
+        ),
         RepositoryProvider(create: (context) => AdminRepository()),
         RepositoryProvider(create: (context) => SecurityRepository()),
-        RepositoryProvider(create: (context) => ReviewsRepository()),
+        RepositoryProvider(
+          create: (context) =>
+              ReviewsRepository(authRepository: context.read<AuthRepository>()),
+        ),
       ],
       child: MaterialApp(
         title: 'PAWS',

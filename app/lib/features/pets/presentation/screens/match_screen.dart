@@ -24,9 +24,12 @@ class MatchScreen extends StatelessWidget {
           foregroundColor: const Color(0xFFE91E63),
           centerTitle: true,
           actions: [
-            IconButton(
-              icon: const Icon(Icons.refresh),
-              onPressed: () => context.read<PetsBloc>().add(LoadSwipeDeck()),
+            // --- SOLUCIÓN: Usamos un Builder para heredar el contexto del BLoC ---
+            Builder(
+              builder: (ctx) => IconButton(
+                icon: const Icon(Icons.refresh),
+                onPressed: () => ctx.read<PetsBloc>().add(LoadSwipeDeck()),
+              ),
             ),
           ],
         ),

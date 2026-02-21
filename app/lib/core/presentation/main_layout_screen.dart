@@ -120,8 +120,12 @@ class _MainLayoutScreenState extends State<MainLayoutScreen> {
         return true;
       },
       child: Scaffold(
-        body: IndexedStack(index: _currentIndex, children: screens),
+        // --- EL CAMBIO ESTÁ AQUÍ ---
+        // Al usar screens[_currentIndex], Flutter solo ejecuta y carga la pestaña seleccionada.
+        // Esto elimina las peticiones fantasma y los errores 401 al iniciar sesión.
+        body: screens[_currentIndex],
         bottomNavigationBar: NavigationBar(
+          // ...
           selectedIndex: _currentIndex,
           onDestinationSelected: (index) {
             setState(() {

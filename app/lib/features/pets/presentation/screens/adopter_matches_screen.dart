@@ -1,10 +1,9 @@
-import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import '../../../../core/constants/api_constants.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/utils/image_helper.dart';
 import '../../../chat/presentation/screens/chat_screen.dart';
 import '../../domain/match_model.dart';
+import '../../data/matches_repository.dart';
 
 class AdopterMatchesScreen extends StatefulWidget {
   // Callback para avisar al padre (MainLayout) cuántos mensajes hay
@@ -19,8 +18,6 @@ class AdopterMatchesScreen extends StatefulWidget {
 class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
-  final Dio _dio = Dio();
-  final _storage = const FlutterSecureStorage();
 
   List<Match> _acceptedMatches = [];
   List<Match> _pendingMatches = [];
@@ -38,28 +35,19 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
     setState(() => _isLoading = true);
 
     try {
-      final token = await _storage.read(key: 'jwt_token');
-      final options = Options(headers: {'Authorization': 'Bearer $token'});
+      // Instanciamos el repositorio oficial, que ya sabe cómo buscar el token seguro
+      final matchesRepo = context.read<MatchesRepository>();
 
       // 1. Cargar Chats Activos
       try {
-        final resAccepted = await _dio.get(
-          '${ApiConstants.baseUrl}/matches/adopter?status=accepted',
-          options: options,
-        );
+        final matches = await matchesRepo.getAdopterAcceptedMatches();
         if (mounted) {
-          final matches = (resAccepted.data as List)
-              .map((json) => Match.fromJson(json))
-              .toList();
-
           setState(() {
             _acceptedMatches = matches;
           });
 
           // --- CÁLCULO DE BADGES ---
-          // Sumamos el total de mensajes no leídos
           final totalUnread = matches.fold(0, (sum, m) => sum + m.unreadCount);
-          // Avisamos al padre (MainLayout)
           widget.onBadgeUpdate?.call(totalUnread);
         }
       } catch (e) {
@@ -68,15 +56,10 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
 
       // 2. Cargar Solicitudes Pendientes
       try {
-        final resPending = await _dio.get(
-          '${ApiConstants.baseUrl}/matches/adopter?status=pending',
-          options: options,
-        );
+        final pending = await matchesRepo.getAdopterPendingMatches();
         if (mounted) {
           setState(() {
-            _pendingMatches = (resPending.data as List)
-                .map((json) => Match.fromJson(json))
-                .toList();
+            _pendingMatches = pending;
           });
         }
       } catch (e) {

@@ -2,16 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-
 import '../../data/chat_repository.dart';
 import '../../domain/message_model.dart';
 import '../../../pets/data/matches_repository.dart';
 import '../../../reviews/data/reviews_repository.dart';
-
 import '../bloc/chat_bloc.dart';
 import '../../../../core/utils/image_helper.dart';
 import '../widgets/chat_bubble.dart';
 import '../../../reviews/presentation/widgets/star_rating_input.dart';
+import '../../../auth/data/auth_repository.dart';
 
 class ChatScreen extends StatefulWidget {
   final int matchId;
@@ -51,11 +50,14 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _loadMyUserId() async {
-    String? token = await _storage.read(key: 'jwt_token');
+    // AHORA LO LEEMOS DESDE EL PROVIDER
+    String? token = await context.read<AuthRepository>().getToken();
     if (token != null) {
       Map<String, dynamic> decodedToken = JwtDecoder.decode(token);
       setState(() {
-        _myUserId = decodedToken['user_id'] ?? int.parse(decodedToken['sub']);
+        _myUserId =
+            decodedToken['user_id'] ??
+            int.parse(decodedToken['sub'].toString());
       });
     }
   }

@@ -1,42 +1,19 @@
-import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import '../constants/api_constants.dart';
 
 class ImageHelper {
-  /// Corrige la URL para que funcione en Emulador Android y Dispositivos Reales
+  /// Filtra y valida la URL. Si pertenece al servidor local antiguo (MinIO)
+  /// o está incompleta, devuelve un string vacío para forzar el Placeholder.
   static String fixUrl(String url) {
     if (url.isEmpty) return '';
 
-    String finalUrl = url;
-
-    // 1. Si la URL es relativa (ej: /paws-bucket/...), le falta el dominio.
-    // Asumimos que es MinIO (puerto 9000) en el host del emulador.
-    if (!url.startsWith('http')) {
-      // Asegurar slash inicial
-      if (!url.startsWith('/')) {
-        finalUrl = '/$url';
-      }
-
-      // Si estamos en Android Emulador, forzamos la dirección de MinIO
-      if (!kIsWeb && Platform.isAndroid) {
-        finalUrl = 'http://10.0.2.2:9000$finalUrl';
-      } else {
-        // Fallback para iOS u otros (Localhost)
-        finalUrl = 'http://localhost:9000$finalUrl';
-      }
+    // Si la URL apunta al servidor antiguo de MinIO o es una ruta relativa vieja
+    if (url.contains('10.0.2.2:9000') ||
+        url.contains('localhost:9000') ||
+        !url.startsWith('http')) {
+      return '';
     }
 
-    // 2. Manejo de URLs Absolutas con localhost
-    if (finalUrl.contains('localhost')) {
-      if (!kIsWeb && Platform.isAndroid) {
-        finalUrl = finalUrl.replaceFirst('localhost', '10.0.2.2');
-      }
-    }
-
-    // Debug Log (Para que veas en consola qué URL final se está pidiendo)
-    // print("IMAGE HELPER: $url -> $finalUrl");
-    return finalUrl;
+    return url;
   }
 
   /// Devuelve el Widget de Imagen inteligente
@@ -46,17 +23,20 @@ class ImageHelper {
     double? height,
     BoxFit fit = BoxFit.cover,
   }) {
-    if (url == null || url.isEmpty) {
+    final safeUrl = fixUrl(url ?? '');
+
+    // Si la URL fue invalidada por el fixUrl, mostramos el placeholder directamente
+    if (safeUrl.isEmpty) {
       return _buildPlaceholder(width, height);
     }
 
     return Image.network(
-      fixUrl(url),
+      safeUrl,
       width: width,
       height: height,
       fit: fit,
+      // Si la imagen de Cloudinary llegara a fallar, este constructor la atrapa
       errorBuilder: (context, error, stackTrace) {
-        print("ERROR CARGANDO IMAGEN (${fixUrl(url)}): $error");
         return _buildErrorPlaceholder(width, height);
       },
       loadingBuilder: (context, child, loadingProgress) {
@@ -72,6 +52,7 @@ class ImageHelper {
                         loadingProgress.expectedTotalBytes!
                   : null,
               strokeWidth: 2,
+              color: const Color(0xFFE91E63),
             ),
           ),
         );
@@ -79,21 +60,25 @@ class ImageHelper {
     );
   }
 
+  /// Provee la imagen para widgets como CircleAvatar
   static ImageProvider getProvider(String? url) {
-    if (url == null || url.isEmpty) {
-      return const AssetImage(
-        'assets/images/placeholder.png',
-      ); // Asegúrate de tener este asset o usa un NetworkImage placeholder
+    final safeUrl = fixUrl(url ?? '');
+
+    if (safeUrl.isEmpty) {
+      // Retornamos una imagen transparente o un asset por defecto
+      // (Asegúrate de tener un asset en esta ruta, o simplemente deja que el
+      // CircleAvatar maneje el color de fondo usando null en backgroundImage)
+      return const AssetImage('assets/images/placeholder.png');
     }
-    return NetworkImage(fixUrl(url));
+    return NetworkImage(safeUrl);
   }
 
   static Widget _buildPlaceholder(double? width, double? height) {
     return Container(
       width: width,
       height: height,
-      color: Colors.grey[300],
-      child: Icon(Icons.pets, color: Colors.grey[500], size: 40),
+      color: Colors.grey[200],
+      child: Icon(Icons.pets, color: Colors.grey[400], size: 40),
     );
   }
 

@@ -38,24 +38,16 @@ func getUserIDSafe(c *gin.Context) (uint, bool) {
 
 // CreateReview (POST /reviews)
 func (h *SocialHandler) CreateReview(c *gin.Context) {
-	// Seguridad: Obtener ID del usuario autenticado
-	idVal, exists := c.Get("userID")
-	if !exists {
+	// Seguridad Unificada y blindada
+	userID, ok := getUserIDSafe(c)
+	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Auth required"})
 		return
 	}
 
-	// Conversión segura de tipo
-	var userID uint
-	if v, ok := idVal.(float64); ok {
-		userID = uint(v)
-	} else {
-		userID = idVal.(uint)
-	}
-
 	var req struct {
 		MatchID uint    `json:"match_id" binding:"required"`
-		Rating  float64 `json:"rating" binding:"required"` // Ahora es Float
+		Rating  float64 `json:"rating" binding:"required"`
 		Comment string  `json:"comment"`
 	}
 

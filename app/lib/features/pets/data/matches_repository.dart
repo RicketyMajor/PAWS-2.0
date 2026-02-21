@@ -76,19 +76,35 @@ class MatchesRepository {
     }
   }
 
-  // Obtener matches del Adoptante
-  Future<List<Match>> getMyPendingMatches() async {
+  // Obtener chats activos del Adoptante (Aceptados)
+  Future<List<Match>> getAdopterAcceptedMatches() async {
     try {
       final options = await _getAuthOptions();
       final response = await _dio.get(
-        '${ApiConstants.baseUrl}/matches/adopter',
+        '${ApiConstants.baseUrl}/matches/adopter?status=accepted',
         options: options,
       );
       return (response.data as List)
           .map((json) => Match.fromJson(json))
           .toList();
     } catch (e) {
-      throw Exception('Error cargando matches: $e');
+      throw Exception('Error cargando chats activos: $e');
+    }
+  }
+
+  // Obtener solicitudes pendientes del Adoptante
+  Future<List<Match>> getAdopterPendingMatches() async {
+    try {
+      final options = await _getAuthOptions();
+      final response = await _dio.get(
+        '${ApiConstants.baseUrl}/matches/adopter?status=pending',
+        options: options,
+      );
+      return (response.data as List)
+          .map((json) => Match.fromJson(json))
+          .toList();
+    } catch (e) {
+      throw Exception('Error cargando solicitudes pendientes: $e');
     }
   }
 }
