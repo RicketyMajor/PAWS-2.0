@@ -1,4 +1,3 @@
-import '../config/environment_config.dart';
 import 'package:flutter/foundation.dart';
 
 class ApiConstants {
@@ -7,7 +6,10 @@ class ApiConstants {
       ? 'https://paws-backend-g9sh.onrender.com/api/v1' // PRODUCCIÓN (Nube)
       : 'http://10.0.2.2:8080/api/v1'; // DESARROLLO (Localhost de tu PC)
 
-  static String get wsUrl => EnvironmentConfig.wsUrl;
+  // Aplicamos la misma regla de seguridad para el servidor de WebSockets
+  static const String wsUrl = kReleaseMode
+      ? 'wss://paws-backend-g9sh.onrender.com/api/v1' // PRODUCCIÓN WS (Secure WebSockets)
+      : 'ws://10.0.2.2:8080/api/v1'; // DESARROLLO WS
 
   // Endpoints Auth
   static const String login = '/auth/login';
