@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"net/http"
 	"os"
 
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/domain"
@@ -235,6 +236,16 @@ func main() {
 			admin.GET("/reports/:id", adminHandler.GetReportDetails)
 			admin.POST("/reports/:id/resolve", adminHandler.Resolve)
 		}
+
+		// =========================================================================
+		// HEALTH CHECK
+		// =========================================================================
+		api.GET("/health", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{
+				"status":  "online",
+				"message": "PAWS Backend is up and running",
+			})
+		})
 	}
 
 	// =========================================================================
