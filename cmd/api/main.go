@@ -240,7 +240,7 @@ func main() {
 		// =========================================================================
 		// HEALTH CHECK
 		// =========================================================================
-		api.GET("/health", func(c *gin.Context) {
+		api.Any("/health", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{
 				"status":  "online",
 				"message": "PAWS Backend is up and running",
