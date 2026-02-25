@@ -51,10 +51,15 @@ func (s *FileService) SaveImage(ctx context.Context, file *multipart.FileHeader)
 		return "", fmt.Errorf("servicio de almacenamiento no disponible")
 	}
 
-	// Validación de extensión
+	// Validación de extensión ampliada para dispositivos modernos
 	ext := strings.ToLower(filepath.Ext(file.Filename))
-	if ext != ".jpg" && ext != ".jpeg" && ext != ".png" {
-		return "", fmt.Errorf("formato inválido (solo JPG/PNG)")
+	validExtensions := map[string]bool{
+		".jpg": true, ".jpeg": true, ".png": true,
+		".webp": true, ".heic": true, ".heif": true,
+	}
+
+	if !validExtensions[ext] {
+		return "", fmt.Errorf("formato %s inválido. Se permite JPG, PNG, WEBP o HEIC", ext)
 	}
 
 	// Abrir el archivo

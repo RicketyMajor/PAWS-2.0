@@ -49,5 +49,9 @@
 	<string>Necesitamos tu ubicación para mostrarte mascotas cercanas a ti.</string>
 	<key>NSLocationAlwaysUsageDescription</key>
 	<string>Necesitamos tu ubicación para mostrarte mascotas cercanas a ti.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Necesitamos acceso a tu galería para que puedas seleccionar fotos adorables de la mascota.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Necesitamos acceso a tu cámara por si deseas tomarle una foto a la mascota en este momento.</string>
 </dict>
 </plist>

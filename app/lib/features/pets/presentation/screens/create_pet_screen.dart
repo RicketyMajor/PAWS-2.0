@@ -42,8 +42,14 @@ class _CreatePetScreenState extends State<CreatePetScreen> {
   final ImagePicker _picker = ImagePicker();
 
   Future<void> _pickImages() async {
-    // Permitir selección múltiple
-    final List<XFile> images = await _picker.pickMultiImage();
+    // Selección múltiple con compresión nativa y transcodificación automática
+    final List<XFile> images = await _picker.pickMultiImage(
+      imageQuality:
+          70, // Comprime al 70% de calidad visual (imperceptible en celulares, pero reduce el peso a 300kb)
+      maxWidth:
+          1080, // Estandariza el ancho máximo (Ideal para Cloudinary y redes sociales)
+      maxHeight: 1080, // Estandariza el alto máximo
+    );
     if (images.isNotEmpty) {
       setState(() {
         // Límite de 10
