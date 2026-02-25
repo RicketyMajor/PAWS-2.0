@@ -3,6 +3,7 @@ package http
 import (
 	"net/http"
 
+	"github.com/RicketyMajor/PAWS-2.0/internal/core/domain"
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/services"
 	"github.com/gin-gonic/gin"
 )
@@ -19,23 +20,30 @@ func NewUserHandler(userService *services.UserService, matchService *services.Ma
 	}
 }
 
-// Estructura auxiliar para recibir los datos del JSON
+// Estructura auxiliar para recibir TODOS los datos del JSON
 type UpdateProfileRequest struct {
 	Name     string `json:"name"`
 	Bio      string `json:"bio"`
 	Phone    string `json:"phone"`
 	PhotoURL string `json:"photo_url"`
+
+	HousingType       string `json:"housing_type"`
+	HousingOwnership  string `json:"housing_ownership"`
+	HasYard           bool   `json:"has_yard"`
+	HasFence          bool   `json:"has_fence"`
+	FamilyComposition string `json:"family_composition"`
+	OtherPets         string `json:"other_pets"`
+	TimeAvailability  string `json:"time_availability"`
+	Experience        string `json:"experience"`
 }
 
 // UpdateProfile (PUT /profile)
 func (h *UserHandler) UpdateProfile(c *gin.Context) {
-	// 1. Obtener ID del usuario
 	userIDVal, exists := c.Get("userID")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "No autorizado"})
 		return
 	}
-	// Manejo seguro de tipos (float64 -> uint)
 	var userID uint
 	if val, ok := userIDVal.(float64); ok {
 		userID = uint(val)
@@ -43,15 +51,33 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 		userID = userIDVal.(uint)
 	}
 
-	// 2. Bind JSON
 	var req UpdateProfileRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// 3. Actualizar
-	err := h.userService.UpdateIdentity(userID, req.Name, req.Bio, req.Phone, req.PhotoURL)
+	// Separar datos de la tabla User
+	userUpdates := map[string]interface{}{
+		"name":      req.Name,
+		"bio":       req.Bio,
+		"phone":     req.Phone,
+		"photo_url": req.PhotoURL,
+	}
+
+	// Separar datos de la tabla UserProfile
+	profileData := &domain.UserProfile{
+		HousingType:       req.HousingType,
+		HousingOwnership:  req.HousingOwnership,
+		HasYard:           req.HasYard,
+		HasFence:          req.HasFence,
+		FamilyComposition: req.FamilyComposition,
+		OtherPets:         req.OtherPets,
+		TimeAvailability:  req.TimeAvailability,
+		Experience:        req.Experience,
+	}
+
+	err := h.userService.UpdateFullProfile(userID, userUpdates, profileData)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error actualizando perfil: " + err.Error()})
 		return
@@ -60,10 +86,9 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Perfil actualizado correctamente"})
 }
 
-// GetProfile (GET /profile) - Para cargar los datos actuales en el formulario
+// GetProfile (GET /profile)
 func (h *UserHandler) GetProfile(c *gin.Context) {
 	userIDVal, _ := c.Get("userID")
-	// Conversión segura de tipos
 	var userID uint
 	if val, ok := userIDVal.(float64); ok {
 		userID = uint(val)
@@ -77,6 +102,14 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, user)
-}
+	profile, _ := h.userService.GetUserProfile(userID)
+	if profile == nil {
+		profile = &domain.UserProfile{} // Devolver vacío si no hay perfil creado
+	}
 
+	// Devolvemos un JSON anidado robusto
+	c.JSON(http.StatusOK, gin.H{
+		"user":    user,
+		"profile": profile,
+	})
+}

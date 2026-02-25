@@ -47,27 +47,31 @@ class User {
   });
 
   factory User.fromJson(Map<String, dynamic> json) {
+    // Tolerancia a fallos: soportar JSON plano (antiguo) o anidado (nuevo backend)
+    final userData = json['user'] ?? json;
+    final profileData = json['profile'] ?? json;
+
     return User(
-      id: json['ID'] ?? json['id'] ?? 0,
-      name: json['name'] ?? 'Usuario',
-      email: json['email'] ?? '',
-      photoUrl: json['photo_url'] ?? '',
-      bio: json['bio'] ?? '',
-      phone: json['phone'] ?? '',
-      role: json['role'] ?? 'adopter',
+      id: userData['ID'] ?? userData['id'] ?? 0,
+      name: userData['name'] ?? 'Usuario',
+      email: userData['email'] ?? '',
+      photoUrl: userData['photo_url'] ?? '',
+      bio: userData['bio'] ?? '',
+      phone: userData['phone'] ?? '',
+      role: userData['role'] ?? 'adopter',
 
-      // Parseo seguro para rating (puede venir como int o double)
-      averageRating: (json['average_rating'] ?? 0).toDouble(),
-      reviewCount: json['review_count'] ?? 0,
+      averageRating: (userData['average_rating'] ?? 0).toDouble(),
+      reviewCount: userData['review_count'] ?? 0,
 
-      housingType: json['housing_type'] ?? 'House',
-      housingOwnership: json['housing_ownership'] ?? 'Owned',
-      hasYard: json['has_yard'] ?? false,
-      hasFence: json['has_fence'] ?? false,
-      familyComposition: json['family_composition'] ?? 'Single',
-      otherPets: json['other_pets'] ?? 'None',
-      timeAvailability: json['time_availability'] ?? 'Medium',
-      experience: json['experience'] ?? 'Beginner',
+      // Lectura del perfil (asegurando valores predeterminados seguros)
+      housingType: profileData['housing_type'] ?? 'House',
+      housingOwnership: profileData['housing_ownership'] ?? 'Owned',
+      hasYard: profileData['has_yard'] ?? false,
+      hasFence: profileData['has_fence'] ?? false,
+      familyComposition: profileData['family_composition'] ?? 'Single',
+      otherPets: profileData['other_pets'] ?? 'None',
+      timeAvailability: profileData['time_availability'] ?? 'Medium',
+      experience: profileData['experience'] ?? 'Beginner',
     );
   }
 }
