@@ -14,12 +14,11 @@ type RabbitMQClient struct {
 	ch   *amqp.Channel
 }
 
-// ConnectRabbitMQ establece la conexión y declara la Queue inicial
+// ConnectRabbitMQ establece la conexión estática para el PUBLICADOR (La API de Gin)
 func ConnectRabbitMQ(url string) (*RabbitMQClient, error) {
 	var conn *amqp.Connection
 	var err error
 
-	// Lógica de reintento simple (Wait for infrastructure)
 	for i := 0; i < 5; i++ {
 		conn, err = amqp.Dial(url)
 		if err == nil {
@@ -38,18 +37,13 @@ func ConnectRabbitMQ(url string) (*RabbitMQClient, error) {
 		return nil, fmt.Errorf("no se pudo abrir canal: %v", err)
 	}
 
-	// Declarar la cola "email_notifications"
-	// Durable: true (sobrevive reinicios), AutoDelete: false
-	_, err = ch.QueueDeclare(
-		"email_notifications", // nombre
-		true,                  // durable
-		false,                 // delete when unused
-		false,                 // exclusive
-		false,                 // no-wait
-		nil,                   // arguments
-	)
-	if err != nil {
-		return nil, err
+	// Declarar colas críticas para asegurar que existan en la nube
+	queues := []string{"email_notifications", "push_notifications"}
+	for _, q := range queues {
+		_, err = ch.QueueDeclare(q, true, false, false, false, nil)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return &RabbitMQClient{conn: conn, ch: ch}, nil
@@ -61,24 +55,62 @@ func (c *RabbitMQClient) Publish(queueName string, body []byte) error {
 	defer cancel()
 
 	return c.ch.PublishWithContext(ctx,
-		"",        // exchange (default)
-		queueName, // routing key (queue name)
+		"",        // exchange
+		queueName, // routing key
 		false,     // mandatory
 		false,     // immediate
 		amqp.Publishing{
-			ContentType: "application/json",
-			Body:        body,
-			DeliveryMode: amqp.Persistent, // Guardar en disco por seguridad
-		})
+			ContentType:  "application/json",
+			Body:         body,
+			DeliveryMode: amqp.Persistent, // Sobrevive reinicios de CloudAMQP
+		},
+	)
 }
 
-// Close cierra recursos
-func (c *RabbitMQClient) Close() {
-	c.ch.Close()
-	c.conn.Close()
-}
-
-// GetChannel exporta el canal para consumidores
 func (c *RabbitMQClient) GetChannel() *amqp.Channel {
 	return c.ch
+}
+
+// --- NUEVO: Motor de Auto-Recovery para Workers ---
+// Aísla la conexión del consumidor y la reconstruye silenciosamente si hay cortes de red
+func ConsumeWithRetry(url, queueName string, handler func([]byte) error) {
+	for {
+		conn, err := amqp.Dial(url)
+		if err != nil {
+			log.Printf("[Worker %s] Error de red: %v. Reintentando en 5s...", queueName, err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		ch, err := conn.Channel()
+		if err != nil {
+			conn.Close()
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		msgs, err := ch.Consume(queueName, "", false, false, false, false, nil)
+		if err != nil {
+			conn.Close()
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		log.Printf("[Worker %s] Conectado y en línea vía CloudAMQP", queueName)
+
+		// El bucle bloquea el hilo leyendo mensajes. Si la conexión cae, el canal 'msgs' se cierra y rompe el bucle.
+		for d := range msgs {
+			err := handler(d.Body)
+			if err != nil {
+				log.Printf("[Worker %s] Error procesando mensaje: %v", queueName, err)
+				_ = d.Ack(false) // Descartar mensaje corrupto para no atascar la cola
+			} else {
+				_ = d.Ack(false) // Confirmar éxito
+			}
+		}
+
+		log.Printf("[Worker %s] Conexión nubososa perdida. Reconectando en segundo plano...", queueName)
+		conn.Close()
+		time.Sleep(5 * time.Second)
+	}
 }

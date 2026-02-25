@@ -112,7 +112,6 @@ func main() {
 		if err != nil {
 			log.Printf("RabbitMQ error: %v. \nEl sistema funcionará en MODO SÍNCRONO.", err)
 		} else {
-			defer mqClient.Close()
 			log.Println("Conectado a RabbitMQ exitosamente")
 		}
 	} else {
@@ -122,8 +121,9 @@ func main() {
 	emailClient := email.NewEmailClient()
 
 	if mqClient != nil {
-		workers.StartEmailConsumer(mqClient, emailClient)
-		workers.StartNotificationConsumer(mqClient, database.DB)
+		// Iniciar Workers Resilientes en goroutines separadas (Pasamos la URL)
+		go workers.StartEmailConsumer(rabbitURL, emailClient)
+		go workers.StartNotificationConsumer(rabbitURL, database.DB) // CORREGIDO: Se usa database.DB
 	}
 
 	// =========================================================================

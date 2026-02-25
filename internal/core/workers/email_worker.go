@@ -2,7 +2,6 @@ package workers
 
 import (
 	"encoding/json"
-	"log"
 
 	"github.com/RicketyMajor/PAWS-2.0/internal/infrastructure/email"
 	"github.com/RicketyMajor/PAWS-2.0/internal/infrastructure/messaging"
@@ -14,47 +13,14 @@ type EmailEvent struct {
 	Body    string `json:"body"`
 }
 
-// StartEmailConsumer inicia el proceso en segundo plano
-func StartEmailConsumer(mq *messaging.RabbitMQClient, emailClient *email.EmailClient) {
-	ch := mq.GetChannel()
-
-	// Consumir de la cola declarada anteriormente
-	msgs, err := ch.Consume(
-		"email_notifications", // queue
-		"",                    // consumer name
-		false,                 // auto-ack (Falso: confirmaremos manualmente tras enviar)
-		false,                 // exclusive
-		false,                 // no-local
-		false,                 // no-wait
-		nil,                   // args
-	)
-	if err != nil {
-		log.Printf("Error registrando consumidor RabbitMQ: %v", err)
-		return
-	}
-
-	log.Println("Worker de Emails iniciado. Esperando mensajes...")
-
-	// Bucle infinito leyendo el canal
-	go func() {
-		for d := range msgs {
-			var event EmailEvent
-			err := json.Unmarshal(d.Body, &event)
-			if err != nil {
-				log.Printf("Error decodificando evento: %v", err)
-				_ = d.Ack(false) // Confirmamos para sacarlo de la cola aunque esté malo
-				continue
-			}
-
-			// Intentar enviar el correo
-			err = emailClient.Send(event.To, event.Subject, event.Body)
-			if err != nil {
-				log.Printf("Error enviando email: %v", err)
-				// d.Nack(false, true) // Reencolar si falla (Cuidado con loops infinitos)
-			} else {
-				// Confirmar éxito a RabbitMQ
-				_ = d.Ack(false)
-			}
+// StartEmailConsumer inicia el proceso con auto-recovery
+func StartEmailConsumer(rabbitURL string, emailClient *email.EmailClient) {
+	messaging.ConsumeWithRetry(rabbitURL, "email_notifications", func(body []byte) error {
+		var event EmailEvent
+		if err := json.Unmarshal(body, &event); err != nil {
+			return err
 		}
-	}()
+		// Intentar enviar el correo
+		return emailClient.Send(event.To, event.Subject, event.Body)
+	})
 }
