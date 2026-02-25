@@ -302,9 +302,12 @@ class _PetDetailScreenState extends State<PetDetailScreen> {
                           icon: Icons.pets,
                         ),
                         _HealthBadge(
-                          label: "Sano",
-                          isActive: !widget.pet.isDewormed,
-                          icon: Icons.health_and_safety,
+                          label: "Desparasitado", // <-- Etiqueta corregida
+                          isActive: widget
+                              .pet
+                              .isDewormed, // <-- Lógica corregida (sin el '!')
+                          icon:
+                              Icons.bug_report, // <-- Icono más representativo
                         ),
                       ],
                     ),
@@ -348,16 +351,33 @@ class _PetDetailScreenState extends State<PetDetailScreen> {
                       spacing: 8,
                       runSpacing: 8,
                       children: [
+                        // Generador dinámico para traducir la energía
                         _TagChip(
-                          label: "Energía: ${widget.pet.energyLevel}",
+                          label:
+                              "Energía: ${() {
+                                switch (widget.pet.energyLevel.toLowerCase()) {
+                                  case 'low':
+                                    return 'Baja';
+                                  case 'high':
+                                    return 'Alta';
+                                  default:
+                                    return 'Media';
+                                }
+                              }()}",
                           color: Colors.blue,
                         ),
                         if (widget.pet.goodWithKids)
-                          _TagChip(label: "Apto Niños", color: Colors.green),
+                          const _TagChip(
+                            label: "Apto Niños",
+                            color: Colors.green,
+                          ),
                         if (widget.pet.goodWithDogs)
-                          _TagChip(label: "Apto Perros", color: Colors.green),
+                          const _TagChip(
+                            label: "Apto Perros",
+                            color: Colors.green,
+                          ),
                         if (widget.pet.requiresYard)
-                          _TagChip(
+                          const _TagChip(
                             label: "Requiere Patio",
                             color: Colors.purple,
                           ),
