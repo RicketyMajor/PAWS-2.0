@@ -1,61 +1,87 @@
 package email
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
-	"net/smtp"
+	"net/http"
 	"os"
 )
 
 type EmailClient struct {
-	host string
-	port string
-	user string
-	pass string
+	apiKey string
+	sender string
 }
 
-// NewEmailClient inicializa el despachador nativo SMTP
+// NewEmailClient inicializa el despachador HTTP nativo
 func NewEmailClient() *EmailClient {
-	host := os.Getenv("SMTP_HOST")
-	if host == "" {
-		log.Println("AVISO: SMTP_HOST no configurado. Los correos funcionarán en modo simulación (consola).")
+	apiKey := os.Getenv("BREVO_API_KEY")
+	sender := os.Getenv("BREVO_SENDER_EMAIL")
+
+	if apiKey == "" {
+		log.Println("AVISO: BREVO_API_KEY no configurada. Los correos funcionarán en modo simulación.")
 	}
 
 	return &EmailClient{
-		host: host,
-		port: os.Getenv("SMTP_PORT"),
-		user: os.Getenv("SMTP_USER"),
-		pass: os.Getenv("SMTP_PASS"),
+		apiKey: apiKey,
+		sender: sender,
 	}
 }
 
-// Send despacha el correo usando el protocolo TCP/SMTP estándar
+// Send despacha el correo usando la API REST sobre el puerto seguro 443 (HTTPS)
 func (c *EmailClient) Send(to, subject, body string) error {
 	// Modo Simulación (Si faltan variables de entorno)
-	if c.host == "" || c.pass == "" {
+	if c.apiKey == "" || c.sender == "" {
 		log.Printf("\n========== [MOCK EMAIL] ==========\nPara: %s\nAsunto: %s\nCuerpo:\n%s\n==================================\n", to, subject, body)
 		return nil
 	}
 
-	// 1. Ensamblar los cabezales del correo (Headers)
-	header := fmt.Sprintf("From: PAWS Security <%s>\r\n", c.user)
-	header += fmt.Sprintf("To: %s\r\n", to)
-	header += fmt.Sprintf("Subject: %s\r\n", subject)
-	header += "MIME-version: 1.0;\r\n"
-	header += "Content-Type: text/plain; charset=\"UTF-8\";\r\n\r\n"
+	url := "https://api.brevo.com/v3/smtp/email"
 
-	msg := []byte(header + body + "\r\n")
-
-	// 2. Autenticación plana contra el servidor
-	auth := smtp.PlainAuth("", c.user, c.pass, c.host)
-	addr := fmt.Sprintf("%s:%s", c.host, c.port)
-
-	// 3. Abrir socket TCP y enviar
-	err := smtp.SendMail(addr, auth, c.user, []string{to}, msg)
-	if err != nil {
-		return fmt.Errorf("error del servidor SMTP: %v", err)
+	// 1. Ensamblar el Payload JSON
+	payload := map[string]interface{}{
+		"sender": map[string]string{
+			"name":  "PAWS Security",
+			"email": c.sender,
+		},
+		"to": []map[string]string{
+			{"email": to},
+		},
+		"subject":     subject,
+		"textContent": body,
 	}
 
-	log.Printf("[Worker email_notifications] Correo de verificación entregado a: %s", to)
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("error serializando json: %v", err)
+	}
+
+	// 2. Crear la petición HTTP
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("error creando request: %v", err)
+	}
+
+	// 3. Inyectar cabeceras de seguridad
+	req.Header.Set("accept", "application/json")
+	req.Header.Set("api-key", c.apiKey)
+	req.Header.Set("content-type", "application/json")
+
+	// 4. Disparar sobre puerto 443
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("timeout o error de red contactando API de correos: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("rechazo de la API (HTTP %d): %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	log.Printf("[Worker email_notifications] Correo entregado exitosamente vía HTTP a: %s", to)
 	return nil
 }
