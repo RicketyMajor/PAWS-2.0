@@ -108,9 +108,41 @@ class PetCard extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    Icon(
-                      pet.type == 'Dog' ? Icons.pets : Icons.cruelty_free,
-                      color: Colors.grey,
+                    // --- NUEVO INDICADOR DE ESPECIE ---
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: pet.type == 'Dog'
+                            ? Colors.blue.withOpacity(0.1)
+                            : Colors.orange.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            pet.type == 'Dog' ? Icons.pets : Icons.cruelty_free,
+                            color: pet.type == 'Dog'
+                                ? Colors.blue
+                                : Colors.orange,
+                            size: 16,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            pet.type == 'Dog' ? 'Perro' : 'Gato',
+                            style: TextStyle(
+                              color: pet.type == 'Dog'
+                                  ? Colors.blue
+                                  : Colors.orange,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),

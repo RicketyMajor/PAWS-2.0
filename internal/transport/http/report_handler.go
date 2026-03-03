@@ -2,8 +2,9 @@ package http
 
 import (
 	"net/http"
-	"github.com/gin-gonic/gin"
+
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/services"
+	"github.com/gin-gonic/gin"
 )
 
 type CreateReportRequest struct {
@@ -23,8 +24,25 @@ func NewReportHandler(s *services.ReportService) *ReportHandler {
 
 // Create (POST /report)
 func (h *ReportHandler) Create(c *gin.Context) {
-	userIDVal, _ := c.Get("userID")
-	reporterID := uint(userIDVal.(float64)) // Asumiendo cast seguro previo
+	userIDVal, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Usuario no autenticado"})
+		return
+	}
+
+	// Extracción segura del ID sin importar cómo lo inyecte el middleware
+	var reporterID uint
+	switch v := userIDVal.(type) {
+	case float64:
+		reporterID = uint(v)
+	case uint:
+		reporterID = v
+	case int:
+		reporterID = uint(v)
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error interno de sesión"})
+		return
+	}
 
 	var req CreateReportRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
