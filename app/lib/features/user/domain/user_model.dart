@@ -6,6 +6,7 @@ class User {
   final String bio;
   final String phone;
   final String role;
+  final String run;
 
   // --- REPUTACIÓN (NUEVO) ---
   final double averageRating;
@@ -31,7 +32,7 @@ class User {
     required this.bio,
     required this.phone,
     required this.role,
-
+    required this.run,
     // Valores por defecto para reputación
     this.averageRating = 0.0,
     this.reviewCount = 0,
@@ -59,6 +60,7 @@ class User {
       bio: userData['bio'] ?? '',
       phone: userData['phone'] ?? '',
       role: userData['role'] ?? 'adopter',
+      run: userData['run'] ?? userData['rut'] ?? '',
 
       averageRating: (userData['average_rating'] ?? 0).toDouble(),
       reviewCount: userData['review_count'] ?? 0,

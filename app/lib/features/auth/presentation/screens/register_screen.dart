@@ -201,9 +201,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
                 TextFormField(
                   controller: _runController,
+                  // Bloquear SOLO si viene pre-llenado y NO está vacío
                   enabled:
-                      widget.initialRun ==
-                      null, // Bloquear si viene pre-llenado (es la llave)
+                      widget.initialRun == null || widget.initialRun!.isEmpty,
                   decoration: const InputDecoration(
                     labelText: 'RUN',
                     border: OutlineInputBorder(),
