@@ -1,5 +1,4 @@
-import 'package:flutter/foundation.dart'; // Necesario para kIsWeb
-import 'dart:io'; // Necesario para Platform
+import 'package:flutter/foundation.dart'; // Usamos foundation en lugar de dart:io
 
 class EnvironmentConfig {
   // TU NUEVA URL DE RENDER
@@ -8,17 +7,13 @@ class EnvironmentConfig {
   static const String _renderWsUrl =
       'wss://paws-backend-g9sh.onrender.com/api/v1';
 
-  // Detecta automáticamente dónde está corriendo la app
+  // Detecta automáticamente dónde está corriendo la app de forma segura para Web
   static String get baseUrl {
     if (kIsWeb) {
-      // Para Web (Vercel): Usamos Render
       return _renderUrl;
-    } else if (Platform.isAndroid) {
-      // Para Emulador Android: Usamos Render para probar la migración real
-      // (Antes usabas 'http://10.0.2.2:8080/api/v1' para local)
+    } else if (defaultTargetPlatform == TargetPlatform.android) {
       return _renderUrl;
     } else {
-      // Para iOS o Desktop: Usamos Render
       return _renderUrl;
     }
   }
@@ -26,7 +21,7 @@ class EnvironmentConfig {
   static String get wsUrl {
     if (kIsWeb) {
       return _renderWsUrl;
-    } else if (Platform.isAndroid) {
+    } else if (defaultTargetPlatform == TargetPlatform.android) {
       return _renderWsUrl;
     } else {
       return _renderWsUrl;

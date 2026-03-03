@@ -1,9 +1,8 @@
 import 'dart:convert';
 import 'package:dio/dio.dart';
-import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../../../core/constants/api_constants.dart';
-import '../../auth/data/auth_repository.dart'; // <--- IMPORTACIÓN CLAVE
+import '../../auth/data/auth_repository.dart';
 
 class ChatRepository {
   WebSocketChannel? _channel;
@@ -19,11 +18,9 @@ class ChatRepository {
     if (token == null) throw Exception('No authentication token found');
 
     final uri = Uri.parse('${ApiConstants.wsUrl}/ws');
-    _channel = IOWebSocketChannel.connect(
-      uri,
-      headers: {'Authorization': 'Bearer $token'},
-      pingInterval: const Duration(seconds: 10),
-    );
+
+    // Conexión universal (Sirve en Web y Móvil)
+    _channel = WebSocketChannel.connect(uri);
   }
 
   Future<List<dynamic>> getHistory(int matchId) async {

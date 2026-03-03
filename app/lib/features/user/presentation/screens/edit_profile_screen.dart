@@ -17,6 +17,7 @@ import '../../../auth/presentation/screens/login_screen.dart'; // <--- NECESARIO
 
 // --- Import del Repositorio de Autenticación (Para Switch y Logout) ---
 import '../../../auth/data/auth_repository.dart';
+import 'package:flutter/foundation.dart'; // <--- Para usar kIsWeb
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
@@ -32,6 +33,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   final _nameCtrl = TextEditingController();
   final _bioCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
+  final ImagePicker _picker = ImagePicker();
 
   // --- OPCIONES VÁLIDAS ---
   static const List<String> _housingTypesOptions = [
@@ -75,7 +77,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   String _currentRun = '';
 
   String? _currentPhotoUrl;
-  File? _newPhotoFile;
+  XFile? _newPhotoFile;
 
   bool _isLoading = true;
   bool _isEditing = false;
@@ -263,11 +265,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   Future<void> _pickImage() async {
-    if (!_isEditing) return;
-    final picker = ImagePicker();
-    final picked = await picker.pickImage(source: ImageSource.gallery);
-    if (picked != null) {
-      setState(() => _newPhotoFile = File(picked.path));
+    final pickedFile = await _picker.pickImage(source: ImageSource.gallery);
+    if (pickedFile != null) {
+      setState(() {
+        _newPhotoFile = pickedFile;
+      });
     }
   }
 
@@ -405,7 +407,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                               radius: 60,
                               backgroundColor: Colors.grey[300],
                               backgroundImage: _newPhotoFile != null
-                                  ? FileImage(_newPhotoFile!)
+                                  ? (kIsWeb
+                                            ? NetworkImage(_newPhotoFile!.path)
+                                            : FileImage(
+                                                File(_newPhotoFile!.path),
+                                              ))
+                                        as ImageProvider
                                   : ImageHelper.getProvider(_currentPhotoUrl),
                             ),
                             if (_isEditing)

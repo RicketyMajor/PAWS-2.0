@@ -4,6 +4,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:geolocator/geolocator.dart';
 import '../../data/pets_repository.dart';
+import 'package:flutter/foundation.dart'; // <--- Para usar kIsWeb
 
 class CreatePetScreen extends StatefulWidget {
   const CreatePetScreen({super.key});
@@ -38,7 +39,7 @@ class _CreatePetScreenState extends State<CreatePetScreen> {
   bool _goodWithDogs = false;
 
   // Imágenes
-  final List<File> _selectedImages = [];
+  final List<XFile> _selectedImages = [];
   final ImagePicker _picker = ImagePicker();
 
   Future<void> _pickImages() async {
@@ -59,7 +60,7 @@ class _CreatePetScreenState extends State<CreatePetScreen> {
           );
           return;
         }
-        _selectedImages.addAll(images.map((x) => File(x.path)));
+        _selectedImages.addAll(images);
       });
     }
   }
@@ -373,7 +374,13 @@ class _CreatePetScreenState extends State<CreatePetScreen> {
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(8),
                         image: DecorationImage(
-                          image: FileImage(_selectedImages[index]),
+                          // --- ESTE ES EL CAMBIO MÁGICO ---
+                          image: kIsWeb
+                              ? NetworkImage(_selectedImages[index].path)
+                                    as ImageProvider
+                              : FileImage(File(_selectedImages[index].path))
+                                    as ImageProvider,
+                          // --------------------------------
                           fit: BoxFit.cover,
                         ),
                       ),

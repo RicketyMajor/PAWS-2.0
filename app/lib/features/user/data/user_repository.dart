@@ -1,16 +1,15 @@
-import 'dart:io';
 import 'package:dio/dio.dart';
+import 'package:image_picker/image_picker.dart'; // <--- NUEVO IMPORT (Reemplaza a dart:io)
 import '../../../core/constants/api_constants.dart';
-import '../../auth/data/auth_repository.dart'; // Importar AuthRepository
+import '../../auth/data/auth_repository.dart';
 
 class UserRepository {
   final Dio _dio = Dio();
-  final AuthRepository authRepository; // Dependencia
+  final AuthRepository authRepository;
 
   UserRepository({required this.authRepository});
 
   Future<Options> _getAuthOptions() async {
-    // Pedimos el token al repositorio central (maneja RAM y Disco por nosotros)
     final token = await authRepository.getToken();
     if (token == null) throw Exception('No hay sesión activa');
     return Options(headers: {'Authorization': 'Bearer $token'});
@@ -70,14 +69,21 @@ class UserRepository {
     }
   }
 
-  // 3. SUBIR FOTO
-  Future<String> uploadProfilePicture(File file) async {
+  // 3. SUBIR FOTO (AHORA ES MULTIPLATAFORMA)
+  Future<String> uploadProfilePicture(XFile file) async {
+    // <--- Recibe XFile
     try {
       final options = await _getAuthOptions();
-      String fileName = file.path.split('/').last;
+      String fileName = file.name;
+
+      // Transformamos la imagen a Bytes de memoria (100% Soportado por Web y Móvil)
+      final bytes = await file.readAsBytes();
 
       FormData formData = FormData.fromMap({
-        "file": await MultipartFile.fromFile(file.path, filename: fileName),
+        "file": MultipartFile.fromBytes(
+          bytes,
+          filename: fileName,
+        ), // <--- fromBytes
       });
 
       final response = await _dio.post(
@@ -95,7 +101,6 @@ class UserRepository {
   // 4. GUARDAR TOKEN FCM
   Future<void> saveDeviceToken(String fcmToken) async {
     try {
-      // Usamos try-catch silencioso porque getToken puede ser null si no hay sesión
       final token = await authRepository.getToken();
       if (token == null) return;
 

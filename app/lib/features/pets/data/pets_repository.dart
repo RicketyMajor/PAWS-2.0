@@ -1,8 +1,8 @@
-import 'dart:io';
 import 'package:dio/dio.dart';
+import 'package:image_picker/image_picker.dart'; // <--- NUEVO: Reemplaza a dart:io
 import '../../../core/constants/api_constants.dart';
 import '../domain/pet_model.dart';
-import '../../auth/data/auth_repository.dart'; // Importar AuthRepository
+import '../../auth/data/auth_repository.dart';
 
 class PetsRepository {
   final Dio _dio = Dio(
@@ -12,7 +12,7 @@ class PetsRepository {
     ),
   );
 
-  final AuthRepository authRepository; // Dependencia
+  final AuthRepository authRepository;
 
   PetsRepository({required this.authRepository});
 
@@ -39,17 +39,17 @@ class PetsRepository {
       );
 
       if (response.statusCode == 200) {
-        List<dynamic> data = response.data ?? [];
+        List<dynamic> data = response.data;
         return data.map((json) => Pet.fromJson(json)).toList();
+      } else {
+        throw Exception('Error cargando mascotas');
       }
-      return [];
     } on DioException catch (e) {
       _handleError(e);
       return [];
     }
   }
 
-  // OBTENER SOLO MIS MASCOTAS (RESCATISTA)
   Future<List<Pet>> getMyPets() async {
     try {
       final options = await _getAuthOptions();
@@ -61,15 +61,20 @@ class PetsRepository {
       if (response.statusCode == 200) {
         List<dynamic> data = response.data;
         return data.map((json) => Pet.fromJson(json)).toList();
+      } else {
+        throw Exception('Error cargando tus mascotas');
       }
-      return [];
     } on DioException catch (e) {
       _handleError(e);
       return [];
     }
   }
 
-  // CREATE PET
+  // ===============================================================
+  //  ESCRITURA
+  // ===============================================================
+
+  // <--- AQUÍ ESTÁ EL BLINDAJE PARA LA WEB MANTENIENDO TU ESTRUCTURA --->
   Future<void> createPet({
     required String name,
     required String type,
@@ -78,7 +83,7 @@ class PetsRepository {
     required String description,
     required double latitude,
     required double longitude,
-    required List<File> images,
+    required List<XFile> images, // <--- Solo cambiamos File por XFile
     bool isVaccinated = false,
     bool isSterilized = false,
     bool isDewormed = false,
@@ -86,12 +91,13 @@ class PetsRepository {
     bool requiresYard = false,
     bool goodWithKids = false,
     bool goodWithDogs = false,
-    String energyLevel = 'medium',
+    String energyLevel = 'Medium',
+    String address = '',
   }) async {
     try {
       final options = await _getAuthOptions();
 
-      final formData = FormData.fromMap({
+      FormData formData = FormData.fromMap({
         "name": name,
         "type": type,
         "breed": breed,
@@ -99,6 +105,7 @@ class PetsRepository {
         "description": description,
         "latitude": latitude,
         "longitude": longitude,
+        "address": address,
         "is_vaccinated": isVaccinated,
         "is_sterilized": isSterilized,
         "is_dewormed": isDewormed,
@@ -109,12 +116,15 @@ class PetsRepository {
         "energy_level": energyLevel,
       });
 
+      // Transformamos cada imagen a Bytes de memoria (Universal)
       for (var file in images) {
-        String fileName = file.path.split('/').last;
+        String fileName = file.name;
+        final bytes = await file.readAsBytes();
+
         formData.files.add(
           MapEntry(
             "images",
-            await MultipartFile.fromFile(file.path, filename: fileName),
+            MultipartFile.fromBytes(bytes, filename: fileName),
           ),
         );
       }
@@ -129,7 +139,21 @@ class PetsRepository {
     }
   }
 
-  // INTERACCIÓN (Swipe)
+  Future<void> deletePet(int petId) async {
+    try {
+      final options = await _getAuthOptions();
+      await _dio.delete(
+        '${ApiConstants.baseUrl}/pets/$petId',
+        options: options,
+      );
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
+  // ===============================================================
+  //  INTERACCIÓN (Swipe)
+  // ===============================================================
   Future<void> swipePet({required int petId, required bool isLike}) async {
     try {
       final options = await _getAuthOptions();
@@ -155,14 +179,5 @@ class PetsRepository {
     }
     print("PETS REPO ERROR: $errorMessage");
     throw Exception(errorMessage);
-  }
-
-  Future<void> deletePet(int id) async {
-    try {
-      final options = await _getAuthOptions();
-      await _dio.delete('${ApiConstants.baseUrl}/pets/$id', options: options);
-    } on DioException catch (e) {
-      _handleError(e);
-    }
   }
 }
