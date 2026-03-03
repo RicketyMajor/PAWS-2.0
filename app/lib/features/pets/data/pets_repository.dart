@@ -70,6 +70,19 @@ class PetsRepository {
     }
   }
 
+  Future<Pet> getPetById(int id) async {
+    try {
+      final options = await _getAuthOptions();
+      final response = await _dio.get(
+        '${ApiConstants.baseUrl}/pets/$id',
+        options: options,
+      );
+      return Pet.fromJson(response.data);
+    } catch (e) {
+      throw Exception('Error obteniendo mascota: $e');
+    }
+  }
+
   // ===============================================================
   //  ESCRITURA
   // ===============================================================

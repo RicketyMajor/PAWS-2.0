@@ -212,6 +212,7 @@ class _AdopterMatchesScreenState extends State<AdopterMatchesScreen>
                 MaterialPageRoute(
                   builder: (_) => ChatScreen(
                     matchId: match.id,
+                    petId: match.petId,
                     peerName: rescuerName,
                     peerId: pet?.ownerId ?? 0,
                     peerPhotoUrl: rescuerPhoto,

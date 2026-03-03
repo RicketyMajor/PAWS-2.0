@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:image_picker/image_picker.dart'; // <--- NUEVO IMPORT (Reemplaza a dart:io)
 import '../../../core/constants/api_constants.dart';
 import '../../auth/data/auth_repository.dart';
+import '../domain/user_model.dart';
 
 class UserRepository {
   final Dio _dio = Dio();
@@ -26,6 +27,19 @@ class UserRepository {
       return response.data;
     } catch (e) {
       throw Exception('Error cargando perfil: $e');
+    }
+  }
+
+  Future<User> getUserById(int id) async {
+    try {
+      final options = await _getAuthOptions();
+      final response = await _dio.get(
+        '${ApiConstants.baseUrl}/users/$id',
+        options: options,
+      );
+      return User.fromJson(response.data);
+    } catch (e) {
+      throw Exception('Error obteniendo usuario: $e');
     }
   }
 

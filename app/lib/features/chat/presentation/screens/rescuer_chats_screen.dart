@@ -190,6 +190,7 @@ class _RescuerChatsScreenState extends State<RescuerChatsScreen> {
                 MaterialPageRoute(
                   builder: (_) => ChatScreen(
                     matchId: match.id,
+                    petId: match.petId,
                     peerName: adopterName,
                     peerId: match.adopterId,
                     peerPhotoUrl: adopterPhoto,

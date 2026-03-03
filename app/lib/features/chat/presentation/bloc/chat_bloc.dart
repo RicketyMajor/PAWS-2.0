@@ -176,7 +176,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         final history = historyJson
             .map((json) => ChatMessage.fromJson(json, _myUserId))
             .toList();
-
+        history.sort((a, b) => b.createdAt.compareTo(a.createdAt));
         bool isLocked = false;
         String reason = '';
 
@@ -245,7 +245,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         final currentState = state as ChatLoaded;
         emit(
           currentState.copyWith(
-            messages: [...currentState.messages, event.message],
+            messages: [event.message, ...currentState.messages],
           ),
         );
       }

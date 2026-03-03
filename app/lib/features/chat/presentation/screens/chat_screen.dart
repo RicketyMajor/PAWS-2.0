@@ -11,12 +11,18 @@ import '../../../../core/utils/image_helper.dart';
 import '../widgets/chat_bubble.dart';
 import '../../../reviews/presentation/widgets/star_rating_input.dart';
 import '../../../auth/data/auth_repository.dart';
+// --- Imports para navegación ---
+import '../../../pets/presentation/screens/pet_detail_screen.dart';
+import '../../../user/presentation/screens/public_profile_screen.dart';
+import '../../../pets/data/pets_repository.dart';
+import '../../../user/data/user_repository.dart';
 
 class ChatScreen extends StatefulWidget {
   final int matchId;
   final String peerName;
   final int peerId;
   final String? peerPhotoUrl;
+  final int petId;
   final bool isPetDeleted;
   final bool isPeerLeft;
   final bool isRescuer;
@@ -26,6 +32,7 @@ class ChatScreen extends StatefulWidget {
     required this.matchId,
     required this.peerName,
     required this.peerId,
+    required this.petId,
     this.peerPhotoUrl,
     this.isPetDeleted = false,
     this.isPeerLeft = false,
@@ -137,35 +144,129 @@ class _ChatScreenState extends State<ChatScreen> {
               icon: const Icon(Icons.arrow_back, color: Color(0xFFE91E63)),
               onPressed: () => Navigator.pop(context),
             ),
-            title: Row(
-              children: [
-                CircleAvatar(
-                  radius: 18,
-                  backgroundColor: Colors.grey[200],
-                  backgroundImage: ImageHelper.getProvider(widget.peerPhotoUrl),
-                  child: (widget.peerPhotoUrl == null)
-                      ? Text(
-                          widget.peerName.isNotEmpty
-                              ? widget.peerName[0].toUpperCase()
-                              : '?',
-                        )
-                      : null,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    widget.peerName,
-                    style: const TextStyle(
-                      color: Colors.black,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    overflow: TextOverflow.ellipsis,
+            // 1. EL TÍTULO AHORA ES UN BOTÓN HACIA EL PERFIL
+            titleSpacing: 0, // Para acercar el nombre a la flecha
+            title: InkWell(
+              onTap: () async {
+                // 1. Mostrar pantalla de carga
+                showDialog(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (_) => const Center(
+                    child: CircularProgressIndicator(color: Color(0xFFE91E63)),
                   ),
+                );
+
+                try {
+                  // 2. Buscar al usuario completo
+                  final user = await context.read<UserRepository>().getUserById(
+                    widget.peerId,
+                  );
+
+                  if (context.mounted) {
+                    Navigator.pop(context); // Quitar carga
+                    // 3. Viajar a la pantalla
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => PublicProfileScreen(user: user),
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  if (context.mounted) {
+                    Navigator.pop(context); // Quitar carga
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          "No se pudo cargar el perfil del usuario",
+                        ),
+                      ),
+                    );
+                  }
+                }
+              },
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8.0),
+                child: Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 18,
+                      backgroundColor: Colors.grey[200],
+                      backgroundImage: ImageHelper.getProvider(
+                        widget.peerPhotoUrl,
+                      ),
+                      child: (widget.peerPhotoUrl == null)
+                          ? Text(
+                              widget.peerName.isNotEmpty
+                                  ? widget.peerName[0].toUpperCase()
+                                  : '?',
+                            )
+                          : null,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        widget.peerName,
+                        style: const TextStyle(
+                          color: Colors.black,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
             actions: [
+              // 2. BOTÓN DE LA MASCOTA
+              IconButton(
+                icon: const Icon(Icons.pets, color: Color(0xFFE91E63)),
+                tooltip: "Ver mascota",
+                onPressed: () async {
+                  // 1. Mostrar pantalla de carga
+                  showDialog(
+                    context: context,
+                    barrierDismissible: false,
+                    builder: (_) => const Center(
+                      child: CircularProgressIndicator(
+                        color: Color(0xFFE91E63),
+                      ),
+                    ),
+                  );
+
+                  try {
+                    // 2. Buscar la mascota completa
+                    final pet = await context.read<PetsRepository>().getPetById(
+                      widget.petId,
+                    );
+
+                    if (context.mounted) {
+                      Navigator.pop(context); // Quitar carga
+                      // 3. Viajar a la pantalla
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => PetDetailScreen(pet: pet),
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    if (context.mounted) {
+                      Navigator.pop(context); // Quitar carga
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text("No se pudo cargar la mascota"),
+                        ),
+                      );
+                    }
+                  }
+                },
+              ),
+
+              // 3. EL MENÚ DE LOS TRES PUNTOS (Tu código original intacto)
               BlocBuilder<ChatBloc, ChatState>(
                 builder: (context, state) {
                   bool isLocked = (state is ChatLoaded && state.isLocked);
