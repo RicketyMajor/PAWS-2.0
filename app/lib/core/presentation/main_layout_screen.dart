@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'dart:async';
+import 'dart:convert';
+import '../../features/chat/data/chat_repository.dart';
 // Importa tus pantallas
 import '../../features/pets/presentation/screens/match_screen.dart';
 import '../../features/pets/presentation/screens/adopter_matches_screen.dart';
@@ -25,6 +28,43 @@ class _MainLayoutScreenState extends State<MainLayoutScreen> {
   int _pendingRequests = 0;
 
   DateTime? _lastPressedTime;
+
+  StreamSubscription? _globalChatSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _initGlobalWebSocket();
+  }
+
+  void _initGlobalWebSocket() async {
+    final chatRepo = context.read<ChatRepository>();
+
+    try {
+      await chatRepo.connect(); // Enciende el receptor global
+
+      _globalChatSub = chatRepo.messages.listen((data) {
+        try {
+          final decoded = jsonDecode(data);
+          if (decoded['type'] == 'new_message') {
+            setState(() {
+              _unreadChats++;
+            });
+          }
+        } catch (e) {
+          print("Error parseando WS global: $e");
+        }
+      });
+    } catch (e) {
+      print("No se pudo iniciar WS global: $e");
+    }
+  }
+
+  @override
+  void dispose() {
+    _globalChatSub?.cancel(); // Apagamos la radio si se cierra la app
+    super.dispose();
+  }
 
   // --- CALLBACKS PARA ACTUALIZAR BADGES DESDE LOS HIJOS ---
 

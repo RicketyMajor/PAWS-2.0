@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:dio/dio.dart';
+import 'dart:async';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../../../core/constants/api_constants.dart';
 import '../../auth/data/auth_repository.dart';
@@ -9,19 +10,30 @@ class ChatRepository {
   final AuthRepository authRepository;
   final Dio _dio = Dio();
 
+  final _messageController = StreamController<dynamic>.broadcast();
+
   ChatRepository({required this.authRepository});
 
-  Stream<dynamic> get messages => _channel?.stream ?? const Stream.empty();
+  Stream<dynamic> get messages => _messageController.stream;
 
   Future<void> connect() async {
+    if (_channel != null)
+      return; // Evita conectarse dos veces si ya está activo
+
     final token = await authRepository.getToken();
     if (token == null) throw Exception('No authentication token found');
 
-    // MÁGIA WEB: Pasamos el token por query parameter (?token=...)
     final uri = Uri.parse('${ApiConstants.wsUrl}/ws?token=$token');
-
-    // Conexión universal (Sirve en Web y Móvil)
     _channel = WebSocketChannel.connect(uri);
+
+    // Redirigimos todo lo que llega del servidor a nuestra "Radio Pública"
+    _channel!.stream.listen(
+      (data) => _messageController.add(data),
+      onError: (error) => print("WS Global Error: $error"),
+      onDone: () {
+        _channel = null; // Si se corta, limpiamos el canal
+      },
+    );
   }
 
   Future<List<dynamic>> getHistory(int matchId) async {
