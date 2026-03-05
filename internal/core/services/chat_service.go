@@ -26,22 +26,26 @@ func (s *ChatService) SaveMessage(matchID, senderID uint, content string) (*doma
 		return nil, 0, errors.New("mensaje bloqueado por contenido inapropiado")
 	}
 
-	// 2. Obtener el Match y la Mascota relacionada
+	// 2. Obtener el Match
 	var match domain.Match
-	// IMPORTANTE: Hacemos Preload("Pet") para poder acceder al UserID del dueño de la mascota (Rescatista)
-	if err := s.db.Preload("Pet").First(&match, matchID).Error; err != nil {
+	if err := s.db.First(&match, matchID).Error; err != nil {
 		return nil, 0, errors.New("match no encontrado")
 	}
 
-	// Validar estado (Usamos la constante que definiste en match.go)
+	// 2.1 Obtener la mascota explícitamente e incondicionalmente
+	var pet domain.Pet
+	if err := s.db.Unscoped().First(&pet, match.PetID).Error; err != nil {
+		return nil, 0, errors.New("mascota no encontrada")
+	}
+
+	// Validar estado
 	if match.Status != domain.MatchAccepted {
 		return nil, 0, errors.New("no puedes chatear en un match no aceptado")
 	}
 
 	// 3. Determinar quién es el destinatario (Routing Lógico)
-	// Definimos los actores:
 	adopterID := match.AdopterID
-	rescuerID := match.Pet.UserID // El dueño de la mascota es el rescatista
+	rescuerID := pet.UserID // <-- AHORA ES 100% SEGURO
 
 	var receiverID uint
 

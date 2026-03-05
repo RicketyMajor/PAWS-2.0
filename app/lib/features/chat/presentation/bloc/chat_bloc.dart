@@ -218,6 +218,9 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
                 final newMsg = ChatMessage.fromJson(payload, _myUserId);
                 add(_ReceiveMessageEvent(newMsg));
               }
+            } else if (decoded['type'] == 'error') {
+              // Si el backend rechaza el mensaje, lo imprimimos (¡Aquí podrías mostrar un SnackBar luego!)
+              print("ERROR DEL BACKEND WS: ${decoded['payload']['message']}");
             }
           } catch (e) {
             print("Error parseando mensaje WS: $e");
