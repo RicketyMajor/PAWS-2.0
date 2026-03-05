@@ -31,7 +31,8 @@ func (s *ReportService) CreateReport(reporterID, reportedID, matchID uint, categ
 		ReporterID:  reporterID,
 		ReportedID:  reportedID,
 		MatchID:     matchID,
-		Category:    category,
+		Reason:      category, // <--- Llenamos la columna antigua para satisfacer el NOT NULL
+		Category:    category, // <--- Llenamos la columna nueva
 		Description: description,
 		Status:      "pending",
 	}

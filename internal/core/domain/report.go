@@ -30,8 +30,9 @@ type Report struct {
 	MatchID uint `gorm:"index" json:"match_id"` // El chat donde ocurrió (opcional)
 
 	// Datos del Reporte
-	Category    string `gorm:"column:reason;type:varchar(50);not null" json:"category"` // Enum: abuse, scam, etc.
-	Description string `gorm:"type:text" json:"description"`                            // Texto libre del usuario
+	Reason      string `gorm:"type:varchar(50);not null" json:"-"`        // <--- Mantiene viva la columna antigua en BD (oculta en JSON)
+	Category    string `gorm:"type:varchar(50);not null" json:"category"` // <--- La columna nueva
+	Description string `gorm:"type:text" json:"description"`              // Texto libre del usuario
 
 	// Estado y Resolución
 	Status string `gorm:"default:'pending';index" json:"status"` // pending, resolved, dismissed
