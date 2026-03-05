@@ -4,6 +4,8 @@ import '../../data/admin_repository.dart';
 import '../../domain/report_model.dart';
 import '../../../chat/presentation/widgets/chat_bubble.dart'; // Reutilizamos Bubble
 import '../../../../core/utils/image_helper.dart';
+import '../../../auth/data/auth_repository.dart';
+import '../../../auth/presentation/screens/login_screen.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
@@ -35,6 +37,22 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         elevation: 1,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout, color: Colors.red),
+            tooltip: "Cerrar Sesión",
+            onPressed: () async {
+              await context.read<AuthRepository>().logout();
+              if (context.mounted) {
+                Navigator.pushAndRemoveUntil(
+                  context,
+                  MaterialPageRoute(builder: (_) => const LoginScreen()),
+                  (route) => false,
+                );
+              }
+            },
+          ),
+        ],
       ),
       backgroundColor: Colors.grey[100],
       body: FutureBuilder<List<Report>>(

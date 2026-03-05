@@ -250,12 +250,37 @@ class _PetDetailScreenState extends State<PetDetailScreen> {
                                   color: Color(0xFF2D3436),
                                 ),
                               ),
-                              Text(
-                                widget.pet.breed,
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  color: Colors.grey[600],
-                                ),
+                              Row(
+                                children: [
+                                  Icon(
+                                    widget.pet.type == 'Dog'
+                                        ? Icons.pets
+                                        : Icons.cruelty_free,
+                                    size: 16,
+                                    color: widget.pet.type == 'Dog'
+                                        ? Colors.blue
+                                        : Colors.orange,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    widget.pet.type == 'Dog' ? 'Perro' : 'Gato',
+                                    style: TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.bold,
+                                      color: widget.pet.type == 'Dog'
+                                          ? Colors.blue
+                                          : Colors.orange,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    "• ${widget.pet.breed}",
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      color: Colors.grey[600],
+                                    ),
+                                  ),
+                                ],
                               ),
                             ],
                           ),
