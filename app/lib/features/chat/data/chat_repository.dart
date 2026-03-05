@@ -17,7 +17,8 @@ class ChatRepository {
     final token = await authRepository.getToken();
     if (token == null) throw Exception('No authentication token found');
 
-    final uri = Uri.parse('${ApiConstants.wsUrl}/ws');
+    // MÁGIA WEB: Pasamos el token por query parameter (?token=...)
+    final uri = Uri.parse('${ApiConstants.wsUrl}/ws?token=$token');
 
     // Conexión universal (Sirve en Web y Móvil)
     _channel = WebSocketChannel.connect(uri);

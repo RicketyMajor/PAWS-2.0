@@ -202,6 +202,7 @@ func main() {
 			protected.POST("/auth/switch-role", authHandler.SwitchRole)
 			protected.PUT("/profile", userHandler.UpdateProfile)
 			protected.GET("/profile", userHandler.GetProfile)
+			protected.GET("/users/:id", userHandler.GetUserByID)
 			protected.POST("/pets", petHandler.Create)
 			protected.GET("/pets/my", petHandler.GetMyPets)
 			protected.POST("/files/upload", uploadHandler.Upload)
