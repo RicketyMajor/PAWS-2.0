@@ -114,18 +114,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  /// Translates report categories from English keys to Spanish for display.
-  String _translateCategory(String cat) {
-    switch (cat) {
-      case 'abuse': return 'Animal Abuse';
-      case 'scam': return 'Scam / Fraud';
-      case 'hate': return 'Hate Speech';
-      case 'spam': return 'Spam';
-      default: return 'Other';
-    }
-  }
-}
-
 
 // =========================================================================
 // Report Detail Screen
@@ -296,5 +284,17 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
       const SizedBox(width: 8),
       Expanded(child: Text("$name ($email)", overflow: TextOverflow.ellipsis)),
     ]);
+  }
+}
+
+  /// Translates report categories from English keys to Spanish for display.
+  String _translateCategory(String cat) {
+    switch (cat) {
+      case 'abuse': return 'Animal Abuse';
+      case 'scam': return 'Scam / Fraud';
+      case 'hate': return 'Hate Speech';
+      case 'spam': return 'Spam';
+      default: return 'Other';
+    }
   }
 }
