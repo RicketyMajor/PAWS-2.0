@@ -1,35 +1,36 @@
-# ETAPA 1: Builder (Compilación)
-# Usamos una imagen con Go instalado para compilar
+# -------------------
+# Stage 1: Builder
+# -------------------
+# This stage compiles the Go application.
 FROM golang:alpine AS builder
-# Instalamos herramientas necesarias
+
 WORKDIR /app
 
-# Copiamos los archivos de dependencias primero (para aprovechar caché de Docker)
+# Copy dependency files and download dependencies.
+# This is done first to leverage Docker layer caching.
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Copiamos el código fuente
+# Copy the rest of the source code.
 COPY . .
 
-# Compilamos el binario
-# -o main: nombre del output
-# ./cmd/api: ruta de tu main.go
+# Build the Go binary.
 RUN go build -o main ./cmd/api
 
-# ETAPA 2: Runner (Ejecución)
-# Usamos una imagen vacía y ligera de Alpine
+
+# -------------------
+# Stage 2: Runner
+# -------------------
+# This stage creates the final, lightweight production image.
 FROM alpine:latest
 
 WORKDIR /app
 
-# Copiamos solo el binario compilado desde la etapa anterior
+# Copy only the compiled binary from the builder stage.
 COPY --from=builder /app/main .
 
-# Copiamos el archivo .env (opcional, pero útil si no pasamos todo por compose)
-# COPY .env . 
-
-# Exponemos el puerto
+# Expose the port the application runs on.
 EXPOSE 8080
 
-# Comando para iniciar
+# The command to run the application.
 CMD ["./main"]

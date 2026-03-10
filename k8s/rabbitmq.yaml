@@ -1,3 +1,6 @@
+# -------------------
+# RabbitMQ Deployment
+# -------------------
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -14,16 +17,21 @@ spec:
     spec:
       containers:
       - name: rabbitmq
-        image: rabbitmq:3-management # Versión con panel web visual
+        image: rabbitmq:3-management
         ports:
-        - containerPort: 5672 # Puerto AMQP (Comunicación entre servicios)
-        - containerPort: 15672 # Panel de administración
+        - containerPort: 5672
+        - containerPort: 15672
         env:
         - name: RABBITMQ_DEFAULT_USER
           value: "guest"
         - name: RABBITMQ_DEFAULT_PASS
           value: "guest"
+
 ---
+
+# -------------------
+# RabbitMQ Service
+# -------------------
 apiVersion: v1
 kind: Service
 metadata:
@@ -38,4 +46,4 @@ spec:
     - name: management
       port: 15672
       targetPort: 15672
-  type: ClusterIP # Solo accesible desde dentro del cluster
+  type: ClusterIP

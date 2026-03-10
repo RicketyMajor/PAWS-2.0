@@ -1,7 +1,9 @@
 version: '3.8'
 
 services:
-  # 1. BASE DE DATOS (Igual que antes)
+  # -------------------
+  # PostgreSQL Database
+  # -------------------
   db:
     image: postgres:15-alpine
     container_name: paws-db
@@ -15,7 +17,9 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
-  # 2. CACHÉ (REDIS) (Igual que antes)
+  # -------------------
+  # Redis Cache
+  # -------------------
   redis:
     image: redis:alpine
     container_name: paws-redis
@@ -23,22 +27,26 @@ services:
     ports:
       - "6379:6379"
 
-  # 3. ALMACENAMIENTO (MINIO) - TU BLOQUE ESTABA PERFECTO
+  # -------------------
+  # MinIO Storage
+  # -------------------
   minio:
     image: minio/minio
     container_name: paws-minio
     restart: always
     ports:
-      - "9000:9000" # API S3
-      - "9001:9001" # Consola Web
+      - "9000:9000" # S3 API
+      - "9001:9001" # Web Console
     environment:
-      MINIO_ROOT_USER: minioadmin      # Usuario maestro
-      MINIO_ROOT_PASSWORD: minioadmin  # Contraseña maestra
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
     command: server /data --console-address ":9001"
     volumes:
       - minio_data:/data
 
-  # 4. BACKEND (AQUÍ ESTÁ EL CAMBIO IMPORTANTE)
+  # -------------------
+  # Backend Application
+  # -------------------
   backend:
     build: .
     container_name: paws-backend
@@ -46,13 +54,13 @@ services:
     depends_on:
       - db
       - redis
-      - minio  # <--- Agregamos dependencia para que espere a MinIO
+      - minio
     ports:
       - "8080:8080"
     environment:
       PORT: 8080
       
-      # --- Base de Datos ---
+      # --- Database Config ---
       DB_HOST: db
       DB_PORT: 5432
       DB_USER: postgres
@@ -60,25 +68,27 @@ services:
       DB_NAME: paws-db
       DB_SSL_MODE: disable
       
-      # --- Redis ---
+      # --- Redis Config ---
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ""
       
-      # --- SEGURIDAD ---
+      # --- Security ---
       JWT_SECRET: "tu_secreto"
 
-      # --- NUEVO: CONFIGURACIÓN MINIO (Para cuando corre en Docker) ---
-      # Nota: Dentro de Docker, el host es el nombre del servicio: "minio"
+      # --- MinIO Storage Config ---
       MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: minioadmin  # Debe coincidir con MINIO_ROOT_USER de arriba
-      MINIO_SECRET_KEY: minioadmin  # Debe coincidir con MINIO_ROOT_PASSWORD de arriba
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
       MINIO_BUCKET: paws-bucket
       MINIO_USE_SSL: "false"
       
-      # URL Pública: Para emulador Android usa 10.0.2.2, para Web usa localhost
+      # Public URL for storage access
       STORAGE_PUBLIC_URL: http://10.0.2.2:9000 
 
+# -------------------
+# Volumes
+# -------------------
 volumes:
   postgres_data:
   minio_data:

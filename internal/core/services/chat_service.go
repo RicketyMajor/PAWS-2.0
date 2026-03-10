@@ -1,3 +1,4 @@
+// Package services contains the core business logic of the application.
 package services
 
 import (
@@ -8,58 +9,65 @@ import (
 	"gorm.io/gorm"
 )
 
+// forbiddenWords is a basic list for content filtering.
+var forbiddenWords = []string{"scam", "hate", "kill", "deposit", "immediate transfer"}
+
+// =========================================================================
+// Service Definition
+// =========================================================================
+
+// ChatService provides business logic for chat-related operations.
 type ChatService struct {
 	db *gorm.DB
 }
 
+// NewChatService creates a new ChatService.
 func NewChatService(db *gorm.DB) *ChatService {
 	return &ChatService{db: db}
 }
 
-// Lista negra básica
-var forbiddenWords = []string{"estafa", "odio", "matar", "depósito", "transferencia inmediata"}
+// =========================================================================
+// Service Methods
+// =========================================================================
 
-// SaveMessage valida, guarda y RETORNA EL RECEIVER_ID
+// SaveMessage validates, saves, and determines the recipient of a chat message.
 func (s *ChatService) SaveMessage(matchID, senderID uint, content string) (*domain.Message, uint, error) {
-	// 1. Filtro de contenido
+	// 1. Filter message content for forbidden words.
 	if s.containsForbiddenContent(content) {
-		return nil, 0, errors.New("mensaje bloqueado por contenido inapropiado")
+		return nil, 0, errors.New("message blocked due to inappropriate content")
 	}
 
-	// 2. Obtener el Match
+	// 2. Retrieve the match to validate status and participants.
 	var match domain.Match
 	if err := s.db.First(&match, matchID).Error; err != nil {
-		return nil, 0, errors.New("match no encontrado")
+		return nil, 0, errors.New("match not found")
 	}
 
-	// 2.1 Obtener la mascota explícitamente e incondicionalmente
+	// Retrieve the pet (even if soft-deleted) to reliably get the rescuer's ID.
 	var pet domain.Pet
 	if err := s.db.Unscoped().First(&pet, match.PetID).Error; err != nil {
-		return nil, 0, errors.New("mascota no encontrada")
+		return nil, 0, errors.New("pet not found")
 	}
 
-	// Validar estado
+	// Validate that the match is active.
 	if match.Status != domain.MatchAccepted {
-		return nil, 0, errors.New("no puedes chatear en un match no aceptado")
+		return nil, 0, errors.New("chat is not enabled for a non-accepted match")
 	}
 
-	// 3. Determinar quién es el destinatario (Routing Lógico)
+	// 3. Determine the recipient (logical routing).
 	adopterID := match.AdopterID
-	rescuerID := pet.UserID // <-- AHORA ES 100% SEGURO
-
+	rescuerID := pet.UserID
 	var receiverID uint
 
 	if senderID == adopterID {
-		// Si escribe el adoptante, recibe el rescatista
 		receiverID = rescuerID
 	} else if senderID == rescuerID {
-		// Si escribe el rescatista, recibe el adoptante
 		receiverID = adopterID
 	} else {
-		return nil, 0, errors.New("no perteneces a este match")
+		return nil, 0, errors.New("sender does not belong to this match")
 	}
 
-	// 4. Guardar mensaje
+	// 4. Save the message.
 	msg := domain.Message{
 		MatchID:  matchID,
 		SenderID: senderID,
@@ -74,14 +82,22 @@ func (s *ChatService) SaveMessage(matchID, senderID uint, content string) (*doma
 	return &msg, receiverID, nil
 }
 
-// GetHistory recupera la conversación previa
+// GetHistory retrieves the conversation history for a given match.
 func (s *ChatService) GetHistory(matchID uint) ([]domain.Message, error) {
 	var messages []domain.Message
 	err := s.db.Where("match_id = ?", matchID).Order("created_at asc").Find(&messages).Error
 	return messages, err
 }
 
-// containsForbiddenContent busca palabras clave
+// MarkAsRead marks all messages in a match as read for a specific user.
+func (s *ChatService) MarkAsRead(matchID, userID uint) error {
+	// Updates all messages in the match where the current user is NOT the sender.
+	return s.db.Model(&domain.Message{}).
+		Where("match_id = ? AND sender_id != ? AND is_read = ?", matchID, userID, false).
+		Update("is_read", true).Error
+}
+
+// containsForbiddenContent checks if the message contains any blacklisted words.
 func (s *ChatService) containsForbiddenContent(text string) bool {
 	lowerText := strings.ToLower(text)
 	for _, word := range forbiddenWords {
@@ -90,14 +106,4 @@ func (s *ChatService) containsForbiddenContent(text string) bool {
 		}
 	}
 	return false
-}
-
-// --- NUEVO MÉTODO: Marcar mensajes como leídos ---
-func (s *ChatService) MarkAsRead(matchID, userID uint) error {
-	// Actualiza todos los mensajes de ESTE match
-	// donde el Sender NO sea el usuario actual ( userID != sender_id )
-	// y que aún no estén leídos ( is_read = false )
-	return s.db.Model(&domain.Message{}).
-		Where("match_id = ? AND sender_id != ? AND is_read = ?", matchID, userID, false).
-		Update("is_read", true).Error
 }

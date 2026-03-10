@@ -1,7 +1,10 @@
+# -------------------
+# Redis Service
+# -------------------
 apiVersion: v1
 kind: Service
 metadata:
-  name: redis-service # Nombre DNS interno
+  name: redis-service
 spec:
   type: ClusterIP
   selector:
@@ -10,7 +13,12 @@ spec:
     - protocol: TCP
       port: 6379
       targetPort: 6379
+
 ---
+
+# -------------------
+# Redis Deployment
+# -------------------
 apiVersion: apps/v1
 kind: Deployment
 metadata:

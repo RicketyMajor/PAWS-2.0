@@ -1,3 +1,4 @@
+// Package main is the entry point of the PAWS Backend application.
 package main
 
 import (
@@ -11,7 +12,6 @@ import (
 	"github.com/RicketyMajor/PAWS-2.0/internal/infrastructure/email"
 	"github.com/RicketyMajor/PAWS-2.0/internal/infrastructure/messaging"
 	"github.com/RicketyMajor/PAWS-2.0/internal/platform/database"
-
 	httpTransport "github.com/RicketyMajor/PAWS-2.0/internal/transport/http"
 	"github.com/RicketyMajor/PAWS-2.0/internal/transport/http/middleware"
 
@@ -20,48 +20,43 @@ import (
 	"gorm.io/gorm"
 )
 
-// dropLegacyConstraints elimina índices antiguos que impiden la duplicidad de RUT/Email
+// dropLegacyConstraints removes old unique indexes that might cause conflicts.
+// This is a temporary migration helper function.
 func dropLegacyConstraints(db *gorm.DB) {
-	// Intentamos borrar los índices únicos globales antiguos.
-	// Si no existen, no pasa nada (por eso el 'IF EXISTS').
 	queries := []string{
 		"DROP INDEX IF EXISTS idx_users_run;",
 		"DROP INDEX IF EXISTS idx_users_email;",
-		"DROP INDEX IF EXISTS uni_users_run;",   // Nombre alternativo común de GORM
-		"DROP INDEX IF EXISTS uni_users_email;", // Nombre alternativo común de GORM
+		"DROP INDEX IF EXISTS uni_users_run;",
+		"DROP INDEX IF EXISTS uni_users_email;",
 	}
 
-	log.Println("MIGRACIÓN: Limpiando restricciones antiguas de base de datos...")
+	log.Println("MIGRATION: Cleaning up old database constraints...")
 	for _, q := range queries {
 		if err := db.Exec(q).Error; err != nil {
-			log.Printf("Advertencia borrando índice (%s): %v", q, err)
+			log.Printf("Warning while dropping index (%s): %v", q, err)
 		}
 	}
-	log.Println("Limpieza de índices completada.")
+	log.Println("Index cleanup completed.")
 }
 
 func main() {
 	// =========================================================================
-	// 1. CONFIGURACIÓN E INFRAESTRUCTURA
+	// Configuration & Infrastructure
 	// =========================================================================
 
+	// Load .env file if it exists
 	if err := godotenv.Load(); err != nil {
-		log.Println("Info: No se encontró archivo .env, usando variables del sistema")
-	}
-	url := os.Getenv("DATABASE_URL")
-	if url != "" {
-		log.Println("DEBUG: ¡Variable DATABASE_URL encontrada! Longitud:", len(url))
-	} else {
-		log.Println("DEBUG: DATABASE_URL está vacía. Godotenv cargó el archivo pero no leyó la variable.")
+		log.Println("Info: .env file not found, using system environment variables")
 	}
 
+	// Connect to the database
 	database.Connect()
 
-	// --- CORRECCIÓN BASE DE DATOS ---
-	// Ejecutamos la limpieza ANTES de la migración automática
+	// --- Database Migration ---
+	// Run cleanup before auto-migration
 	dropLegacyConstraints(database.DB)
 
-	// Migraciones
+	// Auto-migrate GORM models
 	if err := database.DB.AutoMigrate(
 		&domain.User{},
 		&domain.UserProfile{},
@@ -73,61 +68,60 @@ func main() {
 		&domain.Report{},
 		&domain.BlacklistEntry{},
 	); err != nil {
-		log.Fatal("Error crítico migrando BD:", err)
+		log.Fatal("Critical error during DB migration:", err)
 	}
 
 	// =========================================================================
-	// SEEDER DE ADMIN
+	// Admin User Seeder
 	// =========================================================================
+
 	var adminUser domain.User
 	targetEmail := "alonso.vera@mail.udp.cl"
 
 	if err := database.DB.Where("email = ?", targetEmail).First(&adminUser).Error; err == nil {
 		if adminUser.Role != "admin" {
 			database.DB.Model(&adminUser).Update("role", "admin")
-			log.Printf("Usuario %s promovido a ADMIN.", targetEmail)
+			log.Printf("User %s promoted to ADMIN.", targetEmail)
 		} else {
-			log.Println("El usuario Admin ya está configurado correctamente.")
+			log.Println("Admin user is already correctly configured.")
 		}
 	} else {
-		log.Printf("AVISO: El usuario %s aún no existe en la BD.", targetEmail)
+		log.Printf("NOTICE: User %s does not exist in the DB yet.", targetEmail)
 	}
 
-	// -------------------------------------------------------------------------
-	// KILL SWITCH: RabbitMQ & Async
-	// -------------------------------------------------------------------------
+	// =========================================================================
+	// Async Feature Toggle (RabbitMQ)
+	// =========================================================================
 	var mqClient *messaging.RabbitMQClient
 	var err error
 
-	// --- NUEVA CONEXIÓN UNIFICADA ---
 	rabbitURL := os.Getenv("RABBITMQ_URL")
 	if rabbitURL == "" {
-		// Fallback para desarrollo local
-		rabbitURL = "amqp://guest:guest@localhost:5672/"
+		rabbitURL = "amqp://guest:guest@localhost:5672/" // Fallback for local dev
 	}
 
 	if os.Getenv("ENABLE_ASYNC_FEATURES") == "true" {
-		log.Println("Intentando conectar a RabbitMQ...")
+		log.Println("Attempting to connect to RabbitMQ...")
 		mqClient, err = messaging.ConnectRabbitMQ(rabbitURL)
 		if err != nil {
-			log.Printf("RabbitMQ error: %v. \nEl sistema funcionará en MODO SÍNCRONO.", err)
+			log.Printf("RabbitMQ connection error: %v. System will run in SYNC MODE.", err)
 		} else {
-			log.Println("Conectado a RabbitMQ exitosamente")
+			log.Println("Successfully connected to RabbitMQ.")
 		}
 	} else {
-		log.Println("Async Features desactivadas. Usando modo síncrono.")
+		log.Println("Async features disabled. Using sync mode.")
 	}
 
 	emailClient := email.NewEmailClient()
 
 	if mqClient != nil {
-		// Iniciar Workers Resilientes en goroutines separadas (Pasamos la URL)
+		// Start resilient workers in separate goroutines
 		go workers.StartEmailConsumer(rabbitURL, emailClient)
-		go workers.StartNotificationConsumer(rabbitURL, database.DB) // CORREGIDO: Se usa database.DB
+		go workers.StartNotificationConsumer(rabbitURL, database.DB)
 	}
 
 	// =========================================================================
-	// 2. INYECCIÓN DE DEPENDENCIAS
+	// Dependency Injection
 	// =========================================================================
 
 	otpService := services.NewOTPService(mqClient)
@@ -146,7 +140,7 @@ func main() {
 	go hub.Run()
 
 	// =========================================================================
-	// 3. HANDLERS
+	// HTTP Handlers
 	// =========================================================================
 
 	authHandler := httpTransport.NewAuthHandler(authService, otpService)
@@ -162,19 +156,21 @@ func main() {
 	notificationHandler := httpTransport.NewNotificationHandler(userService)
 
 	// =========================================================================
-	// 4. RUTAS & MIDDLEWARE
+	// Router & Middleware
 	// =========================================================================
 
 	r := gin.Default()
 
-	// --- CAMBIO: Usamos nuestro Middleware Local para solucionar el error de Vercel (401/CORS) ---
+	// Use custom local CORS middleware
 	r.Use(LocalCORSMiddleware())
 
+	// Serve static files
 	r.Static("/uploads", "./uploads")
 
+	// API v1 route group
 	api := r.Group("/api/v1")
 	{
-		// RUTAS PÚBLICAS
+		// --- Public Routes ---
 		auth := api.Group("/auth")
 		{
 			auth.POST("/register", authHandler.Register)
@@ -184,8 +180,6 @@ func main() {
 		}
 
 		api.POST("/verification/verify", identityHandler.Verify)
-
-		// BUSCADOR PÚBLICO DE BLACKLIST
 		api.GET("/blacklist/search", reportHandler.SearchBlacklist)
 
 		petsPublic := api.Group("/pets")
@@ -195,7 +189,7 @@ func main() {
 			petsPublic.GET("/nearby", petHandler.GetNearby)
 		}
 
-		// RUTAS PROTEGIDAS
+		// --- Protected Routes ---
 		protected := api.Group("/")
 		protected.Use(middleware.AuthMiddleware())
 		{
@@ -226,10 +220,11 @@ func main() {
 			protected.GET("/users/:id/reviews", socialHandler.GetUserReviews)
 			protected.POST("/report", reportHandler.Create)
 
+			// WebSocket endpoint
 			protected.GET("/ws", wsHandler.HandleConnections)
 		}
 
-		// ADMIN
+		// --- Admin Routes ---
 		admin := protected.Group("/admin")
 		admin.Use(middleware.RequireRole("admin"))
 		{
@@ -238,9 +233,7 @@ func main() {
 			admin.POST("/reports/:id/resolve", adminHandler.Resolve)
 		}
 
-		// =========================================================================
-		// HEALTH CHECK
-		// =========================================================================
+		// --- Health Check ---
 		api.Any("/health", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{
 				"status":  "online",
@@ -250,39 +243,39 @@ func main() {
 	}
 
 	// =========================================================================
-	// 5. ARRANCAR
+	// Start Server
 	// =========================================================================
 
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
-	log.Printf("Servidor PAWS iniciado en puerto %s", port)
+	log.Printf("PAWS server starting on port %s", port)
 
 	if err := r.Run(":" + port); err != nil {
-		log.Fatal("Error fatal en servidor:", err)
+		log.Fatal("Fatal server error:", err)
 	}
 }
 
-// --- NUEVA FUNCIÓN: Middleware CORS Robusto ---
-// Esta función soluciona el problema de 401 en OPTIONS interceptando el Preflight.
+// LocalCORSMiddleware provides a robust CORS implementation that handles
+// preflight OPTIONS requests correctly, which is crucial for deployments
+// like Vercel.
 func LocalCORSMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 1. Permitimos el origen dinámico (necesario para Vercel)
+		// Allow dynamic origin
 		origin := c.Request.Header.Get("Origin")
 		if origin != "" {
 			c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
 		} else {
-			// Fallback
-			c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+			c.Writer.Header().Set("Access-Control-Allow-Origin", "*") // Fallback
 		}
 
-		// 2. Permitimos credenciales y los headers necesarios (incluyendo Authorization)
+		// Set allowed headers, methods, and credentials
 		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
+		c.Writer.Header().Set("Access-control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
 
-		// 3. ¡LA CLAVE! Si es OPTIONS, cortamos aquí con 204 y NO pasamos al AuthMiddleware
+		// Handle preflight OPTIONS requests by aborting with a 204 status.
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
 			return
@@ -291,3 +284,4 @@ func LocalCORSMiddleware() gin.HandlerFunc {
 		c.Next()
 	}
 }
+

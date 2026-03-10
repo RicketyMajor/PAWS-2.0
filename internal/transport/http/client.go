@@ -1,3 +1,4 @@
+// Package http contains the WebSocket hub and client logic for real-time communication.
 package http
 
 import (
@@ -9,40 +10,55 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// =========================================================================
+// Constants & Upgrader
+// =========================================================================
+
 const (
-	writeWait      = 10 * time.Second
-	pongWait       = 60 * time.Second
-	pingPeriod     = (pongWait * 9) / 10
-	maxMessageSize = 512
+	writeWait      = 10 * time.Second    // Time allowed to write a message to the peer.
+	pongWait       = 60 * time.Second    // Time allowed to read the next pong message from the peer.
+	pingPeriod     = (pongWait * 9) / 10 // Send pings to peer with this period. Must be less than pongWait.
+	maxMessageSize = 512                 // Maximum message size allowed from peer.
 )
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
-	// IMPORTANTE: Permitir CORS para que Flutter (emulador) pueda conectarse
+	// Allow all origins for CORS, crucial for local development with emulators.
 	CheckOrigin: func(r *http.Request) bool {
 		return true
 	},
 }
 
-// Client es un intermediario entre el websocket y el Hub.
+// =========================================================================
+// Client Definition
+// =========================================================================
+
+// Client is a middleman between the WebSocket connection and the hub.
 type Client struct {
 	hub *Hub
-	// La conexión websocket real
+	// The actual WebSocket connection.
 	conn *websocket.Conn
-	// Canal con buffer para mensajes salientes
+	// Buffered channel of outbound messages.
 	send chan []byte
-	// ID del usuario autenticado (para saber quién es quién)
+	// The authenticated user's ID.
 	userID uint
 }
 
-// readPump bombea mensajes del websocket al Hub.
+// =========================================================================
+// Client Goroutines
+// =========================================================================
+
+// readPump pumps messages from the WebSocket connection to the hub.
 func (c *Client) readPump() {
 	defer func() {
 		c.hub.unregister <- c
 		c.conn.Close()
 	}()
 	c.conn.SetReadLimit(maxMessageSize)
+	c.conn.SetReadDeadline(time.Now().Add(pongWait))
+	c.conn.SetPongHandler(func(string) error { c.conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })
+
 
 	for {
 		_, message, err := c.conn.ReadMessage()
@@ -53,7 +69,7 @@ func (c *Client) readPump() {
 			break
 		}
 
-		// CAMBIO AQUÍ: Enviamos el wrapper con "c" (el cliente) y el mensaje
+		// Wrap the message with the client and send it to the hub's broadcast channel.
 		c.hub.broadcast <- &ClientMessageWrapper{
 			Client:  c,
 			Message: message,
@@ -61,7 +77,7 @@ func (c *Client) readPump() {
 	}
 }
 
-// writePump bombea mensajes del Hub al websocket.
+// writePump pumps messages from the hub to the WebSocket connection.
 func (c *Client) writePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
@@ -71,10 +87,10 @@ func (c *Client) writePump() {
 	for {
 		select {
 		case message, ok := <-c.send:
-			_ = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
-				// El Hub cerró el canal
-				_ = c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				// The hub closed the channel.
+				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
 
@@ -82,14 +98,12 @@ func (c *Client) writePump() {
 			if err != nil {
 				return
 			}
+			w.Write(message)
 
-			// Usamos dos guiones bajos: uno para los bytes escritos, otro para el error
-			_, _ = w.Write(message)
-
-			// Agregar mensajes en cola al mismo paquete WebSocket si los hay
+			// Add queued chat messages to the current WebSocket message.
 			n := len(c.send)
 			for i := 0; i < n; i++ {
-				_, _ = w.Write(<-c.send)
+				w.Write(<-c.send)
 			}
 
 			if err := w.Close(); err != nil {
@@ -97,7 +111,7 @@ func (c *Client) writePump() {
 			}
 
 		case <-ticker.C:
-			_ = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}
@@ -105,7 +119,11 @@ func (c *Client) writePump() {
 	}
 }
 
-// ServeWs maneja las solicitudes websocket del endpoint GET /ws
+// =========================================================================
+// WebSocket Handler
+// =========================================================================
+
+// ServeWs handles WebSocket requests from the GET /ws endpoint.
 func ServeWs(hub *Hub, c *gin.Context, userID uint) {
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
@@ -115,7 +133,8 @@ func ServeWs(hub *Hub, c *gin.Context, userID uint) {
 	client := &Client{hub: hub, conn: conn, send: make(chan []byte, 256), userID: userID}
 	client.hub.register <- client
 
-	// Ejecutar las bombas de lectura y escritura en goroutines separadas
+	// Allow collection of memory referenced by the caller by doing all work in new goroutines.
 	go client.writePump()
 	go client.readPump()
 }
+

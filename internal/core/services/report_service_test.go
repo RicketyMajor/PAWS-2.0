@@ -1,3 +1,4 @@
+// Package services_test contains unit tests for the services package.
 package services
 
 import (
@@ -6,33 +7,36 @@ import (
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/domain"
 )
 
+// TestThreeStrikesBan verifies the automatic banning logic after a user receives three reports.
 func TestThreeStrikesBan(t *testing.T) {
-	db := setupTestDB() // Reutilizamos tu helper de SQLite
+	// 1. Arrange: Set up the database and services.
+	db := setupTestDB() // Re-use the helper from auth_service_test.go
 	if err := db.AutoMigrate(&domain.User{}, &domain.Report{}, &domain.BlacklistEntry{}); err != nil {
-		t.Fatal("Falló migración:", err)
+		t.Fatal("Failed to migrate test database:", err)
 	}
 	authService := NewAuthService(db)
 	reportService := NewReportService(db, authService)
 
-	// 1. Crear un usuario "Víctima"
-	victim := domain.User{Name: "Villano", Email: "bad@paws.cl", Run: "99.999.999-9"}
+	// Create a "victim" user to be reported.
+	victim := domain.User{Name: "Villain", Email: "bad@paws.cl", Run: "99.999.999-9"}
 	db.Create(&victim)
 
-	_ = reportService.CreateReport(2, victim.ID, 0, "user", "Acoso 1")
-	_ = reportService.CreateReport(3, victim.ID, 0, "user", "Acoso 2")
+	// 2. Act: Report the user twice.
+	_ = reportService.CreateReport(2, victim.ID, 0, "user", "Harassment 1")
+	_ = reportService.CreateReport(3, victim.ID, 0, "user", "Harassment 2")
 
-	// Verificar que NO esté baneado
+	// 3. Assert: Check that the user is NOT yet banned.
 	isBanned, _ := authService.CheckBlacklist(victim.Run)
 	if isBanned {
-		t.Error("El usuario fue baneado con solo 2 reportes (Prematuro)")
+		t.Error("User was banned after only 2 reports (prematurely).")
 	}
 
-	// 3. Reportarlo la 3ra vez (GATILLO)
-	_ = reportService.CreateReport(4, victim.ID, 0, "user", "Acoso 3")
+	// 4. Act: Report the user a third time, which should trigger the ban.
+	_ = reportService.CreateReport(4, victim.ID, 0, "user", "Harassment 3")
 
-	// Verificar que AHORA SÍ esté baneado
+	// 5. Assert: Check that the user IS now banned.
 	isBanned, _ = authService.CheckBlacklist(victim.Run)
 	if !isBanned {
-		t.Error("El usuario NO fue baneado tras 3 reportes (Fallo de seguridad)")
+		t.Error("User was NOT banned after 3 reports (security failure).")
 	}
 }

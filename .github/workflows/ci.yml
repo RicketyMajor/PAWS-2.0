@@ -1,5 +1,8 @@
 name: PAWS Backend CI/CD Pipeline
 
+# -------------------
+# Triggers
+# -------------------
 on:
   push:
     branches: ["main", "develop"]
@@ -7,60 +10,58 @@ on:
     branches: ["main", "develop"]
 
 jobs:
-  # TRABAJO 1: CALIDAD Y SEGURIDAD
+  # -------------------
+  # Job 1: Code Quality & Security Gate
+  # -------------------
   quality-gate:
     name: Code Quality & Security
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: "1.24.13" 
 
-      # 1. LINTER (Fase 7.1 - Faltante)
-      # Analiza el código buscando malas prácticas
       - name: Run Linter
         uses: golangci/golangci-lint-action@v6
         with:
           version: latest
           args: --timeout=5m
 
-      # 2. VULNERABILITY SCAN (Fase 7.2 - SECT-01)
-      # Busca vulnerabilidades conocidas en tus dependencias
-      - name: Install govulncheck
+      - name: Install Vulnerability Scanner
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
       - name: Run Vulnerability Check
         run: govulncheck ./...
 
-      # 3. UNIT TESTS (Ya lo tenías)
       - name: Run Unit Tests
         run: go test -v ./...
 
-  # TRABAJO 2: CONSTRUCCIÓN Y PUBLICACIÓN (Solo si pasa calidad)
+  # -------------------
+  # Job 2: Build & Push Docker Image
+  # -------------------
   build-and-push:
     name: Build & Push Docker Image
-    needs: quality-gate # Espera a que pase el anterior
+    needs: quality-gate # This job runs only if 'quality-gate' succeeds
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' # Solo corre en Pushes, no en PRs
+    if: github.event_name == 'push' # Run only on push events, not pull requests
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-      # Login en Docker Hub usando los secretos que configuraste
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      # Construir y Subir (Fase 7.1 - Faltante)
       - name: Build and Push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          # Reemplaza 'tu_usuario' con tu usuario real de Docker Hub abajo:
           tags: ${{ secrets.DOCKER_USERNAME }}/paws-backend:latest, ${{ secrets.DOCKER_USERNAME }}/paws-backend:${{ github.sha }}

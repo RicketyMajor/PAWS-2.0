@@ -1,3 +1,4 @@
+// Package services contains the core business logic of the application.
 package services
 
 import (
@@ -13,18 +14,24 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// EmailEvent defines the structure for an email to be sent via the message queue.
 type EmailEvent struct {
 	To      string `json:"to"`
 	Subject string `json:"subject"`
 	Body    string `json:"body"`
 }
 
+// =========================================================================
+// Service Definition
+// =========================================================================
+
+// OTPService handles the generation, verification, and delivery of one-time passwords.
 type OTPService struct {
 	redisClient *redis.Client
 	mqClient    *messaging.RabbitMQClient
 }
 
-// --- NUEVA CONEXIÓN UNIFICADA ---
+// NewOTPService creates a new OTPService, initializing connections to Redis and RabbitMQ.
 func NewOTPService(mq *messaging.RabbitMQClient) *OTPService {
 	redisURL := os.Getenv("REDIS_URL")
 	var rdb *redis.Client
@@ -32,12 +39,12 @@ func NewOTPService(mq *messaging.RabbitMQClient) *OTPService {
 	if redisURL != "" {
 		opt, err := redis.ParseURL(redisURL)
 		if err != nil {
-			log.Fatalf("Error parseando REDIS_URL en OTPService: %v", err)
+			log.Fatalf("Error parsing REDIS_URL in OTPService: %v", err)
 		}
 		rdb = redis.NewClient(opt)
 	} else {
-		// Fallback para desarrollo local
-		log.Println("REDIS_URL no detectada, usando localhost:6379 para OTP")
+		// Fallback for local development
+		log.Println("REDIS_URL not detected, using localhost:6379 for OTP")
 		rdb = redis.NewClient(&redis.Options{
 			Addr:     "localhost:6379",
 			Password: "",
@@ -51,50 +58,21 @@ func NewOTPService(mq *messaging.RabbitMQClient) *OTPService {
 	}
 }
 
-// GenerateOTP: Para Registro (Genérico)
+// =========================================================================
+// Service Methods
+// =========================================================================
+
+// GenerateOTP creates and sends a generic OTP for registration.
 func (s *OTPService) GenerateOTP(email string) (string, error) {
-	return s.sendOTP(email, "Tu código de verificación PAWS", "Hola, tu código de verificación es: %s")
+	return s.sendOTP(email, "Your PAWS Verification Code", "Hello, your verification code is: %s")
 }
 
-// --- NUEVO: OTP para Recuperación de Contraseña ---
+// GenerateRecoveryOTP creates and sends an OTP specifically for password recovery.
 func (s *OTPService) GenerateRecoveryOTP(email string) (string, error) {
-	return s.sendOTP(email, "Recuperación de Contraseña - PAWS", "Hola, hemos recibido una solicitud para restablecer tu contraseña.\n\nTu código de recuperación es: %s\n\nSi no fuiste tú, ignora este correo.")
+	return s.sendOTP(email, "PAWS Password Recovery", "Hello, we received a request to reset your password.\n\nYour recovery code is: %s\n\nIf you did not make this request, please ignore this email.")
 }
 
-// Función auxiliar privada para no repetir lógica
-func (s *OTPService) sendOTP(email, subject, bodyTemplate string) (string, error) {
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-	code := fmt.Sprintf("%06d", rng.Intn(1000000))
-
-	// Guardar en Redis (5 min)
-	ctx := context.Background()
-	key := fmt.Sprintf("otp:%s", email)
-	err := s.redisClient.Set(ctx, key, code, 5*time.Minute).Err()
-	if err != nil {
-		return "", fmt.Errorf("error guardando OTP en Redis: %v", err)
-	}
-
-	// Crear evento de correo
-	event := EmailEvent{
-		To:      email,
-		Subject: subject,
-		Body:    fmt.Sprintf(bodyTemplate, code),
-	}
-
-	eventBytes, _ := json.Marshal(event)
-
-	if s.mqClient != nil {
-		err = s.mqClient.Publish("email_notifications", eventBytes)
-		if err != nil {
-			log.Printf("Error RabbitMQ: %v. Log: %s -> %s", err, email, code)
-		}
-	} else {
-		log.Printf("[DEV EMAIL] Para: %s | Asunto: %s | Código: %s", email, subject, code)
-	}
-
-	return code, nil
-}
-
+// VerifyOTP checks if the provided code for a given email is valid.
 func (s *OTPService) VerifyOTP(email, inputCode string) bool {
 	ctx := context.Background()
 	key := fmt.Sprintf("otp:%s", email)
@@ -105,8 +83,47 @@ func (s *OTPService) VerifyOTP(email, inputCode string) bool {
 	}
 
 	if val == inputCode {
-		s.redisClient.Del(ctx, key) // Borrar tras uso exitoso
+		s.redisClient.Del(ctx, key) // Delete the OTP after successful use.
 		return true
 	}
 	return false
+}
+
+// =========================================================================
+// Helper Functions
+// =========================================================================
+
+// sendOTP is a private helper that handles OTP generation, storage in Redis, and queuing the email.
+func (s *OTPService) sendOTP(email, subject, bodyTemplate string) (string, error) {
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	code := fmt.Sprintf("%06d", rng.Intn(1000000))
+
+	// Store the OTP in Redis with a 5-minute expiration.
+	ctx := context.Background()
+	key := fmt.Sprintf("otp:%s", email)
+	err := s.redisClient.Set(ctx, key, code, 5*time.Minute).Err()
+	if err != nil {
+		return "", fmt.Errorf("error saving OTP to Redis: %v", err)
+	}
+
+	// Create and queue the email event.
+	event := EmailEvent{
+		To:      email,
+		Subject: subject,
+		Body:    fmt.Sprintf(bodyTemplate, code),
+	}
+	eventBytes, _ := json.Marshal(event)
+
+	if s.mqClient != nil {
+		err = s.mqClient.Publish("email_notifications", eventBytes)
+		if err != nil {
+			// Log error but don't fail the operation, as the code is still valid.
+			log.Printf("RabbitMQ publishing error: %v. Log: %s -> %s", err, email, code)
+		}
+	} else {
+		// If RabbitMQ is disabled, log to console for local development.
+		log.Printf("[DEV EMAIL] To: %s | Subject: %s | Code: %s", email, subject, code)
+	}
+
+	return code, nil
 }

@@ -1,3 +1,4 @@
+// Package http contains the HTTP handlers for the application.
 package http
 
 import (
@@ -5,6 +6,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/services"
 )
+
+// =========================================================================
+// Request & Response Structures
+// =========================================================================
 
 type RegisterRequest struct {
 	Name     string `json:"name" binding:"required"`
@@ -33,21 +38,30 @@ type ResetPasswordRequest struct {
 	NewPassword string `json:"new_password" binding:"required,min=6"`
 }
 
+// =========================================================================
+// Handler Definition
+// =========================================================================
+
+// AuthHandler handles authentication-related HTTP requests.
 type AuthHandler struct {
 	service    *services.AuthService
 	otpService *services.OTPService
 }
 
+// NewAuthHandler creates a new AuthHandler.
 func NewAuthHandler(s *services.AuthService, otp *services.OTPService) *AuthHandler {
 	return &AuthHandler{service: s, otpService: otp}
 }
 
-// --- FLUJO DE CAMBIO DE ROL ---
+// =========================================================================
+// Role Switching
+// =========================================================================
 
+// SwitchRole handles the logic for a user to switch their active role.
 func (h *AuthHandler) SwitchRole(c *gin.Context) {
 	userIDVal, exists := c.Get("userID")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "No autorizado"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 	
@@ -65,14 +79,17 @@ func (h *AuthHandler) SwitchRole(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Cambio de perfil exitoso",
+		"message": "Role switched successfully",
 		"token":   newToken,
 		"user":    newUser,
 	})
 }
 
-// --- FLUJO DE RECUPERACIÓN DE CONTRASEÑA ---
+// =========================================================================
+// Password Recovery
+// =========================================================================
 
+// ForgotPassword initiates the password recovery process by sending an OTP.
 func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 	var req OTPRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -82,13 +99,14 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 	
 	_, err := h.otpService.GenerateRecoveryOTP(req.Email)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error enviando código"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error sending recovery code"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Código de recuperación enviado"})
+	c.JSON(http.StatusOK, gin.H{"message": "Recovery code sent"})
 }
 
+// VerifyRecoveryCode verifies the password recovery OTP.
 func (h *AuthHandler) VerifyRecoveryCode(c *gin.Context) {
 	var req OTPVerifyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -98,13 +116,14 @@ func (h *AuthHandler) VerifyRecoveryCode(c *gin.Context) {
 
 	valid := h.otpService.VerifyOTP(req.Email, req.Code)
 	if !valid {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Código incorrecto o expirado"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired code"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Código verificado correctamente"})
+	c.JSON(http.StatusOK, gin.H{"message": "Code verified successfully"})
 }
 
+// ResetPassword sets a new password after successful recovery verification.
 func (h *AuthHandler) ResetPassword(c *gin.Context) {
 	var req ResetPasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -113,15 +132,18 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 	}
 
 	if err := h.service.UpdatePassword(req.Email, req.NewPassword); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error actualizando contraseña: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error updating password: " + err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Contraseña restablecida exitosamente"})
+	c.JSON(http.StatusOK, gin.H{"message": "Password reset successfully"})
 }
 
-// --- FLUJO DE REGISTRO & LOGIN ---
+// =========================================================================
+// Registration & Login
+// =========================================================================
 
+// Register initiates the user registration process.
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -137,15 +159,16 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	_, err = h.otpService.GenerateOTP(req.Email)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error enviando código de verificación"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error sending verification code"})
 		return
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
-		"message": "Datos validados. Se ha enviado un código a tu correo para finalizar el registro.",
+		"message": "Validation successful. A code has been sent to your email to complete registration.",
 	})
 }
 
+// VerifyOTP verifies the registration OTP and completes the registration.
 func (h *AuthHandler) VerifyOTP(c *gin.Context) {
 	var req OTPVerifyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -155,27 +178,26 @@ func (h *AuthHandler) VerifyOTP(c *gin.Context) {
 
 	valid := h.otpService.VerifyOTP(req.Email, req.Code)
 	if !valid {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Código incorrecto o expirado"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired code"})
 		return
 	}
 
-	// INTENTAMOS COMPLETAR EL REGISTRO
+	// Attempt to complete the registration
 	user, err := h.service.CompleteRegistration(req.Email)
 	if err != nil {
-		// CORRECCIÓN CRÍTICA: Eliminamos el "fallback" de login automático si falla el registro.
-		// Si falla (ej: por duplicidad de DB), debemos avisar al usuario, no loguearlo en su cuenta vieja.
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error creando la cuenta: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error creating account: " + err.Error()})
 		return
 	}
 
 	token, _ := h.service.GenerateTokenForUser(user)
 	c.JSON(http.StatusCreated, gin.H{
-		"message": "¡Cuenta creada exitosamente!",
+		"message": "Account created successfully!",
 		"token":   token,
 		"user":    user,
 	})
 }
 
+// Login handles user login and token generation.
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -190,6 +212,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"token": token})
 }
 
+// RequestOTP sends a new OTP for any registered email.
 func (h *AuthHandler) RequestOTP(c *gin.Context) {
 	var req OTPRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -198,8 +221,8 @@ func (h *AuthHandler) RequestOTP(c *gin.Context) {
 	}
 	_, err := h.otpService.GenerateOTP(req.Email)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error sistema OTP"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "OTP system error"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "Código enviado"})
+	c.JSON(http.StatusOK, gin.H{"message": "Code sent"})
 }

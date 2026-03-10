@@ -1,3 +1,4 @@
+// Package http contains the HTTP handlers for the application.
 package http
 
 import (
@@ -9,11 +10,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// =========================================================================
+// Handler Definition
+// =========================================================================
+
+// UserHandler handles user-related HTTP requests.
 type UserHandler struct {
 	userService  *services.UserService
 	matchService *services.MatchService
 }
 
+// NewUserHandler creates a new UserHandler.
 func NewUserHandler(userService *services.UserService, matchService *services.MatchService) *UserHandler {
 	return &UserHandler{
 		userService:  userService,
@@ -21,7 +28,11 @@ func NewUserHandler(userService *services.UserService, matchService *services.Ma
 	}
 }
 
-// Estructura auxiliar para recibir TODOS los datos del JSON
+// =========================================================================
+// Request & Response Structures
+// =========================================================================
+
+// UpdateProfileRequest defines the structure for the user profile update request.
 type UpdateProfileRequest struct {
 	Name     string `json:"name"`
 	Bio      string `json:"bio"`
@@ -38,11 +49,15 @@ type UpdateProfileRequest struct {
 	Experience        string `json:"experience"`
 }
 
-// UpdateProfile (PUT /profile)
+// =========================================================================
+// Handler Methods
+// =========================================================================
+
+// UpdateProfile handles the PUT /profile endpoint.
 func (h *UserHandler) UpdateProfile(c *gin.Context) {
 	userIDVal, exists := c.Get("userID")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "No autorizado"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 	var userID uint
@@ -58,7 +73,7 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 		return
 	}
 
-	// Separar datos de la tabla User
+	// Separate data for the User table
 	userUpdates := map[string]interface{}{
 		"name":      req.Name,
 		"bio":       req.Bio,
@@ -66,7 +81,7 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 		"photo_url": req.PhotoURL,
 	}
 
-	// Separar datos de la tabla UserProfile
+	// Separate data for the UserProfile table
 	profileData := &domain.UserProfile{
 		HousingType:       req.HousingType,
 		HousingOwnership:  req.HousingOwnership,
@@ -80,14 +95,14 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 
 	err := h.userService.UpdateFullProfile(userID, userUpdates, profileData)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error actualizando perfil: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error updating profile: " + err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Perfil actualizado correctamente"})
+	c.JSON(http.StatusOK, gin.H{"message": "Profile updated successfully"})
 }
 
-// GetProfile (GET /profile)
+// GetProfile handles the GET /profile endpoint.
 func (h *UserHandler) GetProfile(c *gin.Context) {
 	userIDVal, _ := c.Get("userID")
 	var userID uint
@@ -99,34 +114,34 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 
 	user, err := h.userService.GetUser(userID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Usuario no encontrado"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		return
 	}
 
 	profile, _ := h.userService.GetUserProfile(userID)
 	if profile == nil {
-		profile = &domain.UserProfile{} // Devolver vacío si no hay perfil creado
+		profile = &domain.UserProfile{} // Return empty profile if not created
 	}
 
-	// Devolvemos un JSON anidado robusto
+	// Return a nested JSON response
 	c.JSON(http.StatusOK, gin.H{
 		"user":    user,
 		"profile": profile,
 	})
 }
 
-// GetUserByID (GET /users/:id)
+// GetUserByID handles the GET /users/:id endpoint.
 func (h *UserHandler) GetUserByID(c *gin.Context) {
 	idStr := c.Param("id")
 	userID, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ID de usuario inválido"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
 		return
 	}
 
 	user, err := h.userService.GetUser(uint(userID))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Usuario no encontrado"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		return
 	}
 

@@ -1,3 +1,4 @@
+// Package domain contains the core data models for the application.
 package domain
 
 import (
@@ -6,42 +7,43 @@ import (
 	"gorm.io/gorm"
 )
 
-// Categorías de Reporte
+// ReportCategory defines the possible categories for a user report.
 const (
-	ReportReasonAbuse = "abuse" // Maltrato animal
-	ReportReasonScam  = "scam"  // Estafa
-	ReportReasonSpam  = "spam"  // Spam/Comercial
-	ReportReasonHate  = "hate"  // Lenguaje ofensivo/Odio
-	ReportReasonOther = "other" // Otro
+	ReportReasonAbuse = "abuse" // Animal abuse
+	ReportReasonScam  = "scam"  // Scam or fraud
+	ReportReasonSpam  = "spam"  // Spam or commercial content
+	ReportReasonHate  = "hate"  // Hate speech or offensive language
+	ReportReasonOther = "other" // Other
 )
 
+// Report represents a report filed by one user against another.
 type Report struct {
 	gorm.Model
 
-	// Quien acusa y quien es acusado
+	// --- Participants ---
 	ReporterID uint `gorm:"not null;index" json:"reporter_id"`
 	ReportedID uint `gorm:"not null;index" json:"reported_id"`
 
-	// Relaciones
+	// --- Associations ---
 	Reporter User `gorm:"foreignKey:ReporterID" json:"reporter"`
 	Reported User `gorm:"foreignKey:ReportedID" json:"reported"`
 
-	// Contexto del Reporte
-	MatchID uint `gorm:"index" json:"match_id"` // El chat donde ocurrió (opcional)
+	// --- Context ---
+	MatchID uint `gorm:"index" json:"match_id"` // The chat where the incident occurred (optional).
 
-	// Datos del Reporte
-	Reason      string `gorm:"type:varchar(50);not null" json:"-"`        // <--- Mantiene viva la columna antigua en BD (oculta en JSON)
-	Category    string `gorm:"type:varchar(50);not null" json:"category"` // <--- La columna nueva
-	Description string `gorm:"type:text" json:"description"`              // Texto libre del usuario
+	// --- Report Data ---
+	Reason      string `gorm:"type:varchar(50);not null" json:"-"`        // Legacy field, hidden in JSON.
+	Category    string `gorm:"type:varchar(50);not null" json:"category"` // The new, preferred field for the report category.
+	Description string `gorm:"type:text" json:"description"`              // Free-text description from the user.
 
-	// Estado y Resolución
+	// --- Resolution ---
 	Status string `gorm:"default:'pending';index" json:"status"` // pending, resolved, dismissed
 
-	// EVIDENCIA INMUTABLE
-	// Aquí guardaremos el historial del chat en JSON cuando el admin dicte sentencia.
-	// Si borran el chat después, esto queda como prueba legal.
-	EvidenceSnapshot string `gorm:"type:text" json:"evidence_snapshot"`
+	// --- Immutable Evidence Snapshot ---
+	// The chat history is serialized to JSON and stored here when an admin resolves the report.
+	// This serves as a permanent record even if the original chat is deleted.
+	EvidenceSnapshot string `gorm:"type:text" json:"evidence_snapshot,omitempty"`
 
-	ResolvedAt *time.Time `json:"resolved_at"`
-	ResolverID *uint      `json:"resolver_id"` // ID del Admin que cerró el caso
+	ResolvedAt *time.Time `json:"resolved_at,omitempty"`
+	ResolverID *uint      `json:"resolver_id,omitempty"` // The ID of the admin who closed the case.
 }

@@ -1,9 +1,10 @@
+// Package services contains the core business logic of the application.
 package services
 
 import (
 	"context"
 	"fmt"
-	"math/rand" // Para generar números aleatorios
+	"math/rand"
 	"mime/multipart"
 	"path/filepath"
 	"strconv"
@@ -13,14 +14,19 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
+// =========================================================================
+// Service Definition
+// =========================================================================
+
+// IdentityService provides a mock identity verification service.
+// It uploads a document to MinIO and returns a randomly generated, valid-looking Chilean RUN.
 type IdentityService struct {
 	minioClient *minio.Client
 	bucketName  string
 }
 
+// NewIdentityService creates a new IdentityService and connects to MinIO.
 func NewIdentityService() *IdentityService {
-	// ... (La configuración de conexión y MakeBucket se mantiene IGUAL) ...
-    // Copia tu código de conexión existente aquí...
     endpoint := "minio-service:9000"
 	accessKeyID := "minioadmin"
 	secretAccessKey := "minioadmin"
@@ -31,7 +37,7 @@ func NewIdentityService() *IdentityService {
 		Secure: useSSL,
 	})
 	if err != nil {
-		fmt.Println("Error conectando a MinIO:", err)
+		fmt.Println("Error connecting to MinIO:", err)
 		return nil
 	}
 
@@ -39,12 +45,11 @@ func NewIdentityService() *IdentityService {
 	ctx := context.Background()
 	exists, errBucket := client.BucketExists(ctx, bucketName)
 	if errBucket == nil && !exists {
-		// CORRECCIÓN: Asignamos el error a errCreate
 		errCreate := client.MakeBucket(ctx, bucketName, minio.MakeBucketOptions{})
 		if errCreate != nil {
-			fmt.Println("Error creando bucket automático:", errCreate)
+			fmt.Println("Error creating bucket automatically:", errCreate)
 		} else {
-			fmt.Println("Bucket 'paws-identity' creado automáticamente")
+			fmt.Println("Bucket 'paws-identity' created automatically")
 		}
 	}
 
@@ -54,7 +59,11 @@ func NewIdentityService() *IdentityService {
 	}
 }
 
-// VerifyIdentity sube el archivo y retorna un RUN aleatorio simulado
+// =========================================================================
+// Service Methods
+// =========================================================================
+
+// VerifyIdentity uploads the provided document and returns a simulated RUN.
 func (s *IdentityService) VerifyIdentity(file *multipart.FileHeader) (string, error) {
 	src, err := file.Open()
 	if err != nil {
@@ -62,7 +71,7 @@ func (s *IdentityService) VerifyIdentity(file *multipart.FileHeader) (string, er
 	}
 	defer src.Close()
 
-	// Guardamos con timestamp para que no se sobrescriban los archivos
+	// Use a timestamp to avoid filename collisions.
 	filename := fmt.Sprintf("id_scan_%d_%s", time.Now().Unix(), filepath.Base(file.Filename))
 
 	ctx := context.Background()
@@ -70,31 +79,33 @@ func (s *IdentityService) VerifyIdentity(file *multipart.FileHeader) (string, er
 		ContentType: file.Header.Get("Content-Type"),
 	})
 	if err != nil {
-		return "", fmt.Errorf("error subiendo documento: %v", err)
+		return "", fmt.Errorf("error uploading document: %v", err)
 	}
 
-	// MOCK MEJORADO: Generar un RUT aleatorio válido para permitir múltiples registros
+	// MOCK: Generate a random valid RUN to allow multiple registrations.
 	mockRun := s.generateRandomRUN()
 	
 	return mockRun, nil
 }
 
-// generateRandomRUN crea un formato Chileno válido (ej: 12.345.678-K)
+// =========================================================================
+// Helper Functions
+// =========================================================================
+
+// generateRandomRUN creates a valid-looking Chilean RUN format (e.g., 12.345.678-K).
 func (s *IdentityService) generateRandomRUN() string {
-	// Semilla aleatoria
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	
-	// Número entre 10.000.000 y 25.000.000
+	// Generate a number between 10,000,000 and 25,000,000.
 	number := r.Intn(15000000) + 10000000
 	
-	// Cálculo del Dígito Verificador (Algoritmo Módulo 11)
+	// Calculate the verifier digit (DV) using the Modulo 11 algorithm.
 	dv := calculateDV(number)
 	
-	// Formatear con puntos
 	return fmt.Sprintf("%s-%s", formatWithPoints(number), dv)
 }
 
-// Funciones auxiliares para el cálculo real del DV (Ingeniería de detalle)
+// calculateDV implements the Modulo 11 algorithm to calculate the verifier digit.
 func calculateDV(rut int) string {
 	m := 0
 	s := 1
@@ -109,11 +120,11 @@ func calculateDV(rut int) string {
 	return "K"
 }
 
+// formatWithPoints adds dots to an 8-digit number for standard formatting.
 func formatWithPoints(n int) string {
 	s := strconv.Itoa(n)
-	// Hack simple para poner puntos a un número de 8 dígitos (ej: 12.345.678)
 	if len(s) == 8 {
 		return fmt.Sprintf("%s.%s.%s", s[0:2], s[2:5], s[5:8])
 	}
-	return s // Fallback simple
+	return s // Fallback for other lengths
 }

@@ -1,3 +1,4 @@
+// Package http contains the HTTP handlers for the application.
 package http
 
 import (
@@ -8,7 +9,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// --- ESTRUCTURAS DE DATOS ---
+// =========================================================================
+// Request & Response Structures
+// =========================================================================
+
+// SearchPetFilters defines the query parameters for searching pets.
 type SearchPetFilters struct {
 	Type   string  `form:"type"`
 	Breed  string  `form:"breed"`
@@ -18,6 +23,7 @@ type SearchPetFilters struct {
 	MaxAge int     `form:"max_age"`
 }
 
+// CreatePetForm defines the multipart form for creating a new pet.
 type CreatePetForm struct {
 	Name         string  `form:"name" binding:"required"`
 	Type         string  `form:"type" binding:"required"`
@@ -37,11 +43,17 @@ type CreatePetForm struct {
 	EnergyLevel  string  `form:"energy_level"`
 }
 
+// =========================================================================
+// Handler Definition
+// =========================================================================
+
+// PetHandler handles pet-related HTTP requests.
 type PetHandler struct {
 	service     *services.PetService
 	fileService *services.FileService
 }
 
+// NewPetHandler creates a new PetHandler.
 func NewPetHandler(service *services.PetService, fileService *services.FileService) *PetHandler {
 	return &PetHandler{
 		service:     service,
@@ -49,11 +61,15 @@ func NewPetHandler(service *services.PetService, fileService *services.FileServi
 	}
 }
 
-// Create maneja la creación con imágenes múltiples
+// =========================================================================
+// Handler Methods
+// =========================================================================
+
+// Create handles the creation of a new pet with multiple image uploads.
 func (h *PetHandler) Create(c *gin.Context) {
 	userIDFloat, exists := c.Get("userID")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "no auth"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 	
@@ -63,12 +79,13 @@ func (h *PetHandler) Create(c *gin.Context) {
 	} else if val, ok := userIDFloat.(uint); ok {
 		userID = val
 	} else {
-		userID = userIDFloat.(uint)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID format"})
+		return
 	}
 
 	var form CreatePetForm
 	if err := c.ShouldBind(&form); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Datos inválidos: " + err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid form data: " + err.Error()})
 		return
 	}
 
@@ -79,12 +96,12 @@ func (h *PetHandler) Create(c *gin.Context) {
 		files := formMultipart.File["images"]
 		if len(files) > 0 {
 			if len(files) > 10 {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "Máximo 10 fotos permitidas"})
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Maximum of 10 photos allowed"})
 				return
 			}
 			uploadedURLs, err := h.fileService.SaveMultipleImages(c.Request.Context(), files)
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Error subiendo fotos: " + err.Error()})
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Error uploading photos: " + err.Error()})
 				return
 			}
 			imageURLs = uploadedURLs
@@ -120,6 +137,7 @@ func (h *PetHandler) Create(c *gin.Context) {
 	c.JSON(http.StatusCreated, newPet)
 }
 
+// GetAll retrieves all pets.
 func (h *PetHandler) GetAll(c *gin.Context) {
 	pets, err := h.service.GetAll()
 	if err != nil {
@@ -129,11 +147,11 @@ func (h *PetHandler) GetAll(c *gin.Context) {
 	c.JSON(http.StatusOK, pets)
 }
 
-// --- NUEVO HANDLER: OBTENER MIS MASCOTAS ---
+// GetMyPets retrieves all pets owned by the authenticated user.
 func (h *PetHandler) GetMyPets(c *gin.Context) {
 	userIDFloat, exists := c.Get("userID")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "No autorizado"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 	
@@ -143,25 +161,28 @@ func (h *PetHandler) GetMyPets(c *gin.Context) {
 	} else if val, ok := userIDFloat.(uint); ok {
 		userID = val
 	} else {
-		userID = userIDFloat.(uint)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID format"})
+		return
 	}
 
 	pets, err := h.service.GetByUserID(userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error cargando mascotas: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error loading pets: " + err.Error()})
 		return
 	}
 
 	c.JSON(http.StatusOK, pets)
 }
 
+// Search handles searching for pets based on filters.
+// Note: Currently returns all pets, filters are not implemented in the service.
 func (h *PetHandler) Search(c *gin.Context) {
 	filters := SearchPetFilters{}
 	if err := c.BindQuery(&filters); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Filtros inválidos"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid filters"})
 		return
 	}
-	pets, err := h.service.GetAll()
+	pets, err := h.service.GetAll() // TODO: Implement filtering in service layer
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -169,13 +190,14 @@ func (h *PetHandler) Search(c *gin.Context) {
 	c.JSON(http.StatusOK, pets)
 }
 
+// GetNearby retrieves pets within a certain distance of a location.
 func (h *PetHandler) GetNearby(c *gin.Context) {
 	latStr := c.Query("lat")
 	lngStr := c.Query("lng")
 	distStr := c.Query("dist")
 
 	if latStr == "" || lngStr == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Latitud y Longitud requeridas"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Latitude and Longitude are required"})
 		return
 	}
 
@@ -184,40 +206,42 @@ func (h *PetHandler) GetNearby(c *gin.Context) {
 	dist, _ := strconv.ParseFloat(distStr, 64)
 
 	if dist == 0 {
-		dist = 10.0
+		dist = 10.0 // Default distance in km
 	}
 
 	pets, err := h.service.GetNearby(lat, lng, dist)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error calculando cercanía: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error calculating nearby pets: " + err.Error()})
 		return
 	}
 
 	c.JSON(http.StatusOK, pets)
 }
 
+// GetPetByID retrieves a single pet by its ID.
 func (h *PetHandler) GetPetByID(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ID inválido"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID"})
 		return
 	}
 
 	pet, err := h.service.GetByID(uint(id))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Mascota no encontrada"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Pet not found"})
 		return
 	}
 
 	c.JSON(http.StatusOK, pet)
 }
 
+// Delete handles the deletion of a pet.
 func (h *PetHandler) Delete(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ID inválido"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID"})
 		return
 	}
 
@@ -228,7 +252,8 @@ func (h *PetHandler) Delete(c *gin.Context) {
 	} else if val, ok := userIDVal.(uint); ok {
 		userID = val
 	} else {
-		userID = userIDVal.(uint)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID format"})
+		return
 	}
 
 	if err := h.service.Delete(uint(id), userID); err != nil {
@@ -236,5 +261,5 @@ func (h *PetHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Mascota eliminada correctamente"})
+	c.JSON(http.StatusOK, gin.H{"message": "Pet deleted successfully"})
 }

@@ -1,22 +1,30 @@
+# -------------------
+# Backend Service
+# -------------------
 apiVersion: v1
 kind: Service
 metadata:
   name: backend-service
 spec:
-  type: LoadBalancer # <--- Esto permite entrar desde Windows (localhost)
+  type: LoadBalancer
   selector:
     app: backend
   ports:
     - protocol: TCP
       port: 8080
       targetPort: 8080
+
 ---
+
+# -------------------
+# Backend Deployment
+# -------------------
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: backend-deployment
 spec:
-  replicas: 1 # Podríamos poner 3 y tener balanceo de carga real
+  replicas: 1
   selector:
     matchLabels:
       app: backend
@@ -27,15 +35,15 @@ spec:
     spec:
       containers:
         - name: backend
-          image: paws-backend:k8s # La imagen que acabamos de construir
-          imagePullPolicy: Never # <--- VITAL para desarrollo local
+          image: paws-backend:k8s
+          imagePullPolicy: Never
           ports:
             - containerPort: 8080
           env:
             - name: PORT
               value: "8080"
             - name: DB_HOST
-              value: "postgres-service" # Apunta al Service de la DB
+              value: "postgres-service"
             - name: DB_PORT
               value: "5432"
             - name: DB_USER
@@ -51,7 +59,7 @@ spec:
               value: "secreto_k8s"
 
             - name: REDIS_HOST
-              value: "redis-service" # Nombre del Service en redis.yaml
+              value: "redis-service"
             - name: REDIS_PORT
               value: "6379"
             - name: REDIS_PASSWORD

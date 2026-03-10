@@ -1,3 +1,4 @@
+// Package services contains the core business logic of the application.
 package services
 
 import (
@@ -5,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log" // <-- Asegúrate de tener este import
+	"log"
 	"os"
 	"strings"
 	"time"
@@ -19,7 +20,7 @@ import (
 	"github.com/RicketyMajor/PAWS-2.0/internal/platform/database"
 )
 
-// Estructura auxiliar para registro temporal
+// registrationCache is a temporary structure to hold user data during the OTP verification process.
 type registrationCache struct {
 	Name     string `json:"name"`
 	Email    string `json:"email"`
@@ -28,26 +29,31 @@ type registrationCache struct {
 	Role     string `json:"role"`
 }
 
+// =========================================================================
+// Service Definition
+// =========================================================================
+
+// AuthService provides business logic for authentication-related operations.
 type AuthService struct {
 	db          *gorm.DB
 	redisClient *redis.Client
 }
 
-// --- NUEVA CONEXIÓN UNIFICADA ---
+// NewAuthService creates a new AuthService, initializing a Redis client.
 func NewAuthService(dbOrNil *gorm.DB) *AuthService {
 	redisURL := os.Getenv("REDIS_URL")
 	var rdb *redis.Client
 
 	if redisURL != "" {
-		// La librería parsea automáticamente el host, puerto, password y TLS (rediss://)
+		// Parse the full URL, including credentials and TLS if present (rediss://)
 		opt, err := redis.ParseURL(redisURL)
 		if err != nil {
-			log.Fatalf("Error parseando REDIS_URL en AuthService: %v", err)
+			log.Fatalf("Error parsing REDIS_URL in AuthService: %v", err)
 		}
 		rdb = redis.NewClient(opt)
 	} else {
-		// Fallback para desarrollo local
-		log.Println("REDIS_URL no detectada, usando localhost:6379 para Auth")
+		// Fallback for local development
+		log.Println("REDIS_URL not detected, using localhost:6379 for Auth")
 		rdb = redis.NewClient(&redis.Options{
 			Addr:     "localhost:6379",
 			Password: "",
@@ -61,11 +67,15 @@ func NewAuthService(dbOrNil *gorm.DB) *AuthService {
 	return &AuthService{db: dbOrNil, redisClient: rdb}
 }
 
-// UpdatePassword (Reset Password Flow)
+// =========================================================================
+// Password Management
+// =========================================================================
+
+// UpdatePassword updates a user's password, typically for the password reset flow.
 func (s *AuthService) UpdatePassword(email, newPassword string) error {
 	var user domain.User
 	if err := s.db.Where("email = ?", email).First(&user).Error; err != nil {
-		return errors.New("usuario no encontrado")
+		return errors.New("user not found")
 	}
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
@@ -75,44 +85,46 @@ func (s *AuthService) UpdatePassword(email, newPassword string) error {
 
 	user.Password = string(hashedPassword)
 	if err := s.db.Save(&user).Error; err != nil {
-		return fmt.Errorf("error actualizando contraseña: %v", err)
+		return fmt.Errorf("error updating password: %v", err)
 	}
 
 	return nil
 }
 
-// InitiateRegistration: Verifica duplicidad por ROL y guarda en Redis
+// =========================================================================
+// User Registration
+// =========================================================================
+
+// InitiateRegistration validates new user data and stores it temporarily in Redis pending OTP verification.
 func (s *AuthService) InitiateRegistration(name, email, password, run, role string) error {
-	// 1. Verificar Blacklist Global (por RUT)
+	// 1. Check against the global blacklist by RUN.
 	isBanned, err := s.CheckBlacklist(run)
 	if err != nil {
 		return err
 	}
 	if isBanned {
-		return fmt.Errorf("registro denegado (Evil PAWS)")
+		return fmt.Errorf("registration denied due to blacklist status")
 	}
 
 	roleNormalized := strings.ToLower(role)
 	if roleNormalized == "" {
-		roleNormalized = "adopter"
+		roleNormalized = "adopter" // Default role
 	}
 
-	// 2. CAMBIO DE LÓGICA: Verificar existencia ESPECÍFICA para este Rol.
-	// Buscamos si ya existe alguien con este (RUT o Email) Y que tenga el MISMO ROL.
+	// 2. Check for an existing user with the same RUN or Email for the SPECIFIC role.
 	var existingUser domain.User
 	err = s.db.Where("(run = ? OR email = ?) AND role = ?", run, email, roleNormalized).First(&existingUser).Error
-
 	if err == nil {
-		// Si err es nil, SIGNIFICA QUE LO ENCONTRÓ -> DUPLICADO
-		return fmt.Errorf("ya existe una cuenta de %s registrada con este Email o RUT", roleNormalized)
+		// If err is nil, a user was found, so it's a duplicate.
+		return fmt.Errorf("an account for the role '%s' already exists with this Email or RUN", roleNormalized)
 	}
-	// Si no lo encuentra (error RecordNotFound), procedemos.
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
 
+	// 3. Store temporary registration data in Redis.
 	tempData := registrationCache{
 		Name:     name,
 		Email:    email,
@@ -128,19 +140,19 @@ func (s *AuthService) InitiateRegistration(name, email, password, run, role stri
 
 	ctx := context.Background()
 	key := fmt.Sprintf("pending_user:%s:%s", email, roleNormalized)
-
 	err = s.redisClient.Set(ctx, key, userData, 10*time.Minute).Err()
 	if err != nil {
-		return fmt.Errorf("error guardando registro temporal: %v", err)
+		return fmt.Errorf("error storing temporary registration data: %v", err)
 	}
 
 	return nil
 }
 
-// CompleteRegistration: Recupera de Redis y guarda en Postgres
+// CompleteRegistration retrieves user data from Redis and creates the user in the database.
 func (s *AuthService) CompleteRegistration(email string) (*domain.User, error) {
 	ctx := context.Background()
 
+	// Try to find a pending registration for either role.
 	keys := []string{
 		fmt.Sprintf("pending_user:%s:adopter", email),
 		fmt.Sprintf("pending_user:%s:rescuer", email),
@@ -161,7 +173,7 @@ func (s *AuthService) CompleteRegistration(email string) (*domain.User, error) {
 	}
 
 	if !found {
-		return nil, errors.New("no hay registro pendiente o expiró")
+		return nil, errors.New("no pending registration found, or it has expired")
 	}
 
 	var tempData registrationCache
@@ -178,55 +190,57 @@ func (s *AuthService) CompleteRegistration(email string) (*domain.User, error) {
 	}
 
 	if err := s.db.Create(&user).Error; err != nil {
-		return nil, fmt.Errorf("error finalizando registro: %v", err)
+		return nil, fmt.Errorf("error finalizing registration: %v", err)
 	}
 
+	// Clean up the temporary key from Redis.
 	s.redisClient.Del(ctx, validKey)
 
 	return &user, nil
 }
 
+// =========================================================================
+// Login & Role Switching
+// =========================================================================
+
+// Login authenticates a user and generates a JWT.
 func (s *AuthService) Login(email, password string) (string, error) {
-	// Fase 1: Login simple (toma el primero que encuentra)
-	// Fase 2: Podríamos mejorar esto si queremos que Login devuelva ambos perfiles,
-	// pero por ahora SwitchRole manejará el cambio.
 	var user domain.User
 	if err := s.db.Where("email = ?", email).First(&user).Error; err != nil {
-		return "", errors.New("credenciales inválidas")
+		return "", errors.New("invalid credentials")
 	}
 	if user.IsBanned {
-		return "", errors.New("cuenta suspendida")
+		return "", errors.New("account is suspended")
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
-		return "", errors.New("credenciales inválidas")
+		return "", errors.New("invalid credentials")
 	}
 
 	return s.GenerateTokenForUser(&user)
 }
 
-// SwitchRole: Busca la "otra" cuenta del usuario basada en su RUT y genera un nuevo token.
+// SwitchRole finds the user's alternate profile (based on RUN) and generates a new token.
 func (s *AuthService) SwitchRole(currentUserID uint) (string, *domain.User, error) {
-	// 1. Obtener usuario actual para saber su RUT y Rol actual
+	// 1. Get the current user to know their RUN and current role.
 	var currentUser domain.User
 	if err := s.db.First(&currentUser, currentUserID).Error; err != nil {
-		return "", nil, errors.New("usuario actual no encontrado")
+		return "", nil, errors.New("current user not found")
 	}
 
-	// 2. Determinar el rol objetivo
+	// 2. Determine the target role.
 	targetRole := "rescuer"
 	if currentUser.Role == "rescuer" {
 		targetRole = "adopter"
 	}
 
-	// 3. Buscar el "gemelo" (mismo RUT, rol objetivo)
+	// 3. Find the "twin" profile (same RUN, different role).
 	var targetUser domain.User
 	if err := s.db.Where("run = ? AND role = ?", currentUser.Run, targetRole).First(&targetUser).Error; err != nil {
-		// Si no lo encuentra, significa que el usuario aún no ha creado el otro perfil
-		return "", nil, errors.New("no existe un perfil asociado para el modo " + targetRole)
+		return "", nil, fmt.Errorf("no associated profile found for the %s role", targetRole)
 	}
 
-	// 4. Generar Token para la nueva identidad
+	// 4. Generate a new token for the target identity.
 	token, err := s.GenerateTokenForUser(&targetUser)
 	if err != nil {
 		return "", nil, err
@@ -235,22 +249,28 @@ func (s *AuthService) SwitchRole(currentUserID uint) (string, *domain.User, erro
 	return token, &targetUser, nil
 }
 
+// =========================================================================
+// Security & Token Generation
+// =========================================================================
+
+// CheckBlacklist checks if a given RUN is in the blacklist.
 func (s *AuthService) CheckBlacklist(run string) (bool, error) {
-	// 1. Validación defensiva para evitar consultas inútiles
 	if strings.TrimSpace(run) == "" {
-		return false, errors.New("el RUN no puede estar vacío")
+		return false, errors.New("RUN cannot be empty")
 	}
 
 	var entry domain.BlacklistEntry
-	if err := s.db.Where("run = ?", run).First(&entry).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return false, nil
+	err := s.db.Where("run = ?", run).First(&entry).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil // Not found is not an error here.
 		}
-		return false, err
+		return false, err // A real database error occurred.
 	}
-	return true, nil
+	return true, nil // Entry found.
 }
 
+// GenerateTokenForUser creates a JWT for a given user.
 func (s *AuthService) GenerateTokenForUser(user *domain.User) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"sub":     user.ID,
@@ -260,15 +280,17 @@ func (s *AuthService) GenerateTokenForUser(user *domain.User) (string, error) {
 	})
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
-		secret = "secreto_default"
+		secret = "default_secret" // Fallback for local dev
 	}
 	return token.SignedString([]byte(secret))
 }
 
+// GenerateTokenForEmail creates a JWT for a user identified by email.
 func (s *AuthService) GenerateTokenForEmail(email string) (string, error) {
 	var user domain.User
 	if err := s.db.Where("email = ?", email).First(&user).Error; err != nil {
-		return "", errors.New("usuario no encontrado")
+		return "", errors.New("user not found")
 	}
 	return s.GenerateTokenForUser(&user)
 }
+

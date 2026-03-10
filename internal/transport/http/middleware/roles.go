@@ -1,3 +1,4 @@
+// Package middleware provides HTTP middleware functions.
 package middleware
 
 import (
@@ -5,16 +6,16 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RequireRole verifica que el usuario tenga el rol necesario (ej: "admin")
+// RequireRole is a Gin middleware that checks if the authenticated user has a specific role.
 func RequireRole(requiredRole string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 1. Obtenemos el rol que AuthMiddleware guardó
+		// 1. Get the role that the AuthMiddleware stored in the context.
 		role := c.GetString("role")
 		
-		// 2. Verificamos (Si no es admin, fuera)
+		// 2. Verify if the user's role matches the required role.
 		if role != requiredRole {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-				"error": "Acceso denegado: Se requiere nivel " + requiredRole,
+				"error": "Access denied: Requires " + requiredRole + " privileges",
 			})
 			return
 		}

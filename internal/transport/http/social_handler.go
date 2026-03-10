@@ -1,3 +1,4 @@
+// Package http contains the HTTP handlers for the application.
 package http
 
 import (
@@ -8,11 +9,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// =========================================================================
+// Handler Definition
+// =========================================================================
+
+// SocialHandler handles social-related HTTP requests like reviews and chat.
 type SocialHandler struct {
 	chatService   *services.ChatService
 	reviewService *services.ReviewService
 }
 
+// NewSocialHandler creates a new SocialHandler.
 func NewSocialHandler(chat *services.ChatService, review *services.ReviewService) *SocialHandler {
 	return &SocialHandler{
 		chatService:   chat,
@@ -20,7 +27,11 @@ func NewSocialHandler(chat *services.ChatService, review *services.ReviewService
 	}
 }
 
-// Helper interno para obtener ID seguro (puedes moverlo a un utils.go si prefieres)
+// =========================================================================
+// Helper Functions
+// =========================================================================
+
+// getUserIDSafe safely extracts the user ID from the Gin context.
 func getUserIDSafe(c *gin.Context) (uint, bool) {
 	idVal, exists := c.Get("userID")
 	if !exists {
@@ -36,12 +47,15 @@ func getUserIDSafe(c *gin.Context) (uint, bool) {
 	}
 }
 
-// CreateReview (POST /reviews)
+// =========================================================================
+// Handler Methods
+// =========================================================================
+
+// CreateReview handles the POST /reviews endpoint to create or update a user review.
 func (h *SocialHandler) CreateReview(c *gin.Context) {
-	// Seguridad Unificada y blindada
 	userID, ok := getUserIDSafe(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Auth required"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
 		return
 	}
 
@@ -56,62 +70,62 @@ func (h *SocialHandler) CreateReview(c *gin.Context) {
 		return
 	}
 
-	// Llamamos al servicio de Upsert
+	// Use the upsert service method
 	if err := h.reviewService.CreateOrUpdateReview(req.MatchID, userID, req.Rating, req.Comment); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Calificación guardada exitosamente"})
+	c.JSON(http.StatusOK, gin.H{"message": "Review saved successfully"})
 }
 
-// GetUserReviews (GET /users/:id/reviews) -> NUEVO
+// GetUserReviews handles the GET /users/:id/reviews endpoint to fetch reviews for a user.
 func (h *SocialHandler) GetUserReviews(c *gin.Context) {
 	targetIDStr := c.Param("id")
 	targetID, _ := strconv.Atoi(targetIDStr)
 
 	reviews, err := h.reviewService.GetReviewsByTarget(uint(targetID))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error cargando reseñas"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error loading reviews"})
 		return
 	}
 
 	c.JSON(http.StatusOK, reviews)
 }
 
-// GetChatHistory (GET /matches/:id/messages)
+// GetChatHistory handles the GET /matches/:id/messages endpoint to fetch chat history.
 func (h *SocialHandler) GetChatHistory(c *gin.Context) {
 	matchIDStr := c.Param("id")
 	matchID, _ := strconv.Atoi(matchIDStr)
 
 	messages, err := h.chatService.GetHistory(uint(matchID))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error cargando historial"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error loading history"})
 		return
 	}
 
 	c.JSON(http.StatusOK, messages)
 }
 
-// --- NUEVO HANDLER: MARCAR COMO LEÍDO ---
+// MarkAsRead handles marking chat messages as read.
 func (h *SocialHandler) MarkAsRead(c *gin.Context) {
 	userID, ok := getUserIDSafe(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Usuario no identificado"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not identified"})
 		return
 	}
 
 	matchIDStr := c.Param("id")
 	matchID, err := strconv.Atoi(matchIDStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ID de match inválido"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid match ID"})
 		return
 	}
 
 	if err := h.chatService.MarkAsRead(uint(matchID), userID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error marcando mensajes como leídos"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error marking messages as read"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Mensajes marcados como leídos"})
+	c.JSON(http.StatusOK, gin.H{"message": "Messages marked as read"})
 }

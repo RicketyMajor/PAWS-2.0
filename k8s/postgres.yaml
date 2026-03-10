@@ -1,16 +1,24 @@
+# -------------------
+# PostgreSQL Service
+# -------------------
 apiVersion: v1
 kind: Service
 metadata:
-  name: postgres-service # <--- IMPORTANTE: Este será el "hostname" para el backend
+  name: postgres-service
 spec:
-  type: ClusterIP # Solo accesible dentro del cluster
+  type: ClusterIP
   selector:
     app: postgres
   ports:
     - protocol: TCP
       port: 5432
       targetPort: 5432
+
 ---
+
+# -------------------
+# PostgreSQL Deployment
+# -------------------
 apiVersion: apps/v1
 kind: Deployment
 metadata:

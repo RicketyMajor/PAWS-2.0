@@ -1,9 +1,12 @@
+# -------------------
+# MinIO Service
+# -------------------
 apiVersion: v1
 kind: Service
 metadata:
   name: minio-service
 spec:
-  type: LoadBalancer # Para entrar a la consola desde Windows
+  type: LoadBalancer
   selector:
     app: minio
   ports:
@@ -15,7 +18,12 @@ spec:
       protocol: TCP
       port: 9001
       targetPort: 9001
+
 ---
+
+# -------------------
+# MinIO Deployment
+# -------------------
 apiVersion: apps/v1
 kind: Deployment
 metadata:

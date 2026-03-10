@@ -1,3 +1,4 @@
+// Package services contains the core business logic of the application.
 package services
 
 import (
@@ -5,19 +6,34 @@ import (
 	"gorm.io/gorm"
 )
 
+// =========================================================================
+// Service Definition
+// =========================================================================
+
+// UserService provides business logic for user-related operations.
 type UserService struct {
 	db *gorm.DB
 }
 
+// NewUserService creates a new UserService.
 func NewUserService(db *gorm.DB) *UserService {
 	return &UserService{db: db}
 }
 
-// UpdateIdentity actualiza los datos visibles del perfil y sincroniza la foto
+// =========================================================================
+// Profile Management
+// =========================================================================
+
+// UpdateIdentity updates a user's basic profile information and synchronizes the photo URL.
 func (s *UserService) UpdateIdentity(userID uint, name, bio, phone, photoURL string) error {
 	tx := s.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
 
-	// 1. Obtener el usuario actual para saber su email
+	// 1. Get current user to know their email for synchronization.
 	var currentUser domain.User
 	if err := tx.First(&currentUser, userID).Error; err != nil {
 		tx.Rollback()
@@ -31,13 +47,13 @@ func (s *UserService) UpdateIdentity(userID uint, name, bio, phone, photoURL str
 		"photo_url": photoURL,
 	}
 
-	// 2. Actualizar la cuenta que hizo la petición
+	// 2. Update the profile that made the request.
 	if err := tx.Model(&domain.User{}).Where("id = ?", userID).Updates(updates).Error; err != nil {
 		tx.Rollback()
 		return err
 	}
 
-	// 3. Sincronizar mágicamente la foto en la cuenta dual (si tiene el mismo email)
+	// 3. Magically synchronize the photo URL on the dual-role account (if it exists).
 	if photoURL != "" {
 		if err := tx.Model(&domain.User{}).
 			Where("email = ? AND id != ?", currentUser.Email, userID).
@@ -50,37 +66,41 @@ func (s *UserService) UpdateIdentity(userID uint, name, bio, phone, photoURL str
 	return tx.Commit().Error
 }
 
-// GetUser obtiene la info completa
+// GetUser retrieves the full user object by ID.
 func (s *UserService) GetUser(userID uint) (*domain.User, error) {
 	var user domain.User
 	err := s.db.First(&user, userID).Error
 	return &user, err
 }
 
-// --- NUEVO: Guardar Token FCM ---
+// UpdateFCMToken saves or updates the Firebase Cloud Messaging token for a user.
 func (s *UserService) UpdateFCMToken(userID uint, token string) error {
-	// Actualizamos solo el campo FCMToken
 	return s.db.Model(&domain.User{}).Where("id = ?", userID).Update("fcm_token", token).Error
 }
 
-// GetUserProfile obtiene el perfil extendido
+// GetUserProfile retrieves the extended user profile information.
 func (s *UserService) GetUserProfile(userID uint) (*domain.UserProfile, error) {
 	var profile domain.UserProfile
 	err := s.db.Where("user_id = ?", userID).First(&profile).Error
 	return &profile, err
 }
 
-// UpdateFullProfile actualiza ambas tablas y sincroniza la foto
+// UpdateFullProfile updates both the base user data and the extended profile data in a single transaction.
 func (s *UserService) UpdateFullProfile(userID uint, userUpdates map[string]interface{}, profileData *domain.UserProfile) error {
-	tx := s.db.Begin() // Iniciamos transacción
+	tx := s.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
 
-	// 1. Actualizar datos base en tabla users
+	// 1. Update base user data in the 'users' table.
 	if err := tx.Model(&domain.User{}).Where("id = ?", userID).Updates(userUpdates).Error; err != nil {
 		tx.Rollback()
 		return err
 	}
 
-	// NUEVO: Si la foto viene en los updates, sincronizar con la cuenta dual
+	// If a photo URL is part of the update, synchronize it with the dual-role account.
 	if photoURL, ok := userUpdates["photo_url"]; ok && photoURL != "" {
 		var currentUser domain.User
 		if err := tx.First(&currentUser, userID).Error; err == nil {
@@ -90,18 +110,18 @@ func (s *UserService) UpdateFullProfile(userID uint, userUpdates map[string]inte
 		}
 	}
 
-	// 2. Crear o Actualizar tabla user_profiles (Upsert)
+	// 2. Create or Update the 'user_profiles' table (Upsert).
 	var existingProfile domain.UserProfile
 	err := tx.Where("user_id = ?", userID).First(&existingProfile).Error
 	if err == gorm.ErrRecordNotFound {
-		// Si no existe, lo creamos
+		// If profile doesn't exist, create it.
 		profileData.UserID = userID
 		if err := tx.Create(profileData).Error; err != nil {
 			tx.Rollback()
 			return err
 		}
 	} else {
-		// Si existe, lo actualizamos
+		// If profile exists, update it.
 		profileData.ID = existingProfile.ID
 		if err := tx.Model(&existingProfile).Updates(profileData).Error; err != nil {
 			tx.Rollback()
@@ -109,5 +129,5 @@ func (s *UserService) UpdateFullProfile(userID uint, userUpdates map[string]inte
 		}
 	}
 
-	return tx.Commit().Error // Confirmar transacción
+	return tx.Commit().Error
 }

@@ -1,3 +1,4 @@
+// Package services contains the core business logic of the application.
 package services
 
 import (
@@ -10,98 +11,100 @@ import (
 	"strings"
 
 	"github.com/cloudinary/cloudinary-go/v2"
-	"github.com/cloudinary/cloudinary-go/v2/api" // <--- IMPORTANTE: Nuevo import
+	"github.com/cloudinary/cloudinary-go/v2/api"
 	"github.com/cloudinary/cloudinary-go/v2/api/uploader"
 	"github.com/google/uuid"
 )
 
+// =========================================================================
+// Service Definition
+// =========================================================================
+
+// FileService handles file uploads, currently using Cloudinary as the storage provider.
 type FileService struct {
 	cld       *cloudinary.Cloudinary
 	isEnabled bool
 }
 
+// NewFileService creates a new FileService and connects to Cloudinary if the URL is provided.
 func NewFileService() *FileService {
-	// 1. Configuración: Solo necesitamos la URL mágica de Cloudinary
 	cldURL := os.Getenv("CLOUDINARY_URL")
 
 	if cldURL == "" {
-		log.Println("ADVERTENCIA: CLOUDINARY_URL no encontrada. Servicio de archivos desactivado (imágenes no se guardarán).")
+		log.Println("WARNING: CLOUDINARY_URL not found. File service is disabled; images will not be saved.")
 		return &FileService{isEnabled: false}
 	}
 
-	// 2. Conexión
 	cld, err := cloudinary.NewFromURL(cldURL)
 	if err != nil {
-		log.Printf("Error inicializando Cloudinary: %v. Servicio desactivado.\n", err)
+		log.Printf("Error initializing Cloudinary: %v. File service is disabled.\n", err)
 		return &FileService{isEnabled: false}
 	}
 
-	log.Println("Servicio de almacenamiento (Cloudinary) conectado exitosamente.")
-
+	log.Println("Storage service (Cloudinary) connected successfully.")
 	return &FileService{
 		cld:       cld,
 		isEnabled: true,
 	}
 }
 
-// SaveImage sube el archivo a Cloudinary y retorna la URL segura (HTTPS)
+// =========================================================================
+// Service Methods
+// =========================================================================
+
+// SaveImage uploads a single image file to Cloudinary and returns its secure URL.
 func (s *FileService) SaveImage(ctx context.Context, file *multipart.FileHeader) (string, error) {
-	// Protección si el servicio falló al iniciar
 	if !s.isEnabled {
-		return "", fmt.Errorf("servicio de almacenamiento no disponible")
+		return "", fmt.Errorf("storage service is not available")
 	}
 
-	// Validación de extensión ampliada para dispositivos modernos
+	// Validate file extension.
 	ext := strings.ToLower(filepath.Ext(file.Filename))
 	validExtensions := map[string]bool{
 		".jpg": true, ".jpeg": true, ".png": true,
 		".webp": true, ".heic": true, ".heif": true,
 	}
-
 	if !validExtensions[ext] {
-		return "", fmt.Errorf("formato %s inválido. Se permite JPG, PNG, WEBP o HEIC", ext)
+		return "", fmt.Errorf("invalid format %s. Allowed formats: JPG, PNG, WEBP, HEIC", ext)
 	}
 
-	// Abrir el archivo
 	src, err := file.Open()
 	if err != nil {
-		return "", fmt.Errorf("error leyendo archivo: %v", err)
+		return "", fmt.Errorf("error reading file: %v", err)
 	}
 	defer src.Close()
 
-	// Generamos un ID único para el archivo en la nube
+	// Generate a unique public ID for the file in the cloud.
 	uniqueFilename := uuid.New().String()
 
-	// Subida a Cloudinary
+	// Upload to Cloudinary.
 	resp, err := s.cld.Upload.Upload(ctx, src, uploader.UploadParams{
 		PublicID:     uniqueFilename,
 		Folder:       "paws_uploads",
 		ResourceType: "image",
-		// CORRECCIÓN: Usamos api.Bool(true) en lugar de true directo
-		Overwrite: api.Bool(true),
+		Overwrite:    api.Bool(true),
 	})
 
 	if err != nil {
-		log.Printf("Error Cloudinary Upload: %v", err)
-		return "", fmt.Errorf("error subiendo a la nube: %v", err)
+		log.Printf("Cloudinary Upload Error: %v", err)
+		return "", fmt.Errorf("error uploading to cloud storage: %v", err)
 	}
 
-	// Retornamos la URL segura (https) que es permanente
 	return resp.SecureURL, nil
 }
 
-// SaveMultipleImages reutiliza la lógica de SaveImage
+// SaveMultipleImages uploads multiple image files by calling SaveImage for each.
 func (s *FileService) SaveMultipleImages(ctx context.Context, files []*multipart.FileHeader) ([]string, error) {
 	var urls []string
 
 	if !s.isEnabled {
-		return urls, fmt.Errorf("servicio no disponible")
+		return urls, fmt.Errorf("storage service is not available")
 	}
 
 	for _, file := range files {
 		url, err := s.SaveImage(ctx, file)
 		if err != nil {
-			log.Printf("Error subiendo una de las imágenes (%s): %v", file.Filename, err)
+			log.Printf("Error uploading one of the images (%s): %v", file.Filename, err)
 			return nil, err
 		}
 		urls = append(urls, url)
