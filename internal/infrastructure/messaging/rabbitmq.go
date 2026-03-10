@@ -124,9 +124,15 @@ func ConsumeWithRetry(url, queueName string, handler func([]byte) error) {
 			err := handler(d.Body)
 			if err != nil {
 				log.Printf("[Worker %s] Error processing message: %v", queueName, err)
-				d.Nack(false, false) // Discard corrupted message to prevent queue blockage.
+				// Verificamos el error del Nack para evitar bloqueos silenciosos
+				if nackErr := d.Nack(false, false); nackErr != nil {
+					log.Printf("[Worker %s] Failed to Nack message: %v", queueName, nackErr)
+				}
 			} else {
-				d.Ack(false) // Acknowledge successful processing.
+				// Verificamos el error del Ack para asegurar la confirmación
+				if ackErr := d.Ack(false); ackErr != nil {
+					log.Printf("[Worker %s] Failed to Ack message: %v", queueName, ackErr)
+				}
 			}
 		}
 
