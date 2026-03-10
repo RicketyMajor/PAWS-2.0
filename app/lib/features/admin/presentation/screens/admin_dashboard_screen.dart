@@ -113,6 +113,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       ),
     );
   }
+}
 
 
 // =========================================================================
@@ -287,6 +288,10 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
   }
 }
 
+// =========================================================================
+// HELPERS GLOBALES DEL ARCHIVO
+// =========================================================================
+
   /// Translates report categories from English keys to Spanish for display.
   String _translateCategory(String cat) {
     switch (cat) {
@@ -297,4 +302,4 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
       default: return 'Other';
     }
   }
-}
+
