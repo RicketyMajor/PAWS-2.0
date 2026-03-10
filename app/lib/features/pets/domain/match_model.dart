@@ -1,6 +1,8 @@
+// The domain layer contains the core models of the application.
 import 'package:paws_app/features/pets/domain/pet_model.dart';
 import 'package:paws_app/features/user/domain/user_model.dart';
 
+/// Represents a match between an adopter and a pet.
 class Match {
   final int id;
   final int adopterId;
@@ -8,10 +10,9 @@ class Match {
   final String status;
   final String? message;
   final DateTime? createdAt;
-
-  // --- NUEVO CAMPO ---
   final int unreadCount;
 
+  // Associated models, preloaded from the API.
   final Pet? pet;
   final User? adopter;
 
@@ -22,59 +23,54 @@ class Match {
     required this.status,
     this.message,
     this.createdAt,
-    this.unreadCount = 0, // Valor por defecto
+    this.unreadCount = 0,
     this.pet,
     this.adopter,
   });
 
+  /// Creates a [Match] from a JSON map.
   factory Match.fromJson(Map<String, dynamic> json) {
     return Match(
       id: _parseInt(json['id']),
       adopterId: _parseInt(json['adopter_id']),
       petId: _parseInt(json['pet_id']),
-
       status: json['status'] ?? 'pending',
       message: json['message'],
-      createdAt: json['created_at'] != null
-          ? DateTime.tryParse(json['created_at'])
-          : null,
-
-      // Mapeamos el campo virtual del backend
+      createdAt: json['created_at'] != null ? DateTime.tryParse(json['created_at']) : null,
       unreadCount: _parseInt(json['unread_count']),
-
       pet: json['pet'] != null ? Pet.fromJson(json['pet']) : null,
       adopter: json['adopter'] != null ? User.fromJson(json['adopter']) : null,
     );
   }
 
-  // --- Helpers de Estado ---
+  // =========================================================================
+  //  Status Helpers
+  // =========================================================================
+
   bool get isChatActive => status == 'accepted';
   bool get isPetDeleted => status == 'pet_deleted';
   bool get isAdopterLeft => status == 'adopter_left';
   bool get isRescuerLeft => status == 'rescuer_left';
   bool get isCancelled => status == 'cancelled';
-
-  // Helper para saber si tiene mensajes nuevos
   bool get hasUnreadMessages => unreadCount > 0;
 
+  /// Provides a user-friendly reason if the chat is no longer active.
   String get blockReason {
     switch (status) {
-      case 'pet_deleted':
-        return 'Esta publicación ha sido eliminada.';
-      case 'adopter_left':
-        return 'El adoptante ha abandonado el chat.';
-      case 'rescuer_left':
-        return 'El rescatista ha abandonado el chat.';
-      case 'cancelled':
-        return 'Chat finalizado.';
-      case 'rejected':
-        return 'Solicitud rechazada.';
-      default:
-        return '';
+      case 'pet_deleted': return 'This pet has been removed.';
+      case 'adopter_left': return 'The adopter has left the chat.';
+      case 'rescuer_left': return 'The rescuer has left the chat.';
+      case 'cancelled': return 'This chat has ended.';
+      case 'rejected': return 'This request was rejected.';
+      default: return '';
     }
   }
 
-  // --- Helper Privado Seguro ---
+  // =========================================================================
+  //  Private Helpers
+  // =========================================================================
+
+  /// Safely parses a value to an integer, handling null, double, and string inputs.
   static int _parseInt(dynamic value) {
     if (value == null) return 0;
     if (value is int) return value;

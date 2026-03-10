@@ -1,6 +1,14 @@
+// Package widgets contains reusable UI components.
 import 'package:flutter/material.dart';
 import '../../constants/api_constants.dart';
 
+/// A widget that intelligently displays a network image with fallbacks.
+///
+/// It handles null/empty URLs, relative paths (by prepending the base API URL),
+/// and provides loading and error placeholders.
+///
+/// NOTE: This widget has overlapping functionality with the `ImageHelper` class.
+/// Consider consolidating the logic to a single place to avoid duplication.
 class SmartImage extends StatelessWidget {
   final String? url;
   final double? width;
@@ -19,18 +27,19 @@ class SmartImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 1. Si es nulo o vacío, mostramos un placeholder
+    // 1. If the URL is null or empty, show a placeholder.
     if (url == null || url!.isEmpty) {
       return _buildPlaceholder();
     }
 
-    // 2. LÓGICA MAESTRA (Stage 9 Fix)
-    // Si la URL ya empieza con "http", es una URL Absoluta (MinIO/S3).
-    // Si no, es una ruta relativa antigua y le pegamos el BaseURL.
+    // 2. Determine the final URL.
+    // If the URL already starts with "http", it's an absolute URL (e.g., from Cloudinary/S3).
+    // Otherwise, it's a relative path, and we prepend the API base URL.
     final finalUrl = url!.startsWith('http')
         ? url!
         : '${ApiConstants.baseUrl}$url';
 
+    // Use ClipRRect to apply a border radius if one is provided.
     return ClipRRect(
       borderRadius: borderRadius ?? BorderRadius.zero,
       child: Image.network(
@@ -38,8 +47,9 @@ class SmartImage extends StatelessWidget {
         width: width,
         height: height,
         fit: fit,
-        // Manejo de errores de carga (404, server down, etc)
+        // Show a placeholder if the image fails to load (e.g., 404, server down).
         errorBuilder: (context, error, stackTrace) => _buildPlaceholder(),
+        // Show a loading indicator while the image is being fetched.
         loadingBuilder: (context, child, loadingProgress) {
           if (loadingProgress == null) return child;
           return SizedBox(
@@ -59,11 +69,15 @@ class SmartImage extends StatelessWidget {
     );
   }
 
+  /// Builds a standard placeholder widget.
   Widget _buildPlaceholder() {
     return Container(
       width: width,
       height: height,
-      color: Colors.grey[200],
+      decoration: BoxDecoration(
+        color: Colors.grey[200],
+        borderRadius: borderRadius,
+      ),
       child: Icon(
         Icons.pets,
         color: Colors.grey[400],

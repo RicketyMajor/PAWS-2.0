@@ -6,8 +6,9 @@ import '../../data/pets_repository.dart';
 import '../../domain/pet_model.dart';
 import 'create_pet_screen.dart';
 import 'pet_detail_screen.dart';
-import 'package:provider/provider.dart';
 
+/// The home screen for users with the "rescuer" role.
+/// It displays a list of pets they have published.
 class RescuerHomeScreen extends StatefulWidget {
   const RescuerHomeScreen({super.key});
 
@@ -25,12 +26,11 @@ class _RescuerHomeScreenState extends State<RescuerHomeScreen> {
     _loadMyPets();
   }
 
+  /// Fetches the list of pets owned by the current user from the repository.
   Future<void> _loadMyPets() async {
     setState(() => _isLoading = true);
     try {
-      // CORRECCIÓN: Usamos getMyPets() para traer solo las mías
       final pets = await context.read<PetsRepository>().getMyPets();
-
       if (mounted) {
         setState(() {
           _myPets = pets;
@@ -40,9 +40,7 @@ class _RescuerHomeScreenState extends State<RescuerHomeScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("Error cargando mascotas: $e")));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error loading pets: $e")));
       }
     }
   }
@@ -51,11 +49,11 @@ class _RescuerHomeScreenState extends State<RescuerHomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Mis Mascotas"),
+        title: const Text("My Pets"),
         actions: [
           IconButton(
             icon: const Icon(Icons.exit_to_app),
-            tooltip: "Cerrar Sesión",
+            tooltip: "Log Out",
             onPressed: () {
               Navigator.pushAndRemoveUntil(
                 context,
@@ -69,53 +67,51 @@ class _RescuerHomeScreenState extends State<RescuerHomeScreen> {
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _myPets.isEmpty
-          ? _buildEmptyState()
-          : _buildPetsList(),
+              ? _buildEmptyState()
+              : _buildPetsList(),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () async {
-          await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const CreatePetScreen()),
-          );
+          // Navigate to the create screen and reload the list when returning.
+          await Navigator.push(context, MaterialPageRoute(builder: (context) => const CreatePetScreen()));
           _loadMyPets();
         },
-        label: const Text("Publicar Mascota"),
+        label: const Text("Publish Pet"),
         icon: const Icon(Icons.add),
         backgroundColor: const Color(0xFFE91E63),
       ),
     );
   }
 
+  /// Builds the UI for when the rescuer has not published any pets.
   Widget _buildEmptyState() {
-    return Center(
+    return const Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(Icons.pets, size: 80, color: Colors.grey),
-          const SizedBox(height: 20),
-          const Text("No has publicado mascotas aún"),
+          Icon(Icons.pets, size: 80, color: Colors.grey),
+          SizedBox(height: 20),
+          Text("You haven't published any pets yet."),
         ],
       ),
     );
   }
 
+  /// Builds the list of pet cards.
   Widget _buildPetsList() {
     return ListView.builder(
       padding: const EdgeInsets.all(16),
       itemCount: _myPets.length,
       itemBuilder: (context, index) {
         final pet = _myPets[index];
-
         return Card(
           margin: const EdgeInsets.only(bottom: 16),
           child: InkWell(
             borderRadius: BorderRadius.circular(12),
             onTap: () async {
+              // Navigate to detail and check for a result (e.g., `true` if pet was deleted) to reload.
               final result = await Navigator.push(
                 context,
-                MaterialPageRoute(
-                  builder: (context) => PetDetailScreen(pet: pet),
-                ),
+                MaterialPageRoute(builder: (context) => PetDetailScreen(pet: pet)),
               );
               if (result == true && mounted) {
                 _loadMyPets();
@@ -127,49 +123,25 @@ class _RescuerHomeScreenState extends State<RescuerHomeScreen> {
                 width: 60,
                 height: 60,
                 child: ClipOval(
-                  child: ImageHelper.getImage(
-                    pet.imageUrl,
-                    width: 60,
-                    height: 60,
-                    fit: BoxFit.cover,
-                  ),
+                  child: ImageHelper.getImage(pet.imageUrl, width: 60, height: 60, fit: BoxFit.cover),
                 ),
               ),
-              title: Text(
-                pet.name,
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 18,
-                ),
-              ),
-              subtitle: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text("${pet.breed} • ${pet.age} años"),
-                  const SizedBox(height: 4),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: pet.status == 'available'
-                          ? Colors.green[100]
-                          : Colors.grey[300],
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      pet.status == 'available' ? 'Disponible' : pet.status,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: pet.status == 'available'
-                            ? Colors.green[800]
-                            : Colors.black54,
-                      ),
-                    ),
+              title: Text(pet.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+              subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text("${pet.breed} • ${pet.age} years"),
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: pet.status == 'available' ? Colors.green[100] : Colors.grey[300],
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                ],
-              ),
+                  child: Text(
+                    pet.status == 'available' ? 'Available' : pet.status.capitalize(),
+                    style: TextStyle(fontSize: 12, color: pet.status == 'available' ? Colors.green[800] : Colors.black54),
+                  ),
+                ),
+              ]),
               trailing: const Icon(Icons.chevron_right),
             ),
           ),
@@ -177,4 +149,10 @@ class _RescuerHomeScreenState extends State<RescuerHomeScreen> {
       },
     );
   }
+}
+
+extension on String {
+    String capitalize() {
+      return "${this[0].toUpperCase()}${this.substring(1).toLowerCase()}";
+    }
 }

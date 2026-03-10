@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:intl/intl.dart'; // Asegúrate de tener intl en pubspec.yaml, o usa tu helper
+import 'package:intl/intl.dart';
 import '../../../../core/utils/image_helper.dart';
 import '../../data/reviews_repository.dart';
 import '../../domain/review_model.dart';
 
+/// A screen that displays a list of all reviews for a specific user.
 class UserReviewsScreen extends StatefulWidget {
   final int userId;
   final String userName;
@@ -25,16 +26,15 @@ class _UserReviewsScreenState extends State<UserReviewsScreen> {
   @override
   void initState() {
     super.initState();
-    _reviewsFuture = context.read<ReviewsRepository>().getUserReviews(
-      widget.userId,
-    );
+    // Fetch the reviews when the screen is initialized.
+    _reviewsFuture = context.read<ReviewsRepository>().getUserReviews(widget.userId);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text("Reseñas de ${widget.userName}"),
+        title: Text("Reviews for ${widget.userName}"),
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         elevation: 0,
@@ -50,20 +50,17 @@ class _UserReviewsScreenState extends State<UserReviewsScreen> {
           }
 
           final reviews = snapshot.data ?? [];
-
           if (reviews.isEmpty) {
             return const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.star_border, size: 60, color: Colors.grey),
-                  SizedBox(height: 16),
-                  Text("Este usuario aún no tiene reseñas."),
-                ],
-              ),
+              child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Icon(Icons.star_border, size: 60, color: Colors.grey),
+                SizedBox(height: 16),
+                Text("This user has no reviews yet."),
+              ]),
             );
           }
 
+          // Display the list of reviews.
           return ListView.separated(
             padding: const EdgeInsets.all(16),
             itemCount: reviews.length,
@@ -78,6 +75,7 @@ class _UserReviewsScreenState extends State<UserReviewsScreen> {
     );
   }
 
+  /// Builds a single item in the review list.
   Widget _buildReviewItem(Review review) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -91,21 +89,10 @@ class _UserReviewsScreenState extends State<UserReviewsScreen> {
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    review.author?.name ?? "Usuario Eliminado",
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  Text(
-                    DateFormat.yMMMd().format(
-                      review.createdAt,
-                    ), // Ej: Jan 21, 2026
-                    style: TextStyle(color: Colors.grey[600], fontSize: 12),
-                  ),
-                ],
-              ),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(review.author?.name ?? "Deleted User", style: const TextStyle(fontWeight: FontWeight.bold)),
+                Text(DateFormat.yMMMd().format(review.createdAt), style: TextStyle(color: Colors.grey[600], fontSize: 12)),
+              ]),
             ),
             _buildStaticStars(review.rating),
           ],
@@ -118,19 +105,15 @@ class _UserReviewsScreenState extends State<UserReviewsScreen> {
     );
   }
 
+  /// Builds a compact, non-interactive star rating display.
   Widget _buildStaticStars(double rating) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
-          rating.toString().replaceAll(
-            RegExp(r"([.]*0)(?!.*\d)"),
-            "",
-          ), // 4.0 -> 4, 4.5 -> 4.5
-          style: const TextStyle(
-            fontWeight: FontWeight.bold,
-            color: Color(0xFFFFC107),
-          ),
+          // Format rating to remove trailing ".0" (e.g., "4.0" -> "4").
+          rating.toString().replaceAll(RegExp(r"([.]*0)(?!.*\d)"), ""),
+          style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFFFC107)),
         ),
         const Icon(Icons.star, size: 16, color: Color(0xFFFFC107)),
       ],

@@ -1,23 +1,26 @@
+// The data layer is responsible for interacting with data sources, like a REST API or local database.
 import 'package:dio/dio.dart';
 import '../../../core/constants/api_constants.dart';
 import '../domain/match_model.dart';
-import '../../auth/data/auth_repository.dart'; // Importamos al "Dueño del Token"
+import '../../auth/data/auth_repository.dart';
 
+/// Repository for handling all match-related API requests.
 class MatchesRepository {
   final Dio _dio = Dio();
-  final AuthRepository authRepository; // Dependencia inyectada
+  final AuthRepository authRepository;
 
-  // Constructor que exige el AuthRepository
+  /// Creates a new MatchesRepository.
+  /// Requires an [AuthRepository] for handling authentication tokens.
   MatchesRepository({required this.authRepository});
 
-  // Helper privado para obtener cabeceras con el token válido (sea de memoria o disco)
+  /// A private helper to get authenticated request options.
   Future<Options> _getAuthOptions() async {
     final token = await authRepository.getToken();
-    if (token == null) throw Exception('Sesión expirada o inválida');
+    if (token == null) throw Exception('Session expired or invalid');
     return Options(headers: {'Authorization': 'Bearer $token'});
   }
 
-  // Obtener solicitudes pendientes (Rescatista)
+  /// Fetches pending match requests for the current user (as a rescuer).
   Future<List<Match>> getPendingRequests() async {
     try {
       final options = await _getAuthOptions();
@@ -25,15 +28,15 @@ class MatchesRepository {
         '${ApiConstants.baseUrl}/matches/requests',
         options: options,
       );
-
       return (response.data as List)
           .map((json) => Match.fromJson(json))
           .toList();
     } catch (e) {
-      throw Exception('Error cargando solicitudes: $e');
+      throw Exception('Error loading requests: $e');
     }
   }
 
+  /// Responds to a match request (accept or reject).
   Future<void> respondMatch(int matchId, bool accept) async {
     try {
       final options = await _getAuthOptions();
@@ -43,10 +46,11 @@ class MatchesRepository {
         options: options,
       );
     } catch (e) {
-      throw Exception('Error respondiendo solicitud: $e');
+      throw Exception('Error responding to request: $e');
     }
   }
 
+  /// Unmatches from a chat.
   Future<void> unmatch(int matchId) async {
     try {
       final options = await _getAuthOptions();
@@ -56,11 +60,11 @@ class MatchesRepository {
         options: options,
       );
     } catch (e) {
-      throw Exception('Error saliendo del chat: $e');
+      throw Exception('Error leaving chat: $e');
     }
   }
 
-  // Obtener chats activos del Rescatista
+  /// Fetches active chats for the current user (as a rescuer).
   Future<List<Match>> getRescuerChats() async {
     try {
       final options = await _getAuthOptions();
@@ -72,11 +76,11 @@ class MatchesRepository {
           .map((json) => Match.fromJson(json))
           .toList();
     } catch (e) {
-      throw Exception('Error cargando chats: $e');
+      throw Exception('Error loading chats: $e');
     }
   }
 
-  // Obtener chats activos del Adoptante (Aceptados)
+  /// Fetches accepted matches for the current user (as an adopter).
   Future<List<Match>> getAdopterAcceptedMatches() async {
     try {
       final options = await _getAuthOptions();
@@ -88,11 +92,11 @@ class MatchesRepository {
           .map((json) => Match.fromJson(json))
           .toList();
     } catch (e) {
-      throw Exception('Error cargando chats activos: $e');
+      throw Exception('Error loading active chats: $e');
     }
   }
 
-  // Obtener solicitudes pendientes del Adoptante
+  /// Fetches pending matches initiated by the current user (as an adopter).
   Future<List<Match>> getAdopterPendingMatches() async {
     try {
       final options = await _getAuthOptions();
@@ -104,7 +108,7 @@ class MatchesRepository {
           .map((json) => Match.fromJson(json))
           .toList();
     } catch (e) {
-      throw Exception('Error cargando solicitudes pendientes: $e');
+      throw Exception('Error loading pending requests: $e');
     }
   }
 }

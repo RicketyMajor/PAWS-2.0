@@ -1,3 +1,4 @@
+// The presentation layer contains the BLoCs (business logic), screens (UI), and widgets.
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -7,19 +8,28 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../data/chat_repository.dart';
 import '../../domain/message_model.dart';
 import '../../../pets/data/matches_repository.dart';
-import '../../../reviews/data/reviews_repository.dart'; // <--- IMPORTANTE
+import '../../../reviews/data/reviews_repository.dart';
 
-// --- ENUMS ---
+// =========================================================================
+// Enums
+// =========================================================================
+
+/// Represents the status of an asynchronous report operation.
 enum ReportStatus { initial, loading, success, failure }
 
-enum ReviewStatus { initial, loading, success, failure } // <--- NUEVO
+/// Represents the status of an asynchronous review operation.
+enum ReviewStatus { initial, loading, success, failure }
 
-// --- EVENTOS ---
+// =========================================================================
+// Events
+// =========================================================================
+
 abstract class ChatEvent extends Equatable {
   @override
   List<Object?> get props => [];
 }
 
+/// Dispatched to initialize the chat screen for a specific match.
 class InitChat extends ChatEvent {
   final int matchId;
   final String? initialStatus;
@@ -30,6 +40,7 @@ class InitChat extends ChatEvent {
   List<Object?> get props => [matchId, initialStatus, isRescuer];
 }
 
+/// Dispatched when the user sends a message.
 class SendMessageEvent extends ChatEvent {
   final String content;
   SendMessageEvent(this.content);
@@ -37,35 +48,31 @@ class SendMessageEvent extends ChatEvent {
   List<Object?> get props => [content];
 }
 
-class UnmatchChatEvent extends ChatEvent {
-  UnmatchChatEvent();
-}
+/// Dispatched when the user decides to unmatch.
+class UnmatchChatEvent extends ChatEvent {}
 
+/// Dispatched when the user reports the other user in the chat.
 class ReportUserEvent extends ChatEvent {
   final int reportedId;
   final String category;
   final String description;
 
-  ReportUserEvent({
-    required this.reportedId,
-    required this.category,
-    required this.description,
-  });
+  ReportUserEvent({required this.reportedId, required this.category, required this.description});
   @override
   List<Object?> get props => [reportedId, category, description];
 }
 
-// --- NUEVO EVENTO DE RESEÑA ---
+/// Dispatched when the user submits a review.
 class SendReviewEvent extends ChatEvent {
   final double rating;
   final String comment;
 
   SendReviewEvent({required this.rating, required this.comment});
-
   @override
   List<Object?> get props => [rating, comment];
 }
 
+/// Internal event dispatched when a new message is received from the WebSocket.
 class _ReceiveMessageEvent extends ChatEvent {
   final ChatMessage message;
   _ReceiveMessageEvent(this.message);
@@ -73,7 +80,10 @@ class _ReceiveMessageEvent extends ChatEvent {
   List<Object?> get props => [message];
 }
 
-// --- ESTADOS ---
+// =========================================================================
+// States
+// =========================================================================
+
 abstract class ChatState extends Equatable {
   @override
   List<Object?> get props => [];
@@ -81,6 +91,7 @@ abstract class ChatState extends Equatable {
 
 class ChatLoading extends ChatState {}
 
+/// The main state for the chat screen, containing all necessary UI data.
 class ChatLoaded extends ChatState {
   final List<ChatMessage> messages;
   final int matchId;
@@ -88,9 +99,8 @@ class ChatLoaded extends ChatState {
   final bool isLocked;
   final String lockReason;
   final String? error;
-
   final ReportStatus reportStatus;
-  final ReviewStatus reviewStatus; // <--- NUEVO CAMPO
+  final ReviewStatus reviewStatus;
 
   ChatLoaded({
     required this.messages,
@@ -104,17 +114,9 @@ class ChatLoaded extends ChatState {
   });
 
   @override
-  List<Object?> get props => [
-    messages,
-    matchId,
-    myUserId,
-    isLocked,
-    lockReason,
-    error,
-    reportStatus,
-    reviewStatus,
-  ];
+  List<Object?> get props => [messages, matchId, myUserId, isLocked, lockReason, error, reportStatus, reviewStatus];
 
+  /// Creates a copy of the current state with updated values.
   ChatLoaded copyWith({
     List<ChatMessage>? messages,
     int? matchId,
@@ -131,7 +133,7 @@ class ChatLoaded extends ChatState {
       myUserId: myUserId ?? this.myUserId,
       isLocked: isLocked ?? this.isLocked,
       lockReason: lockReason ?? this.lockReason,
-      error: error,
+      error: error, // Error is nullable, so we don't default it.
       reportStatus: reportStatus ?? this.reportStatus,
       reviewStatus: reviewStatus ?? this.reviewStatus,
     );
@@ -145,11 +147,16 @@ class ChatError extends ChatState {
   List<Object?> get props => [message];
 }
 
-// --- BLOC ---
+
+// =========================================================================
+// BLoC
+// =========================================================================
+
+/// Manages the state and business logic for a single chat screen.
 class ChatBloc extends Bloc<ChatEvent, ChatState> {
   final ChatRepository chatRepository;
   final MatchesRepository matchesRepository;
-  final ReviewsRepository reviewsRepository; // <--- INYECCIÓN
+  final ReviewsRepository reviewsRepository;
   final _storage = const FlutterSecureStorage();
 
   StreamSubscription? _messagesSubscription;
@@ -159,194 +166,135 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
   ChatBloc({
     required this.chatRepository,
     required this.matchesRepository,
-    required this.reviewsRepository, // <--- REQUERIDO
+    required this.reviewsRepository,
   }) : super(ChatLoading()) {
-    on<InitChat>((event, emit) async {
-      emit(ChatLoading());
-      _currentMatchId = event.matchId;
+    
+    on<InitChat>(_onInitChat);
+    on<SendMessageEvent>(_onSendMessage);
+    on<_ReceiveMessageEvent>(_onReceiveMessage);
+    on<UnmatchChatEvent>(_onUnmatch);
+    on<ReportUserEvent>(_onReportUser);
+    on<SendReviewEvent>(_onSendReview);
+  }
 
-      try {
-        final token = await _storage.read(key: 'jwt_token');
-        if (token != null) {
-          final decodedToken = JwtDecoder.decode(token);
-          _myUserId = decodedToken['user_id'] ?? int.parse(decodedToken['sub']);
-        }
+  Future<void> _onInitChat(InitChat event, Emitter<ChatState> emit) async {
+    emit(ChatLoading());
+    _currentMatchId = event.matchId;
 
-        final historyJson = await chatRepository.getHistory(_currentMatchId);
-        final history = historyJson
-            .map((json) => ChatMessage.fromJson(json, _myUserId))
-            .toList();
-        history.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-        bool isLocked = false;
-        String reason = '';
+    try {
+      final token = await _storage.read(key: 'jwt_token');
+      if (token != null) {
+        final decodedToken = JwtDecoder.decode(token);
+        _myUserId = decodedToken['user_id'] ?? int.parse(decodedToken['sub']);
+      }
 
-        if (event.initialStatus != null && event.initialStatus != 'accepted') {
-          isLocked = true;
-          if (event.initialStatus == 'pet_deleted') {
-            reason = event.isRescuer
-                ? 'Has eliminado la publicación de esta mascota.'
-                : 'La publicación de esta mascota ha sido eliminada.';
-          } else if (event.initialStatus == 'adopter_left')
-            reason = 'El adoptante abandonó el chat.';
-          else if (event.initialStatus == 'rescuer_left')
-            reason = 'El rescatista abandonó el chat.';
-          else if (event.initialStatus == 'peer_left')
-            reason = 'El otro usuario abandonó el chat.';
-          else
-            reason = 'Chat finalizado.';
-        }
+      final historyJson = await chatRepository.getHistory(_currentMatchId);
+      final history = historyJson.map((json) => ChatMessage.fromJson(json, _myUserId)).toList();
+      history.sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-        emit(
-          ChatLoaded(
-            messages: history,
-            matchId: _currentMatchId,
-            myUserId: _myUserId,
-            isLocked: isLocked,
-            lockReason: reason,
-          ),
-        );
+      bool isLocked = false;
+      String reason = '';
+      if (event.initialStatus != null && event.initialStatus != 'accepted') {
+        isLocked = true;
+        reason = _getLockReason(event.initialStatus!, event.isRescuer);
+      }
 
-        await chatRepository.connect();
+      emit(ChatLoaded(messages: history, matchId: _currentMatchId, myUserId: _myUserId, isLocked: isLocked, lockReason: reason));
 
-        _messagesSubscription?.cancel();
-        _messagesSubscription = chatRepository.messages.listen((dynamic data) {
-          try {
-            final decoded = jsonDecode(data);
-            if (decoded['type'] == 'new_message') {
-              final payload = decoded['payload'];
-              if (payload['match_id'] == _currentMatchId) {
-                final newMsg = ChatMessage.fromJson(payload, _myUserId);
-                add(_ReceiveMessageEvent(newMsg));
-              }
-            } else if (decoded['type'] == 'error') {
-              // Si el backend rechaza el mensaje, lo imprimimos (¡Aquí podrías mostrar un SnackBar luego!)
-              print("ERROR DEL BACKEND WS: ${decoded['payload']['message']}");
-            }
-          } catch (e) {
-            print("Error parseando mensaje WS: $e");
+      // Set up WebSocket listener for new messages.
+      await chatRepository.connect();
+      _messagesSubscription?.cancel();
+      _messagesSubscription = chatRepository.messages.listen((dynamic data) {
+        try {
+          final decoded = jsonDecode(data);
+          if (decoded['type'] == 'new_message' && decoded['payload']['match_id'] == _currentMatchId) {
+            add(_ReceiveMessageEvent(ChatMessage.fromJson(decoded['payload'], _myUserId)));
+          } else if (decoded['type'] == 'error') {
+            print("BACKEND WS ERROR: ${decoded['payload']['message']}");
           }
-        });
+        } catch (e) {
+          print("Error parsing WebSocket message: $e");
+        }
+      });
+
+    } catch (e) {
+      emit(ChatError("Error loading chat: $e"));
+    }
+  }
+
+  void _onSendMessage(SendMessageEvent event, Emitter<ChatState> emit) {
+    final currentState = state;
+    if (currentState is ChatLoaded && !currentState.isLocked) {
+      chatRepository.sendMessage(_currentMatchId, event.content);
+    }
+  }
+
+  void _onReceiveMessage(_ReceiveMessageEvent event, Emitter<ChatState> emit) {
+    final currentState = state;
+    if (currentState is ChatLoaded) {
+      emit(currentState.copyWith(messages: [event.message, ...currentState.messages]));
+    }
+  }
+
+  Future<void> _onUnmatch(UnmatchChatEvent event, Emitter<ChatState> emit) async {
+    final currentState = state;
+    if (currentState is ChatLoaded) {
+      try {
+        await matchesRepository.unmatch(_currentMatchId);
+        emit(currentState.copyWith(isLocked: true, lockReason: 'You have left this chat.'));
       } catch (e) {
-        emit(ChatError("Error cargando chat: $e"));
+        emit(currentState.copyWith(error: "Could not leave chat: ${e.toString()}"));
       }
-    });
+    }
+  }
 
-    on<SendMessageEvent>((event, emit) {
-      final currentState = state;
-      if (currentState is ChatLoaded) {
-        if (currentState.isLocked) return;
-        try {
-          chatRepository.sendMessage(_currentMatchId, event.content);
-        } catch (e) {
-          print("Error enviando: $e");
-        }
-      }
-    });
-
-    on<_ReceiveMessageEvent>((event, emit) {
-      if (state is ChatLoaded) {
-        final currentState = state as ChatLoaded;
-        emit(
-          currentState.copyWith(
-            messages: [event.message, ...currentState.messages],
-          ),
+  Future<void> _onReportUser(ReportUserEvent event, Emitter<ChatState> emit) async {
+    final currentState = state;
+    if (currentState is ChatLoaded) {
+      emit(currentState.copyWith(reportStatus: ReportStatus.loading));
+      try {
+        await chatRepository.reportUser(
+          reportedId: event.reportedId,
+          matchId: _currentMatchId,
+          category: event.category,
+          description: event.description,
         );
+        emit(currentState.copyWith(reportStatus: ReportStatus.success));
+      } catch (e) {
+        emit(currentState.copyWith(reportStatus: ReportStatus.failure, error: e.toString()));
       }
-    });
+      // Reset status to allow for future actions.
+      emit(currentState.copyWith(reportStatus: ReportStatus.initial, error: null));
+    }
+  }
 
-    on<UnmatchChatEvent>((event, emit) async {
-      if (state is ChatLoaded) {
-        final currentState = state as ChatLoaded;
-        try {
-          await matchesRepository.unmatch(_currentMatchId);
-          emit(
-            currentState.copyWith(
-              isLocked: true,
-              lockReason: 'Has abandonado este chat.',
-              error: null,
-            ),
-          );
-        } catch (e) {
-          emit(
-            currentState.copyWith(
-              error: "No se pudo salir del chat: ${e.toString()}",
-            ),
-          );
-        }
+  Future<void> _onSendReview(SendReviewEvent event, Emitter<ChatState> emit) async {
+    final currentState = state;
+    if (currentState is ChatLoaded) {
+      emit(currentState.copyWith(reviewStatus: ReviewStatus.loading));
+      try {
+        await reviewsRepository.createReview(
+          matchId: _currentMatchId,
+          rating: event.rating,
+          comment: event.comment,
+        );
+        emit(currentState.copyWith(reviewStatus: ReviewStatus.success));
+      } catch (e) {
+        emit(currentState.copyWith(reviewStatus: ReviewStatus.failure, error: e.toString()));
       }
-    });
+      // Reset status.
+      emit(currentState.copyWith(reviewStatus: ReviewStatus.initial, error: null));
+    }
+  }
 
-    // --- NUEVO HANDLER DE REPORTE ---
-    on<ReportUserEvent>((event, emit) async {
-      if (state is ChatLoaded) {
-        final currentState = state as ChatLoaded;
-
-        // 1. Emitir estado de carga (sin borrar mensajes)
-        emit(currentState.copyWith(reportStatus: ReportStatus.loading));
-
-        try {
-          // 2. Llamar al repositorio
-          await chatRepository.reportUser(
-            reportedId: event.reportedId,
-            matchId: _currentMatchId,
-            category: event.category,
-            description: event.description,
-          );
-
-          // 3. Éxito
-          emit(currentState.copyWith(reportStatus: ReportStatus.success));
-
-          // Opcional: Volver a initial para limpiar el flag
-          emit(currentState.copyWith(reportStatus: ReportStatus.initial));
-        } catch (e) {
-          // 4. Error
-          emit(
-            currentState.copyWith(
-              reportStatus: ReportStatus.failure,
-              error: e.toString(),
-            ),
-          );
-          // Limpiar error después
-          emit(
-            currentState.copyWith(
-              reportStatus: ReportStatus.initial,
-              error: null,
-            ),
-          );
-        }
-      }
-    });
-    // --- HANDLER DE RESEÑAS (NUEVO) ---
-    on<SendReviewEvent>((event, emit) async {
-      if (state is ChatLoaded) {
-        final currentState = state as ChatLoaded;
-        emit(currentState.copyWith(reviewStatus: ReviewStatus.loading));
-
-        try {
-          await reviewsRepository.createReview(
-            matchId: _currentMatchId,
-            rating: event.rating,
-            comment: event.comment,
-          );
-          emit(currentState.copyWith(reviewStatus: ReviewStatus.success));
-          // Reset status
-          emit(currentState.copyWith(reviewStatus: ReviewStatus.initial));
-        } catch (e) {
-          emit(
-            currentState.copyWith(
-              reviewStatus: ReviewStatus.failure,
-              error: e.toString(),
-            ),
-          );
-          emit(
-            currentState.copyWith(
-              reviewStatus: ReviewStatus.initial,
-              error: null,
-            ),
-          );
-        }
-      }
-    });
+  String _getLockReason(String status, bool isRescuer) {
+    switch (status) {
+      case 'pet_deleted': return isRescuer ? 'You have removed this pet.' : 'This pet listing has been removed.';
+      case 'adopter_left': return 'The adopter has left the chat.';
+      case 'rescuer_left': return 'The rescuer has left the chat.';
+      case 'peer_left': return 'The other user has left the chat.';
+      default: return 'Chat ended.';
+    }
   }
 
   @override

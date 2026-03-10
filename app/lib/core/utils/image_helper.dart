@@ -1,22 +1,23 @@
+// Package utils provides various helper classes and functions.
 import 'package:flutter/material.dart';
 
+/// A helper class for displaying network images with fallbacks and URL fixing.
 class ImageHelper {
-  /// Filtra y valida la URL. Si pertenece al servidor local antiguo (MinIO)
-  /// o está incompleta, devuelve un string vacío para forzar el Placeholder.
+  /// Validates a URL. If it points to an old local server (MinIO) or is
+  /// an incomplete relative path, it returns an empty string to force a placeholder.
   static String fixUrl(String url) {
     if (url.isEmpty) return '';
 
-    // Si la URL apunta al servidor antiguo de MinIO o es una ruta relativa vieja
+    // If the URL points to the old MinIO server or is an old relative path, invalidate it.
     if (url.contains('10.0.2.2:9000') ||
         url.contains('localhost:9000') ||
         !url.startsWith('http')) {
       return '';
     }
-
     return url;
   }
 
-  /// Devuelve el Widget de Imagen inteligente
+  /// Returns an intelligent Image widget that handles loading, errors, and invalid URLs.
   static Widget getImage(
     String? url, {
     double? width,
@@ -25,7 +26,7 @@ class ImageHelper {
   }) {
     final safeUrl = fixUrl(url ?? '');
 
-    // Si la URL fue invalidada por el fixUrl, mostramos el placeholder directamente
+    // If fixUrl invalidated the URL, show the placeholder directly.
     if (safeUrl.isEmpty) {
       return _buildPlaceholder(width, height);
     }
@@ -35,10 +36,11 @@ class ImageHelper {
       width: width,
       height: height,
       fit: fit,
-      // Si la imagen de Cloudinary llegara a fallar, este constructor la atrapa
+      // If the network image fails to load, show an error placeholder.
       errorBuilder: (context, error, stackTrace) {
         return _buildErrorPlaceholder(width, height);
       },
+      // While the image is loading, show a progress indicator.
       loadingBuilder: (context, child, loadingProgress) {
         if (loadingProgress == null) return child;
         return Container(
@@ -49,7 +51,7 @@ class ImageHelper {
             child: CircularProgressIndicator(
               value: loadingProgress.expectedTotalBytes != null
                   ? loadingProgress.cumulativeBytesLoaded /
-                        loadingProgress.expectedTotalBytes!
+                      loadingProgress.expectedTotalBytes!
                   : null,
               strokeWidth: 2,
               color: const Color(0xFFE91E63),
@@ -60,19 +62,21 @@ class ImageHelper {
     );
   }
 
-  /// Provee la imagen para widgets como CircleAvatar
+  /// Returns an ImageProvider for use in widgets like CircleAvatar.
+  /// Falls back to a default asset if the URL is invalid.
   static ImageProvider getProvider(String? url) {
     final safeUrl = fixUrl(url ?? '');
 
     if (safeUrl.isEmpty) {
-      // Retornamos una imagen transparente o un asset por defecto
-      // (Asegúrate de tener un asset en esta ruta, o simplemente deja que el
-      // CircleAvatar maneje el color de fondo usando null en backgroundImage)
+      // NOTE: This asset path 'assets/images/placeholder.png' does not seem to exist.
+      // Ensure you have a placeholder image at this path in your pubspec.yaml,
+      // or the app may throw an error. A typical path is 'assets/icon/icon.png'.
       return const AssetImage('assets/images/placeholder.png');
     }
     return NetworkImage(safeUrl);
   }
 
+  /// Builds a standard placeholder widget.
   static Widget _buildPlaceholder(double? width, double? height) {
     return Container(
       width: width,
@@ -82,6 +86,7 @@ class ImageHelper {
     );
   }
 
+  /// Builds a placeholder widget for when an image fails to load.
   static Widget _buildErrorPlaceholder(double? width, double? height) {
     return Container(
       width: width,

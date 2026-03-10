@@ -1,5 +1,7 @@
+// The domain layer contains the core models of the application.
 import '../../user/domain/user_model.dart';
 
+/// Represents a review given by one user to another after a match interaction.
 class Review {
   final int id;
   final int matchId;
@@ -8,6 +10,8 @@ class Review {
   final double rating;
   final String comment;
   final DateTime createdAt;
+  
+  // The author of the review, preloaded from the API.
   final User? author;
 
   Review({
@@ -21,13 +25,14 @@ class Review {
     this.author,
   });
 
+  /// Creates a [Review] from a JSON map.
   factory Review.fromJson(Map<String, dynamic> json) {
     return Review(
       id: json['id'] ?? 0,
       matchId: json['match_id'] ?? 0,
       authorId: json['author_id'] ?? 0,
       targetId: json['target_id'] ?? 0,
-      rating: (json['rating'] ?? 0).toDouble(), // Aseguramos double
+      rating: (json['rating'] ?? 0.0).toDouble(), // Ensure the value is a double.
       comment: json['comment'] ?? '',
       createdAt: DateTime.parse(json['created_at']),
       author: json['author'] != null ? User.fromJson(json['author']) : null,

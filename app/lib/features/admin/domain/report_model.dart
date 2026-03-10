@@ -1,6 +1,8 @@
+// The domain layer contains the core models of the application.
 import '../../user/domain/user_model.dart';
 import '../../chat/domain/message_model.dart';
 
+/// Represents a user-filed report, used in the admin dashboard.
 class Report {
   final int id;
   final int reporterId;
@@ -11,10 +13,11 @@ class Report {
   final String status;
   final DateTime createdAt;
 
+  // Associated user data, preloaded from the API.
   final User? reporter;
   final User? reported;
 
-  // Para el detalle: lista de mensajes de evidencia
+  // For the report detail view, includes the chat history as evidence.
   final List<ChatMessage>? evidenceMessages;
 
   Report({
@@ -31,18 +34,18 @@ class Report {
     this.evidenceMessages,
   });
 
+  /// Creates a [Report] from a JSON map.
+  /// This factory can handle both the list view and the detail view, which may have nested data.
   factory Report.fromJson(Map<String, dynamic> json) {
-    // Si viene evidencia en el JSON (desde el endpoint de detalle)
+    // If 'evidence' is present in the JSON (from the detail endpoint), parse it.
     List<ChatMessage>? evidence;
     if (json['evidence'] != null) {
       evidence = (json['evidence'] as List)
-          .map(
-            (m) => ChatMessage.fromJson(m, 0),
-          ) // 0 porque no hay "myUserId" en admin view
+          .map((m) => ChatMessage.fromJson(m, 0)) // 0 for myUserId as it's an admin view.
           .toList();
     }
 
-    // El objeto 'report' puede venir anidado si usamos el endpoint de detalle
+    // The main report data might be nested under a 'report' key in the detail view.
     final data = json['report'] ?? json;
 
     return Report(
@@ -54,14 +57,8 @@ class Report {
       description: data['description'] ?? '',
       status: data['status'] ?? 'pending',
       createdAt: DateTime.parse(data['CreatedAt'] ?? data['created_at']),
-
-      reporter: data['reporter'] != null
-          ? User.fromJson(data['reporter'])
-          : null,
-      reported: data['reported'] != null
-          ? User.fromJson(data['reported'])
-          : null,
-
+      reporter: data['reporter'] != null ? User.fromJson(data['reporter']) : null,
+      reported: data['reported'] != null ? User.fromJson(data['reported']) : null,
       evidenceMessages: evidence,
     );
   }
