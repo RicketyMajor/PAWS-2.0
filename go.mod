@@ -1,6 +1,6 @@
 module github.com/RicketyMajor/PAWS-2.0
 
-go 1.24.13
+go 1.25.8
 
 require (
 	firebase.google.com/go v3.13.0+incompatible
