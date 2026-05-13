@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-/// A widget for inputting a star rating, allowing for half-star increments.
 class StarRatingInput extends StatelessWidget {
   final double rating;
   final ValueChanged<double> onChanged;
@@ -12,7 +11,7 @@ class StarRatingInput extends StatelessWidget {
     required this.rating,
     required this.onChanged,
     this.size = 36,
-    this.color = const Color(0xFFFFC107), // Amber
+    this.color = const Color(0xFFFFC107), // Amber/Gold
   });
 
   @override
@@ -20,9 +19,9 @@ class StarRatingInput extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: List.generate(5, (index) {
+        // Valor de la estrella actual (1, 2, 3, 4, 5)
         final starValue = index + 1;
 
-        // Determine which icon to show (full, half, or empty star).
         IconData iconData;
         if (rating >= starValue) {
           iconData = Icons.star;
@@ -34,10 +33,11 @@ class StarRatingInput extends StatelessWidget {
 
         return GestureDetector(
           onTap: () {
-            // "Letterboxd-style" rating logic:
-            // - Tapping a star that is already selected as a full value (e.g., 4.0)
-            //   will decrease it to a half value (3.5).
-            // - Tapping any other star will set the rating to that star's full value.
+            // LÓGICA LETTERBOXD:
+            // Si toco la estrella que ya está llena (ej: 4.0 y toco la 4ta), baja a media (3.5).
+            // Si toco una estrella media (3.5 y toco la 4ta), sube a llena (4.0).
+            // Si toco cualquier otra estrella, salta a ese valor lleno.
+
             double newRating;
             if (rating == starValue.toDouble()) {
               newRating = starValue - 0.5;

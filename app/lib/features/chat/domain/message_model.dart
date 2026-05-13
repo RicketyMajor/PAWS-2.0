@@ -1,6 +1,3 @@
-// The domain layer contains the core models of the application.
-
-/// Represents a single chat message.
 class ChatMessage {
   final int id;
   final int matchId;
@@ -9,8 +6,7 @@ class ChatMessage {
   final bool isRead;
   final DateTime createdAt;
 
-  /// A UI helper field to determine if the message was sent by the current user.
-  /// This is calculated at runtime and not stored in the database.
+  // UI Helper: Para saber si el mensaje es mío o del otro
   final bool isMe;
 
   ChatMessage({
@@ -23,7 +19,6 @@ class ChatMessage {
     this.isMe = false,
   });
 
-  /// Creates a [ChatMessage] from a JSON map, calculating the [isMe] field.
   factory ChatMessage.fromJson(Map<String, dynamic> json, int myUserId) {
     return ChatMessage(
       id: json['id'] ?? 0,

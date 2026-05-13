@@ -1,11 +1,8 @@
-// The data layer is responsible for interacting with data sources, like a REST API or local database.
 import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../../core/constants/api_constants.dart';
 
-/// Repository for handling all authentication-related API requests.
-/// It manages tokens, user sessions, and API calls for login, register, etc.
 class AuthRepository {
   final Dio _dio = Dio(
     BaseOptions(
@@ -16,12 +13,11 @@ class AuthRepository {
 
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
 
-  // In-memory token for the current session if "Remember Me" is false.
+  // Variable en memoria para sesión temporal (si "Recuérdame" es false)
   String? _sessionToken;
 
-  /// Creates a new AuthRepository and sets up Dio interceptors.
   AuthRepository() {
-    // Interceptor for logging requests and responses.
+    // 1. AGREGO EL LOG INTERCEPTOR (Como tenías antes)
     _dio.interceptors.add(
       LogInterceptor(
         request: true,
@@ -31,94 +27,108 @@ class AuthRepository {
       ),
     );
 
-    // Interceptor to automatically inject the JWT token into every request.
+    // 2. --- ¡EL ARREGLO MÁGICO! ---
+    // Agregamos un interceptor que inyecta el token en CADA petición.
     _dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
+          // Consultamos el token (ya sea de memoria o disco)
           final token = await getToken();
+
+          // Si existe, lo pegamos en el Header como "Bearer TOKEN"
           if (token != null) {
             options.headers['Authorization'] = 'Bearer $token';
           }
-          return handler.next(options); // Continue with the request.
+
+          return handler.next(options); // Continuar con la petición
         },
       ),
     );
   }
 
-  // =========================================================================
-  // Session & Login
-  // =========================================================================
-
-  /// Attempts to log in a user and handles token persistence.
-  Future<void> login(String email, String password, {bool rememberMe = true}) async {
+  // --- LOGIN ---
+  Future<void> login(
+    String email,
+    String password, {
+    bool rememberMe = true,
+  }) async {
     try {
       final response = await _dio.post(
         '${ApiConstants.baseUrl}/auth/login',
         data: {'email': email, 'password': password},
       );
+
       final token = response.data['token'];
 
-      // Store the token based on the "rememberMe" flag.
+      // Lógica de Persistencia
       if (rememberMe) {
         await _storage.write(key: 'jwt_token', value: token);
       } else {
-        _sessionToken = token; // Store in memory only for the current session.
-        await _storage.delete(key: 'jwt_token'); // Ensure no old persistent token remains.
+        // Solo en memoria (se borra al cerrar la app)
+        _sessionToken = token;
+        // Aseguramos que no quede basura de una sesión anterior persistente
+        await _storage.delete(key: 'jwt_token');
       }
+
+      print('Login exitoso. Persistencia: $rememberMe');
     } on DioException catch (e) {
       if (e.response != null) {
-        throw Exception(e.response?.data['error'] ?? 'Unknown error');
+        throw Exception(e.response?.data['error'] ?? 'Error desconocido');
       } else {
-        throw Exception('Server connection error');
+        throw Exception('Error de conexión con el servidor');
       }
     }
   }
 
-  /// Switches the user's role and updates the token.
+  // --- SWITCH ROLE ---
   Future<Map<String, dynamic>?> switchRole() async {
     try {
-      // The interceptor automatically adds the token.
-      final response = await _dio.post('${ApiConstants.baseUrl}/auth/switch-role');
+      // NOTA: Ya no necesitamos pasar el header manualmente aquí,
+      // el interceptor lo hará por nosotros. Pero si quieres dejarlo explícito, no daña.
+      final response = await _dio.post(
+        '${ApiConstants.baseUrl}/auth/switch-role',
+      );
 
       if (response.statusCode == 200) {
         final newToken = response.data['token'];
         final newUser = response.data['user'];
 
-        // Update the token in the same place it was originally stored.
+        // Si tenemos token en storage, actualizamos storage.
+        // Si tenemos token en memoria, actualizamos memoria.
         final storedToken = await _storage.read(key: 'jwt_token');
         if (storedToken != null) {
           await _storage.write(key: 'jwt_token', value: newToken);
         } else {
           _sessionToken = newToken;
         }
+
         return newUser;
       }
       return null;
     } on DioException catch (e) {
       if (e.response?.statusCode == 404) {
-        return null; // Return null if the other role profile doesn't exist.
+        return null;
       }
-      throw Exception(e.response?.data['error'] ?? 'Error switching identity');
+      throw Exception(
+        e.response?.data['error'] ?? 'Error cambiando de identidad',
+      );
     }
   }
 
-  /// Retrieves the current token, prioritizing the session token over the stored one.
+  // Modificado para soportar sesión temporal
   Future<String?> getToken() async {
+    // 1. Intentar memoria (prioridad sesión actual)
     if (_sessionToken != null) return _sessionToken;
+    // 2. Intentar disco (persistencia)
     return await _storage.read(key: 'jwt_token');
   }
 
-  /// Clears the current session token and any persistently stored token.
+  // Nuevo método para Logout
   Future<void> logout() async {
     _sessionToken = null;
     await _storage.delete(key: 'jwt_token');
   }
 
-  // =========================================================================
-  // Registration
-  // =========================================================================
-
-  /// Initiates the registration process.
   Future<void> register({
     required String email,
     required String password,
@@ -129,17 +139,26 @@ class AuthRepository {
     try {
       final response = await _dio.post(
         '${ApiConstants.baseUrl}/auth/register',
-        data: {'email': email, 'password': password, 'name': name, 'run': run, 'role': role},
+        data: {
+          'email': email,
+          'password': password,
+          'name': name,
+          'run': run,
+          'role': role,
+        },
       );
-      if (response.statusCode != 201 && response.statusCode != 200) {
-        throw Exception('Failed to initiate registration');
+      if (response.statusCode == 201 || response.statusCode == 200) {
+        print('Registro exitoso');
       }
     } on DioException catch (e) {
-      throw Exception(e.response?.data['error'] ?? 'Connection error');
+      if (e.response != null) {
+        throw Exception(e.response?.data['error'] ?? 'Error de validación');
+      } else {
+        throw Exception('Error de conexión');
+      }
     }
   }
 
-  /// Verifies the OTP and completes the registration, returning a new token.
   Future<String?> verifyOtp(String email, String code) async {
     try {
       final response = await _dio.post(
@@ -149,22 +168,17 @@ class AuthRepository {
       if (response.statusCode == 200 || response.statusCode == 201) {
         final token = response.data['token'];
         if (token != null) {
-          // Assume persistence on successful registration.
+          // Por defecto en registro asumimos persistencia true
           await _storage.write(key: 'jwt_token', value: token);
           return token.toString();
         }
       }
       return null;
     } on DioException {
-      return null; // OTP was incorrect.
+      return null;
     }
   }
 
-  // =========================================================================
-  // Password Recovery
-  // =========================================================================
-
-  /// Sends a password recovery request.
   Future<void> forgotPassword(String email) async {
     try {
       await _dio.post(
@@ -172,11 +186,10 @@ class AuthRepository {
         data: {'email': email},
       );
     } on DioException catch (e) {
-      throw Exception(e.response?.data['error'] ?? 'Error sending request');
+      throw Exception(e.response?.data['error'] ?? 'Error enviando solicitud');
     }
   }
 
-  /// Verifies the password recovery code.
   Future<bool> verifyRecoveryCode(String email, String code) async {
     try {
       final response = await _dio.post(
@@ -189,7 +202,6 @@ class AuthRepository {
     }
   }
 
-  /// Resets the user's password with a new one.
   Future<void> resetPassword(String email, String newPassword) async {
     try {
       await _dio.post(
@@ -197,7 +209,9 @@ class AuthRepository {
         data: {'email': email, 'new_password': newPassword},
       );
     } on DioException catch (e) {
-      throw Exception(e.response?.data['error'] ?? 'Error resetting password');
+      throw Exception(
+        e.response?.data['error'] ?? 'Error restableciendo contraseña',
+      );
     }
   }
 }

@@ -1,23 +1,17 @@
-// The presentation layer contains the BLoCs (business logic), screens (UI), and widgets.
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
-import 'package:geolocator/geolocator.dart';
 import '../../data/pets_repository.dart';
 import '../../domain/pet_model.dart';
+import 'package:geolocator/geolocator.dart';
 
-// =========================================================================
-// Events
-// =========================================================================
-
+// --- EVENTOS ---
 abstract class PetsEvent extends Equatable {
   @override
   List<Object> get props => [];
 }
 
-/// Dispatched to load the initial deck of pets for swiping.
 class LoadSwipeDeck extends PetsEvent {}
 
-/// Dispatched when a user swipes left or right on a pet.
 class SwipePetEvent extends PetsEvent {
   final int petId;
   final bool isLike;
@@ -25,19 +19,16 @@ class SwipePetEvent extends PetsEvent {
   SwipePetEvent({required this.petId, required this.isLike});
 }
 
-// =========================================================================
-// States
-// =========================================================================
-
+// --- ESTADOS ---
 abstract class PetsState extends Equatable {
   @override
   List<Object> get props => [];
 }
 
 class PetsInitial extends PetsState {}
+
 class PetsLoading extends PetsState {}
 
-/// State when the list of pets has been successfully loaded.
 class PetsLoaded extends PetsState {
   final List<Pet> pets;
   PetsLoaded(this.pets);
@@ -46,68 +37,66 @@ class PetsLoaded extends PetsState {
   List<Object> get props => [pets];
 }
 
-/// State for when an error occurs.
 class PetsError extends PetsState {
   final String message;
   PetsError(this.message);
 }
 
-// =========================================================================
-// BLoC
-// =========================================================================
-
-/// Manages the business logic for the pet swiping screen.
+// --- BLOC ---
 class PetsBloc extends Bloc<PetsEvent, PetsState> {
   final PetsRepository repository;
 
   PetsBloc({required this.repository}) : super(PetsInitial()) {
-    
-    // Handler for loading the swipe deck.
+    // Cargar mazo con GPS
     on<LoadSwipeDeck>((event, emit) async {
       emit(PetsLoading());
       try {
         double? lat, lon;
 
-        // 1. Attempt to get the user's current location.
+        // 1. Intentar obtener ubicación
         try {
+          // Verificar servicio habilitado
           bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
           if (serviceEnabled) {
+            // Verificar permisos
             LocationPermission permission = await Geolocator.checkPermission();
             if (permission == LocationPermission.denied) {
               permission = await Geolocator.requestPermission();
             }
 
-            if (permission == LocationPermission.whileInUse || permission == LocationPermission.always) {
-              // Get position with a timeout to avoid blocking the UI indefinitely.
+            if (permission == LocationPermission.whileInUse ||
+                permission == LocationPermission.always) {
+              // Obtener posición (Timeout de 5s para no bloquear la app)
               Position position = await Geolocator.getCurrentPosition(
                 timeLimit: const Duration(seconds: 5),
               );
               lat = position.latitude;
               lon = position.longitude;
-              print("Location obtained: $lat, $lon");
+              print("Ubicación obtenida: $lat, $lon");
             }
           }
         } catch (e) {
-          // If GPS fails, proceed without location data. This is not a fatal error.
-          print("Could not get GPS (using locationless mode): $e");
+          print("No se pudo obtener GPS (usando modo sin ubicación): $e");
+          // No lanzamos error, simplemente cargamos sin geolocalización
         }
 
-        // 2. Call the repository to get the swipe deck, with or without coordinates.
+        // 2. Llamar al repo (con o sin coordenadas)
         final pets = await repository.getSwipeDeck(lat: lat, lon: lon);
-        emit(PetsLoaded(pets));
 
+        emit(PetsLoaded(pets));
       } catch (e) {
-        emit(PetsError("Error loading pets: $e"));
+        emit(PetsError("Error cargando mascotas: $e"));
       }
     });
 
-    // Handler for the swipe action. This is an optimistic update.
+    // Manejar Swipe (Optimista: no esperamos respuesta del server para actualizar UI)
     on<SwipePetEvent>((event, emit) async {
       if (state is PetsLoaded) {
-        // Send the request to the backend in the background.
-        // The UI is already updated by the card swiper, so we don't need to
-        // wait for the response or change the state here.
+        // Ejecutamos la petición al backend en background
         repository.swipePet(petId: event.petId, isLike: event.isLike);
+
+        // Nota: flutter_card_swiper maneja la UI visualmente,
+        // pero aquí podríamos remover la mascota de la lista local si quisiéramos.
       }
     });
   }

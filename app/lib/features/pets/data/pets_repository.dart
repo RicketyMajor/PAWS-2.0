@@ -1,11 +1,9 @@
-// The data layer is responsible for interacting with data sources, like a REST API or local database.
 import 'package:dio/dio.dart';
-import 'package:image_picker/image_picker.dart';
+import 'package:image_picker/image_picker.dart'; // <--- NUEVO: Reemplaza a dart:io
 import '../../../core/constants/api_constants.dart';
 import '../domain/pet_model.dart';
 import '../../auth/data/auth_repository.dart';
 
-/// Repository for handling all pet-related API requests.
 class PetsRepository {
   final Dio _dio = Dio(
     BaseOptions(
@@ -13,22 +11,21 @@ class PetsRepository {
       receiveTimeout: const Duration(seconds: 10),
     ),
   );
+
   final AuthRepository authRepository;
 
   PetsRepository({required this.authRepository});
 
-  /// A private helper to get authenticated request options.
   Future<Options> _getAuthOptions() async {
     final token = await authRepository.getToken();
-    if (token == null) throw Exception('Invalid session');
+    if (token == null) throw Exception('Sesión inválida');
     return Options(headers: {'Authorization': 'Bearer $token'});
   }
 
   // ===============================================================
-  //  Read Operations
+  //  LECTURA
   // ===============================================================
 
-  /// Fetches the swipe deck of potential pet matches for the current user.
   Future<List<Pet>> getSwipeDeck({double? lat, double? lon}) async {
     try {
       final options = await _getAuthOptions();
@@ -45,15 +42,14 @@ class PetsRepository {
         List<dynamic> data = response.data;
         return data.map((json) => Pet.fromJson(json)).toList();
       } else {
-        throw Exception('Error loading pets');
+        throw Exception('Error cargando mascotas');
       }
     } on DioException catch (e) {
       _handleError(e);
-      return []; // Return empty list on error.
+      return [];
     }
   }
 
-  /// Fetches all pets owned by the currently authenticated user.
   Future<List<Pet>> getMyPets() async {
     try {
       final options = await _getAuthOptions();
@@ -66,7 +62,7 @@ class PetsRepository {
         List<dynamic> data = response.data;
         return data.map((json) => Pet.fromJson(json)).toList();
       } else {
-        throw Exception('Error loading your pets');
+        throw Exception('Error cargando tus mascotas');
       }
     } on DioException catch (e) {
       _handleError(e);
@@ -74,7 +70,6 @@ class PetsRepository {
     }
   }
 
-  /// Fetches a single pet by its ID.
   Future<Pet> getPetById(int id) async {
     try {
       final options = await _getAuthOptions();
@@ -84,15 +79,15 @@ class PetsRepository {
       );
       return Pet.fromJson(response.data);
     } catch (e) {
-      throw Exception('Error getting pet: $e');
+      throw Exception('Error obteniendo mascota: $e');
     }
   }
 
   // ===============================================================
-  //  Write Operations
+  //  ESCRITURA
   // ===============================================================
 
-  /// Creates a new pet profile with associated images.
+  // <--- AQUÍ ESTÁ EL BLINDAJE PARA LA WEB MANTENIENDO TU ESTRUCTURA --->
   Future<void> createPet({
     required String name,
     required String type,
@@ -101,7 +96,7 @@ class PetsRepository {
     required String description,
     required double latitude,
     required double longitude,
-    required List<XFile> images,
+    required List<XFile> images, // <--- Solo cambiamos File por XFile
     bool isVaccinated = false,
     bool isSterilized = false,
     bool isDewormed = false,
@@ -115,19 +110,36 @@ class PetsRepository {
     try {
       final options = await _getAuthOptions();
 
-      // Create FormData to send multipart request.
       FormData formData = FormData.fromMap({
-        "name": name, "type": type, "breed": breed, "age": age,
-        "description": description, "latitude": latitude, "longitude": longitude,
-        "address": address, "is_vaccinated": isVaccinated, "is_sterilized": isSterilized,
-        "is_dewormed": isDewormed, "special_needs": specialNeeds, "requires_yard": requiresYard,
-        "good_with_kids": goodWithKids, "good_with_dogs": goodWithDogs, "energy_level": energyLevel,
+        "name": name,
+        "type": type,
+        "breed": breed,
+        "age": age,
+        "description": description,
+        "latitude": latitude,
+        "longitude": longitude,
+        "address": address,
+        "is_vaccinated": isVaccinated,
+        "is_sterilized": isSterilized,
+        "is_dewormed": isDewormed,
+        "special_needs": specialNeeds,
+        "requires_yard": requiresYard,
+        "good_with_kids": goodWithKids,
+        "good_with_dogs": goodWithDogs,
+        "energy_level": energyLevel,
       });
 
-      // Convert each XFile image to in-memory bytes for universal compatibility.
+      // Transformamos cada imagen a Bytes de memoria (Universal)
       for (var file in images) {
+        String fileName = file.name;
         final bytes = await file.readAsBytes();
-        formData.files.add(MapEntry("images", MultipartFile.fromBytes(bytes, filename: file.name)));
+
+        formData.files.add(
+          MapEntry(
+            "images",
+            MultipartFile.fromBytes(bytes, filename: fileName),
+          ),
+        );
       }
 
       await _dio.post(
@@ -140,7 +152,6 @@ class PetsRepository {
     }
   }
 
-  /// Deletes a pet by its ID.
   Future<void> deletePet(int petId) async {
     try {
       final options = await _getAuthOptions();
@@ -154,10 +165,8 @@ class PetsRepository {
   }
 
   // ===============================================================
-  //  Interaction
+  //  INTERACCIÓN (Swipe)
   // ===============================================================
-
-  /// Records a swipe action (like or dislike) on a pet.
   Future<void> swipePet({required int petId, required bool isLike}) async {
     try {
       final options = await _getAuthOptions();
@@ -167,13 +176,12 @@ class PetsRepository {
         data: {'pet_id': petId, 'is_like': isLike},
       );
     } catch (e) {
-      print("Error on swipe: $e");
+      print("Error en swipe: $e");
     }
   }
 
-  /// Private helper to parse Dio errors and throw a more specific exception.
   void _handleError(DioException e) {
-    String errorMessage = 'Connection error';
+    String errorMessage = 'Error de conexión';
     if (e.response != null) {
       final data = e.response!.data;
       if (data is Map<String, dynamic>) {

@@ -4,11 +4,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../data/auth_repository.dart';
 import 'otp_screen.dart';
 
-/// A screen for new user registration.
-///
-/// It can also be used to register a second role for an existing user
-/// by pre-filling data like name, email, and RUN.
 class RegisterScreen extends StatefulWidget {
+  // Parámetros opcionales para pre-llenar datos al cambiar de rol
   final String? initialName;
   final String? initialEmail;
   final String? initialRun;
@@ -39,7 +36,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   void initState() {
     super.initState();
-    // Initialize controllers with pre-filled data if available.
+    // Inicializamos con los datos pre-cargados si existen
     _nameController = TextEditingController(text: widget.initialName ?? '');
     _emailController = TextEditingController(text: widget.initialEmail ?? '');
     _runController = TextEditingController(text: widget.initialRun ?? '');
@@ -55,32 +52,29 @@ class _RegisterScreenState extends State<RegisterScreen> {
     super.dispose();
   }
 
-  /// Validates a Chilean RUN (national ID) using the Modulo 11 algorithm.
+  // Algoritmo de validación de RUT
   bool _isValidRut(String rut) {
     if (rut.isEmpty) return false;
     String cleanRut = rut.replaceAll('.', '').replaceAll('-', '').toUpperCase();
     if (cleanRut.length < 2) return false;
-    
     String body = cleanRut.substring(0, cleanRut.length - 1);
     String dv = cleanRut.substring(cleanRut.length - 1);
-
-    try {
-      int sum = 0;
-      int multiplier = 2;
-      for (int i = body.length - 1; i >= 0; i--) {
-        sum += int.parse(body[i]) * multiplier;
-        multiplier = (multiplier == 7) ? 2 : multiplier + 1;
-      }
-      int remainder = sum % 11;
-      String expectedDV = (remainder == 0) ? '0' : (remainder == 1) ? 'K' : (11 - remainder).toString();
-      
-      return dv == expectedDV;
-    } catch(e) {
-      return false;
+    int suma = 0;
+    int multiplicador = 2;
+    for (int i = body.length - 1; i >= 0; i--) {
+      suma += int.parse(body[i]) * multiplicador;
+      multiplicador++;
+      if (multiplicador == 8) multiplicador = 2;
     }
+    int resto = suma % 11;
+    String dvEsperado = (resto == 0)
+        ? '0'
+        : (resto == 1)
+        ? 'K'
+        : (11 - resto).toString();
+    return dv == dvEsperado;
   }
 
-  /// Submits the registration form data to the repository.
   Future<void> _submitRegister() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -96,17 +90,25 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Registration successful. Check your email.'), backgroundColor: Colors.green),
+          const SnackBar(
+            content: Text('Registro exitoso. Revisa tu correo.'),
+            backgroundColor: Colors.green,
+          ),
         );
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (context) => OTPScreen(email: _emailController.text)),
+          MaterialPageRoute(
+            builder: (context) => OTPScreen(email: _emailController.text),
+          ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.toString().replaceAll("Exception: ", "")), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text(e.toString().replaceAll("Exception: ", "")),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {
@@ -116,11 +118,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // If a role is pre-configured, lock the role selection UI.
+    // Si viene pre-configurado para un rol, bloqueamos la selección para evitar errores
     bool isRoleFixed = widget.initialRole != null;
 
     return Scaffold(
-      appBar: AppBar(title: const Text("Create Account")),
+      appBar: AppBar(title: const Text("Crear Cuenta")),
       body: Padding(
         padding: const EdgeInsets.all(24.0),
         child: SingleChildScrollView(
@@ -128,75 +130,136 @@ class _RegisterScreenState extends State<RegisterScreen> {
             key: _formKey,
             child: Column(
               children: [
-                // --- Role Selection ---
                 if (!isRoleFixed) ...[
-                  Text("What is your goal?", style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                  Text(
+                    "¿Cuál es tu objetivo?",
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                   const SizedBox(height: 15),
                   Row(
                     children: [
-                      Expanded(child: _buildRoleCard(label: 'Adopt', value: 'adopter', icon: Icons.pets, color: Colors.orange)),
+                      Expanded(
+                        child: _buildRoleCard(
+                          label: 'Adoptar',
+                          value: 'adopter',
+                          icon: Icons.pets,
+                          color: Colors.orange,
+                        ),
+                      ),
                       const SizedBox(width: 12),
-                      Expanded(child: _buildRoleCard(label: 'I am a Rescuer', value: 'rescuer', icon: Icons.volunteer_activism, color: Colors.blue)),
+                      Expanded(
+                        child: _buildRoleCard(
+                          label: 'Soy Rescatista',
+                          value: 'rescuer',
+                          icon: Icons.volunteer_activism,
+                          color: Colors.blue,
+                        ),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 24),
                 ] else ...[
-                  // Informational message for a linked registration.
+                  // Mensaje informativo si es un registro vinculado
                   Container(
                     padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(color: Colors.blue[50], borderRadius: BorderRadius.circular(8)),
-                    child: Row(children: [
-                      const Icon(Icons.info_outline, color: Colors.blue),
-                      const SizedBox(width: 8),
-                      Expanded(child: Text("Activating ${_selectedRole == 'rescuer' ? 'Rescuer' : 'Adopter'} mode for your account.", style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold))),
-                    ]),
+                    decoration: BoxDecoration(
+                      color: Colors.blue[50],
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.info_outline, color: Colors.blue),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            "Activando modo ${_selectedRole == 'rescuer' ? 'Rescatista' : 'Adoptante'} para tu cuenta.",
+                            style: const TextStyle(
+                              color: Colors.blue,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 24),
                 ],
 
-                // --- Form Fields ---
                 TextFormField(
                   controller: _nameController,
-                  decoration: const InputDecoration(labelText: 'Full Name', border: OutlineInputBorder(), prefixIcon: Icon(Icons.person)),
-                  validator: (value) => value!.isEmpty ? 'Please enter your name' : null,
+                  decoration: const InputDecoration(
+                    labelText: 'Nombre Completo',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.person),
+                  ),
+                  validator: (value) =>
+                      value!.isEmpty ? 'Ingresa tu nombre' : null,
                 ),
                 const SizedBox(height: 16),
+
                 TextFormField(
                   controller: _runController,
-                  // Disable the field only if it's pre-filled and not empty.
-                  enabled: widget.initialRun == null || widget.initialRun!.isEmpty,
-                  decoration: const InputDecoration(labelText: 'RUN', border: OutlineInputBorder(), prefixIcon: Icon(Icons.badge), hintText: '12.345.678-9'),
-                  inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9kK]')), RutFormatter()],
+                  // Bloquear SOLO si viene pre-llenado y NO está vacío
+                  enabled:
+                      widget.initialRun == null || widget.initialRun!.isEmpty,
+                  decoration: const InputDecoration(
+                    labelText: 'RUN',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.badge),
+                    hintText: '12.345.678-9',
+                  ),
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(RegExp(r'[0-9kK]')),
+                    RutFormatter(),
+                  ],
                   validator: (value) {
-                    if (value == null || value.isEmpty) return 'Required';
-                    if (!_isValidRut(value)) return 'Invalid RUN';
+                    if (value == null || value.isEmpty) return 'Requerido';
+                    if (!_isValidRut(value)) return 'RUN inválido';
                     return null;
                   },
                 ),
                 const SizedBox(height: 16),
+
                 TextFormField(
                   controller: _emailController,
-                  enabled: widget.initialEmail == null,
-                  decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder(), prefixIcon: Icon(Icons.email)),
+                  enabled:
+                      widget.initialEmail ==
+                      null, // Bloquear si viene pre-llenado
+                  decoration: const InputDecoration(
+                    labelText: 'Correo Electrónico',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.email),
+                  ),
                   keyboardType: TextInputType.emailAddress,
-                  validator: (value) => !value!.contains('@') ? 'Invalid email' : null,
+                  validator: (value) =>
+                      !value!.contains('@') ? 'Correo inválido' : null,
                 ),
                 const SizedBox(height: 16),
+
                 TextFormField(
                   controller: _passwordController,
                   obscureText: true,
-                  decoration: const InputDecoration(labelText: 'Password', border: OutlineInputBorder(), prefixIcon: Icon(Icons.lock)),
-                  validator: (value) => value!.length < 6 ? 'Minimum 6 characters' : null,
+                  decoration: const InputDecoration(
+                    labelText: 'Contraseña',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.lock),
+                  ),
+                  validator: (value) =>
+                      value!.length < 6 ? 'Mínimo 6 caracteres' : null,
                 ),
                 const SizedBox(height: 30),
 
-                // --- Submit Button ---
                 _isLoading
                     ? const CircularProgressIndicator()
                     : FilledButton(
                         onPressed: _submitRegister,
-                        style: FilledButton.styleFrom(backgroundColor: const Color(0xFFE91E63), minimumSize: const Size(double.infinity, 50)),
-                        child: const Text('REGISTER'),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: const Color(0xFFE91E63),
+                          minimumSize: const Size(double.infinity, 50),
+                        ),
+                        child: const Text('REGISTRARSE'),
                       ),
               ],
             ),
@@ -206,8 +269,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  /// A helper widget to build the selectable role cards.
-  Widget _buildRoleCard({required String label, required String value, required IconData icon, required Color color}) {
+  Widget _buildRoleCard({
+    required String label,
+    required String value,
+    required IconData icon,
+    required Color color,
+  }) {
     final isSelected = _selectedRole == value;
     return GestureDetector(
       onTap: () => setState(() => _selectedRole = value),
@@ -215,14 +282,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
         padding: const EdgeInsets.symmetric(vertical: 20),
         decoration: BoxDecoration(
           color: isSelected ? color.withOpacity(0.1) : Colors.white,
-          border: Border.all(color: isSelected ? color : Colors.grey[300]!, width: isSelected ? 2 : 1),
+          border: Border.all(
+            color: isSelected ? color : Colors.grey[300]!,
+            width: isSelected ? 2 : 1,
+          ),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Column(
           children: [
             Icon(icon, color: isSelected ? color : Colors.grey, size: 32),
             const SizedBox(height: 8),
-            Text(label, style: TextStyle(color: isSelected ? color : Colors.grey[700], fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
+            Text(
+              label,
+              style: TextStyle(
+                color: isSelected ? color : Colors.grey[700],
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
           ],
         ),
       ),
@@ -230,32 +306,33 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 }
 
-/// A [TextInputFormatter] for formatting a Chilean RUN (national ID).
 class RutFormatter extends TextInputFormatter {
   @override
-  TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {
-    String newText = newValue.text.replaceAll(RegExp(r'[^0-9kK]'), '').toUpperCase();
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    String newText = newValue.text
+        .replaceAll(RegExp(r'[^0-9kK]'), '')
+        .toUpperCase();
     if (newText.isEmpty) return newValue.copyWith(text: '');
     if (newText.length < 2) return newValue.copyWith(text: newText);
-    
-    String body = newText.substring(0, newText.length - 1);
+    String cuerpo = newText.substring(0, newText.length - 1);
     String dv = newText.substring(newText.length - 1);
-    String formattedBody = '';
-    int count = 0;
-
-    for (int i = body.length - 1; i >= 0; i--) {
-      formattedBody = body[i] + formattedBody;
-      count++;
-      if (count == 3 && i != 0) {
-        formattedBody = '.$formattedBody';
-        count = 0;
+    String cuerpoFormateado = '';
+    int contador = 0;
+    for (int i = cuerpo.length - 1; i >= 0; i--) {
+      cuerpoFormateado = cuerpo[i] + cuerpoFormateado;
+      contador++;
+      if (contador == 3 && i != 0) {
+        cuerpoFormateado = '.$cuerpoFormateado';
+        contador = 0;
       }
     }
-    
-    String finalRut = '$formattedBody-$dv';
+    String rutFinal = '$cuerpoFormateado-$dv';
     return TextEditingValue(
-      text: finalRut,
-      selection: TextSelection.collapsed(offset: finalRut.length),
+      text: rutFinal,
+      selection: TextSelection.collapsed(offset: rutFinal.length),
     );
   }
 }

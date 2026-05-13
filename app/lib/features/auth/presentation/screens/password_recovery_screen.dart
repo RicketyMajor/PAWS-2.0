@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../data/auth_repository.dart';
 
-/// A multi-step screen that guides the user through the password recovery process.
 class PasswordRecoveryScreen extends StatefulWidget {
   const PasswordRecoveryScreen({super.key});
 
@@ -12,32 +11,36 @@ class PasswordRecoveryScreen extends StatefulWidget {
 
 class _PasswordRecoveryScreenState extends State<PasswordRecoveryScreen> {
   final PageController _pageController = PageController();
-  final AuthRepository _authRepo = AuthRepository();
+  final _authRepo =
+      AuthRepository(); // Instancia directa o vía context si prefieres
 
-  // --- State for the multi-step form ---
+  // Estado del formulario
   String _email = '';
   String _code = '';
   String _newPassword = '';
-  bool _isLoading = false;
-  int _currentStep = 0; // 0: Email, 1: Code, 2: New Password
 
-  // --- Text Field Controllers ---
+  bool _isLoading = false;
+  int _currentStep = 0; // 0: Email, 1: Código, 2: Nueva Password
+
+  // Controladores
   final _emailCtrl = TextEditingController();
   final _codeCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
   final _passConfirmCtrl = TextEditingController();
 
-  /// Helper to show a SnackBar message.
   void _showMessage(String msg, {bool isError = false}) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), backgroundColor: isError ? Colors.red : Colors.green),
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: isError ? Colors.red : Colors.green,
+      ),
     );
   }
 
-  // --- Step 1: Request OTP ---
+  // PASO 1: Enviar correo
   Future<void> _requestOtp() async {
     if (_emailCtrl.text.isEmpty || !_emailCtrl.text.contains('@')) {
-      _showMessage("Please enter a valid email", isError: true);
+      _showMessage("Ingresa un correo válido", isError: true);
       return;
     }
     setState(() => _isLoading = true);
@@ -47,87 +50,99 @@ class _PasswordRecoveryScreenState extends State<PasswordRecoveryScreen> {
         _email = _emailCtrl.text.trim();
         _currentStep = 1;
       });
-      _pageController.nextPage(duration: const Duration(milliseconds: 300), curve: Curves.easeInOut);
-      _showMessage("Code sent to $_email");
+      _pageController.nextPage(
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+      );
+      _showMessage("Código enviado a $_email");
     } catch (e) {
       _showMessage(e.toString(), isError: true);
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      setState(() => _isLoading = false);
     }
   }
 
-  // --- Step 2: Verify Code ---
+  // PASO 2: Verificar código
   Future<void> _verifyCode() async {
     if (_codeCtrl.text.length != 6) {
-      _showMessage("The code must be 6 digits", isError: true);
+      _showMessage("El código debe tener 6 dígitos", isError: true);
       return;
     }
     setState(() => _isLoading = true);
     try {
-      final isValid = await _authRepo.verifyRecoveryCode(_email, _codeCtrl.text.trim());
+      final isValid = await _authRepo.verifyRecoveryCode(
+        _email,
+        _codeCtrl.text.trim(),
+      );
       if (isValid) {
         setState(() {
           _code = _codeCtrl.text.trim();
           _currentStep = 2;
         });
-        _pageController.nextPage(duration: const Duration(milliseconds: 300), curve: Curves.easeInOut);
+        _pageController.nextPage(
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeInOut,
+        );
       } else {
-        _showMessage("Incorrect code", isError: true);
+        _showMessage("Código incorrecto", isError: true);
       }
     } catch (e) {
-      _showMessage("Error verifying code", isError: true);
+      _showMessage("Error verificando código", isError: true);
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      setState(() => _isLoading = false);
     }
   }
 
-  // --- Step 3: Reset Password ---
+  // PASO 3: Cambiar contraseña
   Future<void> _resetPassword() async {
     if (_passCtrl.text.length < 6) {
-      _showMessage("Password must be at least 6 characters", isError: true);
+      _showMessage(
+        "La contraseña debe tener al menos 6 caracteres",
+        isError: true,
+      );
       return;
     }
     if (_passCtrl.text != _passConfirmCtrl.text) {
-      _showMessage("Passwords do not match", isError: true);
+      _showMessage("Las contraseñas no coinciden", isError: true);
       return;
     }
     setState(() => _isLoading = true);
     try {
       await _authRepo.resetPassword(_email, _passCtrl.text);
-      _showMessage("Password reset successfully! Please log in.");
-      if (mounted) Navigator.pop(context); // Go back to the login screen.
+      _showMessage("¡Contraseña restablecida! Inicia sesión.");
+      if (mounted) Navigator.pop(context); // Volver al login
     } catch (e) {
       _showMessage(e.toString(), isError: true);
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      setState(() => _isLoading = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Recover Account")),
+      appBar: AppBar(title: const Text("Recuperar Cuenta")),
       body: Padding(
         padding: const EdgeInsets.all(24.0),
         child: Column(
           children: [
-            // --- Step Progress Indicator ---
+            // Indicador de pasos
             Row(
               children: [
-                _buildStep(0, "Email"),
+                _buildStep(0, "Correo"),
                 _buildLine(0),
-                _buildStep(1, "Code"),
+                _buildStep(1, "Código"),
                 _buildLine(1),
-                _buildStep(2, "New Key"),
+                _buildStep(2, "Nueva Clave"),
               ],
             ),
             const SizedBox(height: 30),
 
-            // --- PageView for the steps ---
             Expanded(
               child: PageView(
                 controller: _pageController,
-                physics: const NeverScrollableScrollPhysics(), // Disable manual swiping.
+                physics:
+                    const NeverScrollableScrollPhysics(), // Bloquear swipe manual
                 children: [
                   _buildEmailStep(),
                   _buildCodeStep(),
@@ -141,21 +156,29 @@ class _PasswordRecoveryScreenState extends State<PasswordRecoveryScreen> {
     );
   }
 
-  // =========================================================================
-  // UI Helper Widgets
-  // =========================================================================
-
+  // Widgets de UI
   Widget _buildStep(int step, String label) {
     bool isActive = _currentStep >= step;
     return Column(
       children: [
         CircleAvatar(
           radius: 15,
-          backgroundColor: isActive ? const Color(0xFFE91E63) : Colors.grey[300],
-          child: Text("${step + 1}", style: const TextStyle(color: Colors.white, fontSize: 12)),
+          backgroundColor: isActive
+              ? const Color(0xFFE91E63)
+              : Colors.grey[300],
+          child: Text(
+            "${step + 1}",
+            style: const TextStyle(color: Colors.white, fontSize: 12),
+          ),
         ),
         const SizedBox(height: 4),
-        Text(label, style: TextStyle(fontSize: 10, color: isActive ? Colors.black : Colors.grey)),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 10,
+            color: isActive ? Colors.black : Colors.grey,
+          ),
+        ),
       ],
     );
   }
@@ -174,17 +197,27 @@ class _PasswordRecoveryScreenState extends State<PasswordRecoveryScreen> {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        const Text("Enter your email to receive a recovery code", textAlign: TextAlign.center),
+        const Text(
+          "Ingresa tu correo para recibir el código",
+          textAlign: TextAlign.center,
+        ),
         const SizedBox(height: 20),
         TextField(
           controller: _emailCtrl,
           keyboardType: TextInputType.emailAddress,
-          decoration: const InputDecoration(labelText: "Email", border: OutlineInputBorder(), prefixIcon: Icon(Icons.email)),
+          decoration: const InputDecoration(
+            labelText: "Correo Electrónico",
+            border: OutlineInputBorder(),
+            prefixIcon: Icon(Icons.email),
+          ),
         ),
         const SizedBox(height: 20),
         _isLoading
             ? const CircularProgressIndicator()
-            : FilledButton(onPressed: _requestOtp, child: const Text("SEND CODE")),
+            : FilledButton(
+                onPressed: _requestOtp,
+                child: const Text("ENVIAR CÓDIGO"),
+              ),
       ],
     );
   }
@@ -193,7 +226,7 @@ class _PasswordRecoveryScreenState extends State<PasswordRecoveryScreen> {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Text("We've sent a code to $_email", textAlign: TextAlign.center),
+        Text("Hemos enviado un código a $_email", textAlign: TextAlign.center),
         const SizedBox(height: 20),
         TextField(
           controller: _codeCtrl,
@@ -201,12 +234,18 @@ class _PasswordRecoveryScreenState extends State<PasswordRecoveryScreen> {
           maxLength: 6,
           textAlign: TextAlign.center,
           style: const TextStyle(fontSize: 24, letterSpacing: 8),
-          decoration: const InputDecoration(labelText: "6-digit code", border: OutlineInputBorder()),
+          decoration: const InputDecoration(
+            labelText: "Código de 6 dígitos",
+            border: OutlineInputBorder(),
+          ),
         ),
         const SizedBox(height: 20),
         _isLoading
             ? const CircularProgressIndicator()
-            : FilledButton(onPressed: _verifyCode, child: const Text("VERIFY")),
+            : FilledButton(
+                onPressed: _verifyCode,
+                child: const Text("VERIFICAR"),
+              ),
       ],
     );
   }
@@ -215,23 +254,37 @@ class _PasswordRecoveryScreenState extends State<PasswordRecoveryScreen> {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        const Text("Create a new, secure password", textAlign: TextAlign.center),
+        const Text(
+          "Crea una nueva contraseña segura",
+          textAlign: TextAlign.center,
+        ),
         const SizedBox(height: 20),
         TextField(
           controller: _passCtrl,
           obscureText: true,
-          decoration: const InputDecoration(labelText: "New Password", border: OutlineInputBorder(), prefixIcon: Icon(Icons.lock)),
+          decoration: const InputDecoration(
+            labelText: "Nueva Contraseña",
+            border: OutlineInputBorder(),
+            prefixIcon: Icon(Icons.lock),
+          ),
         ),
         const SizedBox(height: 10),
         TextField(
           controller: _passConfirmCtrl,
           obscureText: true,
-          decoration: const InputDecoration(labelText: "Confirm Password", border: OutlineInputBorder(), prefixIcon: Icon(Icons.lock_outline)),
+          decoration: const InputDecoration(
+            labelText: "Confirmar Contraseña",
+            border: OutlineInputBorder(),
+            prefixIcon: Icon(Icons.lock_outline),
+          ),
         ),
         const SizedBox(height: 20),
         _isLoading
             ? const CircularProgressIndicator()
-            : FilledButton(onPressed: _resetPassword, child: const Text("CHANGE PASSWORD")),
+            : FilledButton(
+                onPressed: _resetPassword,
+                child: const Text("CAMBIAR CONTRASEÑA"),
+              ),
       ],
     );
   }

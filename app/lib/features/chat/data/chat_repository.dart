@@ -1,4 +1,3 @@
-// The data layer is responsible for interacting with data sources, like a REST API or local database.
 import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'dart:async';
@@ -6,24 +5,20 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import '../../../core/constants/api_constants.dart';
 import '../../auth/data/auth_repository.dart';
 
-/// Repository for handling chat-related functionalities, including WebSocket
-/// communication and REST API calls for chat history and moderation.
 class ChatRepository {
   WebSocketChannel? _channel;
   final AuthRepository authRepository;
   final Dio _dio = Dio();
 
-  // A broadcast stream controller to allow multiple listeners to receive WebSocket messages.
   final _messageController = StreamController<dynamic>.broadcast();
 
   ChatRepository({required this.authRepository});
 
-  /// A public stream of incoming WebSocket messages.
   Stream<dynamic> get messages => _messageController.stream;
 
-  /// Establishes a WebSocket connection using the user's authentication token.
   Future<void> connect() async {
-    if (_channel != null) return; // Avoid reconnecting if already connected.
+    if (_channel != null)
+      return; // Evita conectarse dos veces si ya está activo
 
     final token = await authRepository.getToken();
     if (token == null) throw Exception('No authentication token found');
@@ -31,17 +26,16 @@ class ChatRepository {
     final uri = Uri.parse('${ApiConstants.wsUrl}/ws?token=$token');
     _channel = WebSocketChannel.connect(uri);
 
-    // Listen to the WebSocket stream and pipe all data into our broadcast controller.
+    // Redirigimos todo lo que llega del servidor a nuestra "Radio Pública"
     _channel!.stream.listen(
       (data) => _messageController.add(data),
-      onError: (error) => print("Global WebSocket Error: $error"),
+      onError: (error) => print("WS Global Error: $error"),
       onDone: () {
-        _channel = null; // Clean up the channel on disconnection.
+        _channel = null; // Si se corta, limpiamos el canal
       },
     );
   }
 
-  /// Fetches the chat history for a specific match.
   Future<List<dynamic>> getHistory(int matchId) async {
     final token = await authRepository.getToken();
     final response = await _dio.get(
@@ -51,7 +45,6 @@ class ChatRepository {
     return response.data;
   }
 
-  /// Sends a chat message through the WebSocket connection.
   void sendMessage(int matchID, String content) {
     if (_channel != null) {
       final message = jsonEncode({"match_id": matchID, "content": content});
@@ -59,7 +52,6 @@ class ChatRepository {
     }
   }
 
-  /// Disconnects from the WebSocket server.
   void disconnect() {
     if (_channel != null) {
       _channel!.sink.close();
@@ -67,7 +59,6 @@ class ChatRepository {
     }
   }
 
-  /// Reports a user in the context of a specific match.
   Future<void> reportUser({
     required int reportedId,
     required int matchId,
@@ -87,18 +78,19 @@ class ChatRepository {
     );
   }
 
-  /// Marks all messages in a chat as read for the current user.
+  // --- MARCAR LEÍDO (Actualizado con AuthRepository) ---
   Future<void> markAsRead(int matchId) async {
     try {
+      // Pedimos el token al jefe (AuthRepository)
       final token = await authRepository.getToken();
-      if (token == null) throw Exception('Session expired');
+      if (token == null) throw Exception('Sesión expirada');
 
       await _dio.post(
-        '${ApiConstants.baseUrl}/matches/$matchId/read',
+        '${ApiConstants.baseUrl}/matches/$matchId/read', // Asegúrate de que esta ruta coincida con tu backend
         options: Options(headers: {'Authorization': 'Bearer $token'}),
       );
     } catch (e) {
-      throw Exception('Error marking as read: $e');
+      throw Exception('Error marcando como leído: $e');
     }
   }
 }

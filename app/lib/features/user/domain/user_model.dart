@@ -1,6 +1,3 @@
-// The domain layer contains the core models of the application.
-
-/// Represents a user, combining data from the `User` and `UserProfile` backend models.
 class User {
   final int id;
   final String name;
@@ -11,17 +8,17 @@ class User {
   final String role;
   final String run;
 
-  // --- Reputation Data ---
+  // --- REPUTACIÓN (NUEVO) ---
   final double averageRating;
   final int reviewCount;
 
-  // --- Adopter Profile: Housing Data ---
+  // --- DATOS DE VIVIENDA ---
   final String housingType;
   final String housingOwnership;
   final bool hasYard;
   final bool hasFence;
 
-  // --- Adopter Profile: Lifestyle Data ---
+  // --- ESTILO DE VIDA ---
   final String familyComposition;
   final String otherPets;
   final String timeAvailability;
@@ -36,8 +33,10 @@ class User {
     required this.phone,
     required this.role,
     required this.run,
+    // Valores por defecto para reputación
     this.averageRating = 0.0,
     this.reviewCount = 0,
+
     this.housingType = 'House',
     this.housingOwnership = 'Owned',
     this.hasYard = false,
@@ -48,19 +47,14 @@ class User {
     this.experience = 'Beginner',
   });
 
-  /// Creates a [User] from a JSON map.
-  ///
-  /// This factory is fault-tolerant and can handle both a flat JSON structure
-  /// (from older API versions or different endpoints) and a nested structure
-  /// where user and profile data are in separate objects (`{"user": ..., "profile": ...}`).
   factory User.fromJson(Map<String, dynamic> json) {
-    // Determine the source of user and profile data, defaulting to the root object.
+    // Tolerancia a fallos: soportar JSON plano (antiguo) o anidado (nuevo backend)
     final userData = json['user'] ?? json;
     final profileData = json['profile'] ?? json;
 
     return User(
       id: userData['ID'] ?? userData['id'] ?? 0,
-      name: userData['name'] ?? 'User',
+      name: userData['name'] ?? 'Usuario',
       email: userData['email'] ?? '',
       photoUrl: userData['photo_url'] ?? '',
       bio: userData['bio'] ?? '',
@@ -68,10 +62,10 @@ class User {
       role: userData['role'] ?? 'adopter',
       run: userData['run'] ?? userData['rut'] ?? '',
 
-      averageRating: (userData['average_rating'] ?? 0.0).toDouble(),
+      averageRating: (userData['average_rating'] ?? 0).toDouble(),
       reviewCount: userData['review_count'] ?? 0,
 
-      // Read from profile data with safe defaults.
+      // Lectura del perfil (asegurando valores predeterminados seguros)
       housingType: profileData['housing_type'] ?? 'House',
       housingOwnership: profileData['housing_ownership'] ?? 'Owned',
       hasYard: profileData['has_yard'] ?? false,
