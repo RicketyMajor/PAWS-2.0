@@ -10,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/RicketyMajor/PAWS-2.0/internal/infrastructure/email"
 	"github.com/RicketyMajor/PAWS-2.0/internal/infrastructure/messaging"
 	"github.com/redis/go-redis/v9"
 )
@@ -29,10 +30,11 @@ type EmailEvent struct {
 type OTPService struct {
 	redisClient *redis.Client
 	mqClient    *messaging.RabbitMQClient
+	emailClient *email.EmailClient
 }
 
 // NewOTPService creates a new OTPService, initializing connections to Redis and RabbitMQ.
-func NewOTPService(mq *messaging.RabbitMQClient) *OTPService {
+func NewOTPService(mq *messaging.RabbitMQClient, ec *email.EmailClient) *OTPService {
 	redisURL := os.Getenv("REDIS_URL")
 	var rdb *redis.Client
 
@@ -55,6 +57,7 @@ func NewOTPService(mq *messaging.RabbitMQClient) *OTPService {
 	return &OTPService{
 		redisClient: rdb,
 		mqClient:    mq,
+		emailClient: ec,
 	}
 }
 
@@ -121,8 +124,16 @@ func (s *OTPService) sendOTP(email, subject, bodyTemplate string) (string, error
 			log.Printf("RabbitMQ publishing error: %v. Log: %s -> %s", err, email, code)
 		}
 	} else {
-		// If RabbitMQ is disabled, log to console for local development.
-		log.Printf("[DEV EMAIL] To: %s | Subject: %s | Code: %s", email, subject, code)
+		// If RabbitMQ is disabled, try to send synchronously
+		if s.emailClient != nil {
+			log.Printf("RabbitMQ disabled, enviando correo síncrono a %s", email)
+			err = s.emailClient.Send(email, subject, fmt.Sprintf(bodyTemplate, code))
+			if err != nil {
+				log.Printf("Error enviando correo síncrono: %v", err)
+			}
+		} else {
+			log.Printf("[DEV EMAIL] To: %s | Subject: %s | Code: %s", email, subject, code)
+		}
 	}
 
 	return code, nil

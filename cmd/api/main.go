@@ -124,7 +124,7 @@ func main() {
 	// Dependency Injection
 	// =========================================================================
 
-	otpService := services.NewOTPService(mqClient)
+	otpService := services.NewOTPService(mqClient, emailClient)
 	authService := services.NewAuthService(database.DB)
 	petService := services.NewPetService(database.DB)
 	userService := services.NewUserService(database.DB)
