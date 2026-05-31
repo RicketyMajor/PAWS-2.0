@@ -3,9 +3,11 @@
 
   # PAWS
 
-  **La aplicacion definitiva para conectar animales rescatados con sus familias ideales.**
+  **La plataforma integral para conectar animales rescatados con sus familias ideales.**
   
   <p align="center">
+    <img src="https://img.shields.io/badge/Flutter-02569B?style=for-the-badge&logo=flutter&logoColor=white" alt="Flutter" />
+    <img src="https://img.shields.io/badge/Dart-0175C2?style=for-the-badge&logo=dart&logoColor=white" alt="Dart" />
     <img src="https://img.shields.io/badge/Go-1.25.10-00ADD8?style=for-the-badge&logo=go&logoColor=white" alt="Go Version" />
     <img src="https://img.shields.io/badge/Gin-Framework-00ADD8?style=for-the-badge&logo=go&logoColor=white" alt="Gin" />
     <img src="https://img.shields.io/badge/PostgreSQL-316192?style=for-the-badge&logo=postgresql&logoColor=white" alt="PostgreSQL" />
@@ -18,7 +20,9 @@
 
 ## Acerca del Proyecto
 
-PAWS es una plataforma interactiva, disenada bajo una arquitectura moderna (inspirada en la dinamica de Tinder), que facilita el proceso de adopcion de mascotas. El sistema esta compuesto por un Frontend desplegado en **Vercel** y un Backend construido en **Golang** (Framework **Gin**) desplegado en **Render**. 
+PAWS es una plataforma interactiva, disenada bajo una arquitectura moderna (inspirada en la dinamica de Tinder), que facilita el proceso de adopcion de mascotas. Este repositorio es un **Monorepo** que contiene todo el ecosistema del proyecto:
+- **Frontend:** Construido en **Flutter (Dart)**, compilado para Web y desplegado en **Vercel**.
+- **Backend:** Construido en **Golang** (Framework **Gin**) y desplegado en **Render**.
 
 ### Funcionalidades Principales
 
@@ -51,13 +55,19 @@ PAWS es una plataforma interactiva, disenada bajo una arquitectura moderna (insp
 
 ## Arquitectura y Flujo de Datos
 
-PAWS sigue una arquitectura limpia (Clean Architecture) dividiendo responsabilidades en Transporte, Capa Core (Logica de negocio) y Plataforma (Infraestructura de datos).
+El ecosistema PAWS se divide entre el cliente interactivo y un backend robusto basado en Clean Architecture.
 
 ```mermaid
 graph TD
-    User([Aplicacion Movil / Web - Vercel])
+    subgraph Frontend - Flutter / Vercel
+        App[Flutter Web App .dart]
+        UI[UI Components]
+        State[State Management / Core]
+        App --> UI
+        App --> State
+    end
 
-    subedge[Backend System - Render]
+    subgraph Backend System - Go / Render
         API[Gin HTTP Router / Middleware]
         WS[WebSocket Hub]
         
@@ -80,15 +90,16 @@ graph TD
             Worker2[Notification Worker]
             Brevo[Brevo API / SMTP]
         end
-    endsubedge
+    end
 
-    User -- HTTP/REST --> API
-    User -- wss:// --> WS
+    %% Conexiones Cliente-Servidor
+    State -- HTTP/REST --> API
+    State -- wss:// --> WS
 
+    %% Flujo Interno del Backend
     API --> Auth
     API --> Match
     API --> Pet
-    
     WS --> Chat
 
     Auth -- Almacena codigo temporal --> Redis
@@ -104,13 +115,25 @@ graph TD
     Worker1 --> Brevo
 ```
 
-### Estructura del Directorio
+### Estructura del Monorepo
+
+Este repositorio contiene tanto la aplicacion cliente como el servidor, organizados de la siguiente manera:
 
 ```text
 PAWS-2.0/
-├── cmd/
-│   └── api/                # Entrypoint de la aplicacion (main.go)
-├── internal/
+├── app/                    # FRONTEND (Flutter / Dart)
+│   ├── lib/
+│   │   ├── core/           # Configuraciones, utilidades y manejo de estado global
+│   │   ├── features/       # Vistas y modulos principales (Auth, Swipe, Chat, Profile)
+│   │   └── main.dart       # Entrypoint de la aplicacion movil/web
+│   ├── web/                # Archivos estaticos para Flutter Web
+│   ├── vercel.sh           # Script de despliegue automatizado para Vercel
+│   └── pubspec.yaml        # Dependencias de Dart y Flutter
+│
+├── cmd/                    # BACKEND (Go)
+│   └── api/                # Entrypoint del servidor (main.go)
+│
+├── internal/               # CODIGO FUENTE BACKEND (Clean Architecture)
 │   ├── core/               # Logica de negocio (Dominio y Casos de uso)
 │   │   ├── domain/         # Modelos de base de datos (GORM)
 │   │   ├── services/       # Logica central (Auth, Match, Pets, Chat, etc.)
@@ -119,11 +142,12 @@ PAWS-2.0/
 │   │   ├── email/          # Integracion con Brevo (SMTP/HTTP)
 │   │   └── messaging/      # Cliente y publicador de RabbitMQ
 │   ├── platform/           # Bases de datos y almacenamiento
-│   │   └── database/       # Conexion y configuracion de PostgreSQL
-│   └── transport/          # Capa de presentacion / HTTP
+│   │   └── database/       # Conexion a PostgreSQL (Neon.tech)
+│   └── transport/          # Capa HTTP
 │       └── http/           # Controladores, Middleware y Routers (Gin)
-├── Dockerfile              # Construccion multi-stage optimizada (Alpine)
-├── docker-compose.yml      # Entorno local
+│
+├── Dockerfile              # Construccion multi-stage del Backend (Alpine)
+├── docker-compose.yml      # Entorno local (PostgreSQL, RabbitMQ, Redis)
 ├── go.mod                  # Dependencias de Go
 └── Makefile                # Comandos rapidos de compilacion y ejecucion
 ```
@@ -132,15 +156,16 @@ PAWS-2.0/
 
 ## Guia de Instalacion (Local)
 
-Sigue estos pasos para levantar el entorno de PAWS en tu maquina local.
+Sigue estos pasos para levantar el ecosistema completo en tu maquina local.
 
 ### 1. Prerrequisitos
-- **Go** >= 1.25.10
+- **Flutter SDK** (Para el Frontend)
+- **Go** >= 1.25.10 (Para el Backend)
 - **Docker** y **Docker Compose**
 - **Git**
 
-### 2. Variables de Entorno (.env)
-Clona el repositorio y crea un archivo `.env` en la raiz del proyecto utilizando los servicios Cloud (o locales) requeridos:
+### 2. Entorno del Backend (.env)
+En la raiz del proyecto, crea un archivo `.env` utilizando los servicios Cloud requeridos:
 
 ```env
 # Database Config (Neon.tech)
@@ -163,22 +188,28 @@ BREVO_API_KEY=tu_api_key_de_brevo
 BREVO_SENDER_EMAIL=paws@tudominio.com
 ```
 
-*(Opcional: Si requieres RabbitMQ de manera externa en produccion, anade RABBITMQ_URL. Para entorno local, se autoconfigura con Docker).*
-
-### 3. Levantar Infraestructura Local
-Usa el archivo `docker-compose.yml` para levantar las bases de datos locales si no quieres utilizar los servicios Cloud durante el desarrollo:
+### 3. Levantar la Infraestructura Local
+Si no deseas conectarte a las nubes de Neon/Upstash durante el desarrollo, puedes levantar copias locales con Docker:
 
 ```bash
 docker-compose up -d
 ```
 
-### 4. Ejecutar la Aplicacion
-Ejecuta el backend:
+### 4. Ejecutar los Proyectos
 
+**Para el Backend (Go):**
 ```bash
 go run cmd/api/main.go
 ```
-*El servidor se iniciara en `http://localhost:8080`.*
+*El servidor HTTP y WebSocket se iniciara en `http://localhost:8080`.*
+
+**Para el Frontend (Flutter):**
+En una nueva terminal, navega a la carpeta `app/` e inicia la aplicacion web o el emulador:
+```bash
+cd app
+flutter pub get
+flutter run -d chrome
+```
 
 ---
 
@@ -186,12 +217,12 @@ go run cmd/api/main.go
 
 El ecosistema esta disenado para ser operado bajo una arquitectura distribuida:
 
-1. **Frontend**: Desplegado en **Vercel** para un aprovisionamiento global y rapido del cliente.
-2. **Backend**: Desplegado en **Render** como un Web Service, aprovechando la construccion Multi-Stage optimizada en el `Dockerfile` (imagen base `alpine` ultra ligera y binario compilado sin dependencias estaticas a traves de `CGO_ENABLED=0`).
+1. **Frontend (App Flutter)**: Desplegado en **Vercel** usando Flutter Web para un aprovisionamiento global y rapido. Vercel ejecuta `app/vercel.sh` para la compilacion.
+2. **Backend (Go API)**: Desplegado en **Render** como un Web Service, aprovechando la construccion Multi-Stage en el `Dockerfile` (imagen base `alpine` ultra ligera y binario compilado a traves de `CGO_ENABLED=0`).
 3. **Base de Datos**: PostgreSQL alojado en **Neon.tech**.
 4. **Almacenamiento en Cache**: Redis alojado en **Upstash**.
-5. **Multimedia**: **Cloudinary** actua como CDN para el almacenamiento de imagenes de mascotas y usuarios.
+5. **Multimedia**: **Cloudinary** actua como CDN para el almacenamiento de imagenes.
 
-Simplemente conecta este repositorio a Render, define las variables de entorno mencionadas anteriormente, y la plataforma gestionara el enrutamiento HTTP y los contenedores de forma automatica.
+Al conectar este repositorio a Render y Vercel, ambas plataformas detectan sus respectivos directorios y gestionan las compilaciones de forma automatizada.
 
-> **Nota de Mantenimiento:** El endpoint `/api/v1/health` esta disponible para integraciones de monitoreo continuo.
+> El endpoint `/api/v1/health` esta disponible para integraciones de monitoreo continuo (por ejemplo, UptimeRobot).
