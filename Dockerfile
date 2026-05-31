@@ -14,8 +14,8 @@ RUN go mod download
 # Copy the rest of the source code.
 COPY . .
 
-# Build the Go binary.
-RUN go build -o main ./cmd/api
+# Build the Go binary statically.
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main ./cmd/api
 
 
 # -------------------
@@ -23,6 +23,9 @@ RUN go build -o main ./cmd/api
 # -------------------
 # This stage creates the final, lightweight production image.
 FROM alpine:latest
+
+# Install CA certificates to enable HTTPS requests to external APIs (Brevo, AWS, etc)
+RUN apk --no-cache add ca-certificates tzdata
 
 WORKDIR /app
 
