@@ -2,7 +2,7 @@
 # Stage 1: Builder
 # -------------------
 # This stage compiles the Go application.
-FROM golang:1.25.8-alpine AS builder
+FROM golang:1.25.10-alpine AS builder
 
 WORKDIR /app
 
