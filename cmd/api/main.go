@@ -177,6 +177,9 @@ func main() {
 			auth.POST("/login", authHandler.Login)
 			auth.POST("/otp/request", authHandler.RequestOTP)
 			auth.POST("/otp/verify", authHandler.VerifyOTP)
+			auth.POST("/forgot-password", authHandler.ForgotPassword)
+			auth.POST("/verify-recovery-code", authHandler.VerifyRecoveryCode)
+			auth.POST("/reset-password", authHandler.ResetPassword)
 		}
 
 		api.POST("/verification/verify", identityHandler.Verify)
