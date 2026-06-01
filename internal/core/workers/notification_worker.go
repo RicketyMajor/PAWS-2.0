@@ -36,7 +36,9 @@ func StartNotificationConsumer(rabbitURL string, db *gorm.DB) {
 	conf := &firebase.Config{ProjectID: projectID}
 	// The GOOGLE_APPLICATION_CREDENTIALS env var should be set to the path of the service account file.
 	// We set it here as a fallback if it's not present in the environment.
-	_ = os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "firebase-service-account.json")
+	if os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") == "" {
+		_ = os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "firebase-service-account.json")
+	}
 
 	app, err := firebase.NewApp(context.Background(), conf)
 	if err != nil {
