@@ -28,6 +28,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   late TextEditingController _nameController;
   late TextEditingController _emailController;
   final _passwordController = TextEditingController();
+  final _repeatPasswordController = TextEditingController();
   late TextEditingController _runController;
 
   late String _selectedRole;
@@ -48,6 +49,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _nameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
+    _repeatPasswordController.dispose();
     _runController.dispose();
     super.dispose();
   }
@@ -248,6 +250,26 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                   validator: (value) =>
                       value!.length < 6 ? 'Mínimo 6 caracteres' : null,
+                ),
+                const SizedBox(height: 16),
+
+                TextFormField(
+                  controller: _repeatPasswordController,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Repetir Contraseña',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.lock_outline),
+                  ),
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return 'Por favor repite la contraseña';
+                    }
+                    if (value != _passwordController.text) {
+                      return 'Las contraseñas no coinciden';
+                    }
+                    return null;
+                  },
                 ),
                 const SizedBox(height: 30),
 
