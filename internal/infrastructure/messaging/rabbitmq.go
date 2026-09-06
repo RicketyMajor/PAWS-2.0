@@ -124,6 +124,11 @@ func ConsumeWithRetry(url, queueName string, handler func([]byte) error) {
 			err := handler(d.Body)
 			if err != nil {
 				log.Printf("[Worker %s] Error processing message: %v", queueName, err)
+				// ponytail: Nack(requeue=false) discards the message for good. A failed
+				// OTP send is lost here while the HTTP handler already answered 200, so
+				// async mode still hides delivery failures from the user. Acceptable only
+				// because production runs ENABLE_ASYNC_FEATURES=false. Upgrade path: declare
+				// a dead-letter exchange and route rejects to it before enabling async.
 				// Verificamos el error del Nack para evitar bloqueos silenciosos
 				if nackErr := d.Nack(false, false); nackErr != nil {
 					log.Printf("[Worker %s] Failed to Nack message: %v", queueName, nackErr)

@@ -34,6 +34,7 @@ type OTPService struct {
 }
 
 // NewOTPService creates a new OTPService, initializing connections to Redis and RabbitMQ.
+// ec is required and must not be nil; it is the only delivery path when mq is absent.
 func NewOTPService(mq *messaging.RabbitMQClient, ec *email.EmailClient) *OTPService {
 	redisURL := os.Getenv("REDIS_URL")
 	var rdb *redis.Client
@@ -117,23 +118,15 @@ func (s *OTPService) sendOTP(email, subject, bodyTemplate string) (string, error
 	}
 	eventBytes, _ := json.Marshal(event)
 
+	// A delivery failure must reach the caller. Handlers already turn this into a 500,
+	// but they only ever saw nil, so a blocked send still answered "code sent" and the
+	// user waited for mail that was never dispatched.
 	if s.mqClient != nil {
-		err = s.mqClient.Publish("email_notifications", eventBytes)
-		if err != nil {
-			// Log error but don't fail the operation, as the code is still valid.
-			log.Printf("RabbitMQ publishing error: %v. Log: %s -> %s", err, email, code)
+		if err = s.mqClient.Publish("email_notifications", eventBytes); err != nil {
+			return "", fmt.Errorf("no se pudo encolar el correo de verificación: %w", err)
 		}
-	} else {
-		// If RabbitMQ is disabled, try to send synchronously
-		if s.emailClient != nil {
-			log.Printf("RabbitMQ disabled, enviando correo síncrono a %s", email)
-			err = s.emailClient.Send(email, subject, fmt.Sprintf(bodyTemplate, code))
-			if err != nil {
-				log.Printf("Error enviando correo síncrono: %v", err)
-			}
-		} else {
-			log.Printf("[DEV EMAIL] To: %s | Subject: %s | Code: %s", email, subject, code)
-		}
+	} else if err = s.emailClient.Send(email, subject, fmt.Sprintf(bodyTemplate, code)); err != nil {
+		return "", fmt.Errorf("no se pudo enviar el correo de verificación: %w", err)
 	}
 
 	return code, nil

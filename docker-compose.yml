@@ -76,6 +76,11 @@ services:
       # --- Security ---
       JWT_SECRET: "tu_secreto"
 
+      # --- Email ---
+      # Sin credenciales de Brevo el envio es un fallo duro, asi que el stack local
+      # simula: el codigo OTP se imprime en los logs del contenedor.
+      EMAIL_SIMULATION: "true"
+
       # --- MinIO Storage Config ---
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: minioadmin

@@ -88,7 +88,7 @@ graph TD
             RabbitMQ{RabbitMQ}
             Worker1[Email Worker]
             Worker2[Notification Worker]
-            Brevo[Brevo API / SMTP]
+            Brevo[Brevo API HTTP]
         end
     end
 
@@ -139,7 +139,7 @@ PAWS-2.0/
 │   │   ├── services/       # Logica central (Auth, Match, Pets, Chat, etc.)
 │   │   └── workers/        # Consumidores de RabbitMQ
 │   ├── infrastructure/     # Integraciones externas
-│   │   ├── email/          # Integracion con Brevo (SMTP/HTTP)
+│   │   ├── email/          # Integracion con Brevo (API HTTP sobre 443)
 │   │   └── messaging/      # Cliente y publicador de RabbitMQ
 │   ├── platform/           # Bases de datos y almacenamiento
 │   │   └── database/       # Conexion a PostgreSQL (Neon.tech)
@@ -181,11 +181,15 @@ CLOUDINARY_URL=cloudinary://key:secret@cloud_name
 JWT_SECRET=tu_secreto_seguro_para_jwt
 
 # Asynchronous Toggles
-ENABLE_ASYNC_FEATURES=true
+ENABLE_ASYNC_FEATURES=false
 
 # Brevo API (Envio de correos)
 BREVO_API_KEY=tu_api_key_de_brevo
 BREVO_SENDER_EMAIL=paws@tudominio.com
+
+# Desarrollo local sin cuenta de Brevo: imprime el codigo OTP en consola
+# en lugar de enviarlo. Sin esta variable y sin credenciales, el envio falla.
+EMAIL_SIMULATION=true
 ```
 
 ### 3. Levantar la Infraestructura Local
