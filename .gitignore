@@ -16,3 +16,12 @@ firebase-service-account.json
 
 *.sql
 respaldo_paws.sql
+# Respaldos de entorno (contienen secretos reales)
+.env.*
+!.env.example
+
+# Workspace de contexto y documentos de trabajo locales
+context/
+CLAUDE.md
+PONYTAIL.md
+CHANGELOG.md
