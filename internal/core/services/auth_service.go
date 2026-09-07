@@ -33,6 +33,12 @@ type registrationCache struct {
 // Service Definition
 // =========================================================================
 
+// ErrUnavailable marks the failure of a dependency — database, cache — rather than a
+// problem with the caller's request. Handlers map it to 503 instead of 400: the request
+// was well formed, the platform was not. Wrapped errors keep the cause for the log while
+// letting the handler answer without leaking infrastructure detail to the client.
+var ErrUnavailable = errors.New("a required service is unavailable")
+
 // AuthService provides business logic for authentication-related operations.
 type AuthService struct {
 	db          *gorm.DB
@@ -142,7 +148,7 @@ func (s *AuthService) InitiateRegistration(name, email, password, run, role stri
 	key := fmt.Sprintf("pending_user:%s:%s", email, roleNormalized)
 	err = s.redisClient.Set(ctx, key, userData, 10*time.Minute).Err()
 	if err != nil {
-		return fmt.Errorf("error storing temporary registration data: %v", err)
+		return fmt.Errorf("%w: storing temporary registration data: %v", ErrUnavailable, err)
 	}
 
 	return nil
@@ -265,7 +271,7 @@ func (s *AuthService) CheckBlacklist(run string) (bool, error) {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return false, nil // Not found is not an error here.
 		}
-		return false, err // A real database error occurred.
+		return false, fmt.Errorf("%w: querying blacklist: %v", ErrUnavailable, err)
 	}
 	return true, nil // Entry found.
 }
@@ -293,4 +299,3 @@ func (s *AuthService) GenerateTokenForEmail(email string) (string, error) {
 	}
 	return s.GenerateTokenForUser(&user)
 }
-

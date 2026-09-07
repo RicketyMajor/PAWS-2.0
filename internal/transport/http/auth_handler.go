@@ -2,8 +2,12 @@
 package http
 
 import (
+	"errors"
+	"log"
 	"net/http"
+
 	"github.com/gin-gonic/gin"
+
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/services"
 )
 
@@ -64,7 +68,7 @@ func (h *AuthHandler) SwitchRole(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
-	
+
 	var userID uint
 	if val, ok := userIDVal.(float64); ok {
 		userID = uint(val)
@@ -96,7 +100,7 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	
+
 	_, err := h.otpService.GenerateRecoveryOTP(req.Email)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error sending recovery code"})
@@ -153,12 +157,23 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	err := h.service.InitiateRegistration(req.Name, req.Email, req.Password, req.Run, req.Role)
 	if err != nil {
+		// A dependency being down is not the caller's fault, and its message names hosts
+		// and internal addresses. Report it as 503, log the cause, and tell the client
+		// nothing about our infrastructure.
+		if errors.Is(err, services.ErrUnavailable) {
+			log.Printf("register: dependency unavailable: %v", err)
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Service temporarily unavailable, please try again shortly"})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	_, err = h.otpService.GenerateOTP(req.Email)
-	if err != nil {
+	if _, err = h.otpService.GenerateOTP(req.Email); err != nil {
+		// The mail provider's rejection reason exists only in this error. The client gets
+		// a generic message, so without this line the cause is lost at every layer and a
+		// failed signup is undiagnosable.
+		log.Printf("register: sending verification code to %s failed: %v", req.Email, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error sending verification code"})
 		return
 	}
