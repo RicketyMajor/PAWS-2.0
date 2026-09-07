@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/domain"
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/services"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	"golang.org/x/time/rate"
 	"gorm.io/gorm"
 )
 
@@ -167,6 +169,13 @@ func main() {
 
 	r := gin.Default()
 
+	// Cloudflare fronts the deployment and overwrites CF-Connecting-IP, so it is the one
+	// client address a caller cannot forge. Left at the default, Gin trusts whatever
+	// X-Forwarded-For it is handed, and every rate limit below is bypassed by sending a
+	// different value each request. Gin falls back to its usual logic when the header is
+	// absent, so local development is unaffected.
+	r.TrustedPlatform = gin.PlatformCloudflare
+
 	// Use custom local CORS middleware
 	r.Use(LocalCORSMiddleware())
 
@@ -177,13 +186,21 @@ func main() {
 	api := r.Group("/api/v1")
 	{
 		// --- Public Routes ---
-		auth := api.Group("/auth")
+		// Every /auth route is unauthenticated by definition, so the only thing between
+		// them and a script is the rate limit. The group budget slows password guessing;
+		// sendMail is much tighter because those three routes each cost a real email out
+		// of a 300/day allowance shared by every user.
+		//
+		// One instance of sendMail is shared by the three routes on purpose: separate
+		// instances would mean separate budgets, and three budgets is three times the mail.
+		sendMail := middleware.RateLimitByIP(rate.Every(time.Minute), 3)
+		auth := api.Group("/auth", middleware.RateLimitByIP(rate.Every(3*time.Second), 10))
 		{
-			auth.POST("/register", authHandler.Register)
+			auth.POST("/register", sendMail, authHandler.Register)
 			auth.POST("/login", authHandler.Login)
-			auth.POST("/otp/request", authHandler.RequestOTP)
+			auth.POST("/otp/request", sendMail, authHandler.RequestOTP)
 			auth.POST("/otp/verify", authHandler.VerifyOTP)
-			auth.POST("/forgot-password", authHandler.ForgotPassword)
+			auth.POST("/forgot-password", sendMail, authHandler.ForgotPassword)
 			auth.POST("/verify-recovery-code", authHandler.VerifyRecoveryCode)
 			auth.POST("/reset-password", authHandler.ResetPassword)
 		}

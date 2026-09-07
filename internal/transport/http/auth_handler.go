@@ -93,6 +93,26 @@ func (h *AuthHandler) SwitchRole(c *gin.Context) {
 // Password Recovery
 // =========================================================================
 
+// respondOTPError turns a failed OTP dispatch into a status. Throttling is the
+// caller asking too fast (429); everything else is ours (500), and its cause exists
+// only inside err — the client is told nothing, so it has to be logged here.
+func respondOTPError(c *gin.Context, email, generic string, err error) {
+	if errors.Is(err, services.ErrOTPThrottled) {
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"error": "A code was sent to this address moments ago. Please wait a minute before requesting another.",
+		})
+		return
+	}
+	if errors.Is(err, services.ErrMailBudgetExhausted) {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "We cannot send more codes today. Please try again tomorrow.",
+		})
+		return
+	}
+	log.Printf("sending code to %s failed: %v", email, err)
+	c.JSON(http.StatusInternalServerError, gin.H{"error": generic})
+}
+
 // ForgotPassword initiates the password recovery process by sending an OTP.
 func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 	var req OTPRequest
@@ -101,9 +121,8 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 		return
 	}
 
-	_, err := h.otpService.GenerateRecoveryOTP(req.Email)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error sending recovery code"})
+	if _, err := h.otpService.GenerateRecoveryOTP(req.Email); err != nil {
+		respondOTPError(c, req.Email, "Error sending recovery code", err)
 		return
 	}
 
@@ -170,11 +189,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	}
 
 	if _, err = h.otpService.GenerateOTP(req.Email); err != nil {
-		// The mail provider's rejection reason exists only in this error. The client gets
-		// a generic message, so without this line the cause is lost at every layer and a
-		// failed signup is undiagnosable.
-		log.Printf("register: sending verification code to %s failed: %v", req.Email, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error sending verification code"})
+		respondOTPError(c, req.Email, "Error sending verification code", err)
 		return
 	}
 
@@ -234,9 +249,8 @@ func (h *AuthHandler) RequestOTP(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	_, err := h.otpService.GenerateOTP(req.Email)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "OTP system error"})
+	if _, err := h.otpService.GenerateOTP(req.Email); err != nil {
+		respondOTPError(c, req.Email, "OTP system error", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Code sent"})
