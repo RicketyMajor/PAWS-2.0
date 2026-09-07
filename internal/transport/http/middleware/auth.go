@@ -11,8 +11,13 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+// wsAuthSubprotocol is the first value the client offers in Sec-WebSocket-Protocol,
+// marking the second value as the bearer token. The server echoes it back on upgrade.
+const wsAuthSubprotocol = "bearer"
+
 // AuthMiddleware is a Gin middleware for JWT-based authentication.
-// It extracts the token from the Authorization header or a query parameter,
+// It extracts the token from the Authorization header or, for WebSocket
+// handshakes, from the Sec-WebSocket-Protocol header,
 // validates it, and sets the user's ID and role in the Gin context.
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -27,10 +32,17 @@ func AuthMiddleware() gin.HandlerFunc {
 			}
 		}
 
-		// 2. If not found in the header, try to get it from the URL query parameter.
-		// This is crucial for WebSocket connections: ws://host/path?token=xyz
+		// 2. Browsers cannot set an Authorization header on a WebSocket handshake, so
+		// the token rides in Sec-WebSocket-Protocol as "bearer, <token>". It must not
+		// travel in the query string: Gin's logger records the path with its query, which
+		// would write a valid session token into the platform log on every connection.
 		if tokenString == "" {
-			tokenString = c.Query("token")
+			if proto := c.GetHeader("Sec-WebSocket-Protocol"); proto != "" {
+				parts := strings.SplitN(proto, ",", 2)
+				if len(parts) == 2 && strings.TrimSpace(parts[0]) == wsAuthSubprotocol {
+					tokenString = strings.TrimSpace(parts[1])
+				}
+			}
 		}
 
 		// If the token is still empty after both attempts, return an error.

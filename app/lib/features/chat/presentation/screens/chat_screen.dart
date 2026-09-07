@@ -99,6 +99,18 @@ class _ChatScreenState extends State<ChatScreen> {
       child: BlocListener<ChatBloc, ChatState>(
         listener: (context, state) {
           if (state is ChatLoaded) {
+            // Feedback envío fallido (socket caído)
+            if (state.error != null &&
+                state.reportStatus != ReportStatus.failure &&
+                state.reviewStatus != ReviewStatus.failure) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(state.error!),
+                  backgroundColor: Colors.orange.shade800,
+                ),
+              );
+            }
+
             // Feedback Reportes
             if (state.reportStatus == ReportStatus.success) {
               Navigator.pop(context);

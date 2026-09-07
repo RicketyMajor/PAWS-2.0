@@ -238,7 +238,9 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         try {
           chatRepository.sendMessage(_currentMatchId, event.content);
         } catch (e) {
-          print("Error enviando: $e");
+          // El repositorio lanza cuando el socket está caído. Antes se descartaba
+          // el mensaje sin avisar y el usuario creía haberlo enviado.
+          emit(currentState.copyWith(error: 'No se pudo enviar el mensaje.'));
         }
       }
     });

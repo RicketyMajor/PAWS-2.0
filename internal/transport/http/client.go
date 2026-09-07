@@ -24,6 +24,10 @@ const (
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
+	// The client offers "bearer, <token>" to carry credentials without a query string.
+	// A browser aborts the connection unless the server echoes one of the offered
+	// subprotocols, so "bearer" must be advertised here.
+	Subprotocols: []string{"bearer"},
 	// Allow all origins for CORS, crucial for local development with emulators.
 	CheckOrigin: func(r *http.Request) bool {
 		return true
