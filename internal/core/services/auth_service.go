@@ -284,11 +284,7 @@ func (s *AuthService) GenerateTokenForUser(user *domain.User) (string, error) {
 		"role":    user.Role,
 		"exp":     time.Now().Add(time.Hour * 24).Unix(),
 	})
-	secret := os.Getenv("JWT_SECRET")
-	if secret == "" {
-		secret = "default_secret" // Fallback for local dev
-	}
-	return token.SignedString([]byte(secret))
+	return token.SignedString([]byte(os.Getenv("JWT_SECRET")))
 }
 
 // GenerateTokenForEmail creates a JWT for a user identified by email.

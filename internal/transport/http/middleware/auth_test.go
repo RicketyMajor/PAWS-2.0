@@ -5,8 +5,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/RicketyMajor/PAWS-2.0/internal/core/domain"
+	"github.com/RicketyMajor/PAWS-2.0/internal/core/services"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"gorm.io/gorm"
 )
 
 const testSecret = "test-secret-for-middleware"
@@ -113,5 +116,26 @@ func TestMissingTokenIsRejected(t *testing.T) {
 	code, _ := run(t, func(r *http.Request) {})
 	if code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", code)
+	}
+}
+
+// The signer and the validator read JWT_SECRET independently, so only a round trip
+// catches them drifting apart: for a while each fell back to a different constant.
+func TestServiceMintedTokenIsAccepted(t *testing.T) {
+	t.Setenv("JWT_SECRET", testSecret)
+	token, err := (&services.AuthService{}).GenerateTokenForUser(
+		&domain.User{Model: gorm.Model{ID: 42}, Role: "adopter"})
+	if err != nil {
+		t.Fatalf("minting token: %v", err)
+	}
+
+	code, userID := run(t, func(r *http.Request) {
+		r.Header.Set("Authorization", "Bearer "+token)
+	})
+	if code != http.StatusOK {
+		t.Fatalf("service-minted token rejected: got %d, want 200", code)
+	}
+	if userID != float64(42) {
+		t.Fatalf("userID = %v, want 42", userID)
 	}
 }

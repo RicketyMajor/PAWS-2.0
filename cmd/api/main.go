@@ -49,6 +49,12 @@ func main() {
 		log.Println("Info: .env file not found, using system environment variables")
 	}
 
+	// A missing JWT_SECRET is fatal, like a missing DATABASE_URL: tokens would be
+	// signed and validated with an empty key, which anyone can reproduce.
+	if os.Getenv("JWT_SECRET") == "" {
+		log.Fatal("FATAL: JWT_SECRET is not set")
+	}
+
 	// Connect to the database
 	database.Connect()
 
@@ -287,4 +293,3 @@ func LocalCORSMiddleware() gin.HandlerFunc {
 		c.Next()
 	}
 }
-

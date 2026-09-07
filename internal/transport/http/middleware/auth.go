@@ -56,11 +56,7 @@ func AuthMiddleware() gin.HandlerFunc {
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 			}
-			secret := os.Getenv("JWT_SECRET")
-			if secret == "" {
-				secret = "default_super_secret_key_change_in_production" // Fallback secret
-			}
-			return []byte(secret), nil
+			return []byte(os.Getenv("JWT_SECRET")), nil
 		})
 
 		if err != nil || !token.Valid {
