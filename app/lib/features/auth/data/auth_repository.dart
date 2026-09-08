@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../../core/constants/api_constants.dart';
 
@@ -17,15 +18,23 @@ class AuthRepository {
   String? _sessionToken;
 
   AuthRepository() {
-    // 1. AGREGO EL LOG INTERCEPTOR (Como tenías antes)
-    _dio.interceptors.add(
-      LogInterceptor(
-        request: true,
-        requestBody: true,
-        responseBody: true,
-        error: true,
-      ),
-    );
+    // The bodies on this client carry the password, the OTP and the JWT, so
+    // they are never logged. kDebugMode is a compile-time constant, so the
+    // release build drops this branch entirely; the bodies stay off in debug
+    // too, because a console dump of a login is a credential leak wherever it
+    // happens. requestHeader is off explicitly rather than by luck: the token
+    // is injected by the interceptor added below, so today it is not in the
+    // headers yet, and swapping the two registrations would start logging it.
+    //
+    // ponytail: this is the only logged Dio of the nine. Ceiling: a single
+    // shared ApiClient must not inherit an ungated LogInterceptor, or this
+    // reopens for every route at once. Upgrade path: gate it there the same
+    // way before collapsing the repositories.
+    if (kDebugMode) {
+      _dio.interceptors.add(
+        LogInterceptor(request: true, requestHeader: false, error: true),
+      );
+    }
 
     // 2. --- ¡EL ARREGLO MÁGICO! ---
     // Agregamos un interceptor que inyecta el token en CADA petición.
