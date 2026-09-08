@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -28,30 +29,56 @@ type visitor struct {
 // that is the whole picture today; move them to Redis (already a dependency) if a
 // second instance ever appears, since each would grant the full rate on its own.
 func RateLimitByIP(r rate.Limit, burst int) gin.HandlerFunc {
+	return rateLimitBy(func(c *gin.Context) string { return c.ClientIP() }, r, burst)
+}
+
+// RateLimitByUser throttles each authenticated caller instead of each address.
+// Mount it after AuthMiddleware.
+//
+// An IP budget is the wrong key once a route requires a token: addresses are cheap
+// to rotate, while another account costs an OTP mail that the /auth limits already
+// meter. Keying on the account is what makes a slow scrape visible as one caller.
+//
+// ponytail: process-local buckets, same ceiling as RateLimitByIP.
+func RateLimitByUser(r rate.Limit, burst int) gin.HandlerFunc {
+	return rateLimitBy(func(c *gin.Context) string {
+		// AuthMiddleware stores the "sub" claim, which arrives as a JSON number:
+		// c.GetString would yield "" for every caller and collapse them into one
+		// shared bucket, turning the limit into a global lock. %v formats whatever
+		// type it is, and the prefix keeps it from colliding with the IP fallback.
+		if id, ok := c.Get("userID"); ok {
+			return fmt.Sprintf("user:%v", id)
+		}
+		return c.ClientIP()
+	}, r, burst)
+}
+
+// rateLimitBy is the shared bucket machinery. keyFn decides what a "caller" is.
+func rateLimitBy(keyFn func(*gin.Context) string, r rate.Limit, burst int) gin.HandlerFunc {
 	var mu sync.Mutex
 	visitors := make(map[string]*visitor)
 	lastSweep := time.Now()
 
 	return func(c *gin.Context) {
-		ip := c.ClientIP()
+		key := keyFn(c)
 
 		mu.Lock()
 		now := time.Now()
 		// Sweeping on access keeps this to one goroutine and one lock. The map only
 		// grows between sweeps, and a sweep is O(n) once every visitorTTL.
 		if now.Sub(lastSweep) > visitorTTL {
-			for key, v := range visitors {
+			for k, v := range visitors {
 				if now.Sub(v.lastSeen) > visitorTTL {
-					delete(visitors, key)
+					delete(visitors, k)
 				}
 			}
 			lastSweep = now
 		}
 
-		v, ok := visitors[ip]
+		v, ok := visitors[key]
 		if !ok {
 			v = &visitor{limiter: rate.NewLimiter(r, burst)}
-			visitors[ip] = v
+			visitors[key] = v
 		}
 		v.lastSeen = now
 		allowed := v.limiter.Allow()

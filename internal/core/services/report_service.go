@@ -156,7 +156,8 @@ func (s *ReportService) ResolveReport(adminID, reportID uint, action string, pub
 // Blacklist Logic
 // =========================================================================
 
-// SearchBlacklist performs a public search for a RUN in the blacklist.
+// SearchBlacklist looks up a RUN in the blacklist. The route requires a token; the
+// reasoning lives at its registration in cmd/api/main.go.
 func (s *ReportService) SearchBlacklist(rut string) (*domain.BlacklistEntry, error) {
 	var entry domain.BlacklistEntry
 	err := s.db.Where("run = ?", rut).First(&entry).Error

@@ -110,7 +110,10 @@ class _PawsAppState extends State<PawsApp> {
           create: (context) =>
               AdminRepository(authRepository: context.read<AuthRepository>()),
         ),
-        RepositoryProvider(create: (context) => SecurityRepository()),
+        RepositoryProvider(
+          create: (context) =>
+              SecurityRepository(authRepository: context.read<AuthRepository>()),
+        ),
         RepositoryProvider(
           create: (context) =>
               ReviewsRepository(authRepository: context.read<AuthRepository>()),

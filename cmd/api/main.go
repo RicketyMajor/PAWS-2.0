@@ -2,9 +2,11 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/domain"
@@ -21,6 +23,25 @@ import (
 	"golang.org/x/time/rate"
 	"gorm.io/gorm"
 )
+
+// logWithoutQuery formats an access line the way gin does, minus the query string.
+// param.Path arrives as "path?query"; everything from the "?" on is dropped, so the
+// log keeps status, latency and caller while personal data never reaches it.
+func logWithoutQuery(param gin.LogFormatterParams) string {
+	path := param.Path
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		path = path[:i]
+	}
+	return fmt.Sprintf("[GIN] %v | %3d | %13v | %15s | %-7s %s\n%s",
+		param.TimeStamp.Format("2006/01/02 - 15:04:05"),
+		param.StatusCode,
+		param.Latency,
+		param.ClientIP,
+		param.Method,
+		path,
+		param.ErrorMessage,
+	)
+}
 
 // dropLegacyConstraints removes old unique indexes that might cause conflicts.
 // This is a temporary migration helper function.
@@ -167,7 +188,18 @@ func main() {
 	// Router & Middleware
 	// =========================================================================
 
-	r := gin.Default()
+	// gin.Default() minus a logger that writes personal data. Gin's own formatter prints
+	// the path with its query string attached, and query strings here carry a RUN
+	// (/blacklist/search) and GPS coordinates (/pets/nearby, /matches/candidates), so the
+	// platform log accumulates a location trail and national IDs. Commit a78f680 fixed the
+	// same leak for the chat token by moving it out of the URL.
+	//
+	// Cutting at the "?" for every route is what keeps the rule from depending on someone
+	// remembering it: a new route with a personal query parameter is covered on the day it
+	// is written. A per-path skip list covers only what is listed, and silently stops
+	// matching when a route is renamed.
+	r := gin.New()
+	r.Use(gin.LoggerWithConfig(gin.LoggerConfig{Formatter: logWithoutQuery}), gin.Recovery())
 
 	// Cloudflare fronts the deployment and overwrites CF-Connecting-IP, so it is the one
 	// client address a caller cannot forge. Left at the default, Gin trusts whatever
@@ -206,7 +238,6 @@ func main() {
 		}
 
 		api.POST("/verification/verify", identityHandler.Verify)
-		api.GET("/blacklist/search", reportHandler.SearchBlacklist)
 
 		petsPublic := api.Group("/pets")
 		{
@@ -245,6 +276,15 @@ func main() {
 			protected.POST("/reviews", socialHandler.CreateReview)
 			protected.GET("/users/:id/reviews", socialHandler.GetUserReviews)
 			protected.POST("/report", reportHandler.Create)
+
+			// A chilean RUN is a counter with a checkable digit, so the search space is
+			// walkable and this route answers with a name and a sanction reason. Public, it
+			// published the whole sanction registry to anyone willing to iterate. The token
+			// puts a real account behind every query and the per-user budget keeps that
+			// account to the handful of lookups a real adoption needs, not a dump.
+			protected.GET("/blacklist/search",
+				middleware.RateLimitByUser(rate.Every(time.Minute), 10),
+				reportHandler.SearchBlacklist)
 
 			// WebSocket endpoint
 			protected.GET("/ws", wsHandler.HandleConnections)

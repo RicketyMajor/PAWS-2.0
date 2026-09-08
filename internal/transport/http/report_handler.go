@@ -75,7 +75,7 @@ func (h *ReportHandler) Create(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"message": "Report sent. An administrator will review the case."})
 }
 
-// SearchBlacklist handles the GET /blacklist/search?rut=... endpoint (Public).
+// SearchBlacklist handles the GET /blacklist/search?rut=... endpoint (authenticated).
 func (h *ReportHandler) SearchBlacklist(c *gin.Context) {
 	rut := c.Query("rut")
 	if rut == "" {

@@ -20,10 +20,19 @@ func hit(t *testing.T, r *gin.Engine, ip string) int {
 	return w.Code
 }
 
-func routerWith(limit gin.HandlerFunc) *gin.Engine {
+func routerWith(limit gin.HandlerFunc) *gin.Engine { return routerAs(nil, limit) }
+
+// routerAs stands in for AuthMiddleware: it puts userID in the context the same way,
+// as the JSON number a "sub" claim actually decodes to. A nil userID stands for the
+// limiter being mounted with no AuthMiddleware ahead of it.
+func routerAs(userID interface{}, limit gin.HandlerFunc) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.POST("/auth/otp/request", limit, func(c *gin.Context) { c.Status(http.StatusOK) })
+	r.POST("/auth/otp/request", func(c *gin.Context) {
+		if userID != nil {
+			c.Set("userID", userID)
+		}
+	}, limit, func(c *gin.Context) { c.Status(http.StatusOK) })
 	return r
 }
 
@@ -80,5 +89,40 @@ func TestRoutesSharingAnInstanceShareTheBudget(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusTooManyRequests {
 		t.Fatalf("second route on the same budget: got %d, want 429", w.Code)
+	}
+}
+
+// The point of keying on the account: rotating addresses must not buy more budget
+// (an IP-keyed limit would hand a scraper a fresh bucket per proxy), while two
+// accounts behind one address — a household, a campus, a NAT — must not share one.
+func TestBudgetFollowsTheAccountNotTheAddress(t *testing.T) {
+	limit := RateLimitByUser(rate.Every(time.Hour), 1)
+	seven, nine := routerAs(float64(7), limit), routerAs(float64(9), limit)
+
+	if code := hit(t, seven, "203.0.113.7"); code != http.StatusOK {
+		t.Fatalf("first request: got %d, want 200", code)
+	}
+	if code := hit(t, seven, "198.51.100.9"); code != http.StatusTooManyRequests {
+		t.Fatalf("same user from another address: got %d, want 429", code)
+	}
+	if code := hit(t, nine, "203.0.113.7"); code != http.StatusOK {
+		t.Fatalf("another user on the exhausted address: got %d, want 200", code)
+	}
+}
+
+// Covers the ClientIP fallback branch: mounted with no AuthMiddleware ahead of it,
+// every caller would key to the same empty string and share one bucket, turning the
+// limit into a global lock — a denial of service the defence built itself.
+func TestWithoutAuthTheLimitFallsBackToTheAddress(t *testing.T) {
+	r := routerAs(nil, RateLimitByUser(rate.Every(time.Hour), 1))
+
+	if code := hit(t, r, "203.0.113.7"); code != http.StatusOK {
+		t.Fatalf("first caller: got %d, want 200", code)
+	}
+	if code := hit(t, r, "198.51.100.9"); code != http.StatusOK {
+		t.Fatalf("a different address must get its own bucket: got %d, want 200", code)
+	}
+	if code := hit(t, r, "203.0.113.7"); code != http.StatusTooManyRequests {
+		t.Fatalf("first caller past its burst: got %d, want 429", code)
 	}
 }

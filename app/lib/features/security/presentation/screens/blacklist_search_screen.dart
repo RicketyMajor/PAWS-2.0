@@ -39,19 +39,22 @@ class _BlacklistSearchScreenState extends State<BlacklistSearchScreen> {
       // Enviamos el RUT tal cual está en el input (el backend debe limpiarlo o recibirlo así)
       final data = await repo.checkBlacklist(_rutController.text.trim());
 
+      if (!mounted) return;
       setState(() {
         _result = data;
         _hasSearched = true;
       });
     } catch (e) {
+      if (!mounted) return;
+      // The repository already phrases these for the user.
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text("Error de conexión: $e"),
+          content: Text(e.toString().replaceFirst('Exception: ', '')),
           backgroundColor: Colors.red,
         ),
       );
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
