@@ -21,7 +21,7 @@ type InputMessage struct {
 
 // OutputMessage represents a message sent to a WebSocket client.
 type OutputMessage struct {
-	Type    string      `json:"type"` 
+	Type    string      `json:"type"`
 	Payload interface{} `json:"payload"`
 }
 
@@ -37,9 +37,12 @@ type ClientMessageWrapper struct {
 
 // Hub maintains the set of active clients and broadcasts messages to them.
 type Hub struct {
+	// ponytail: one connection per user, the newest wins — a second tab silently takes
+	// the chat from the first. Serving both needs map[uint]map[*Client]bool and fan-out
+	// on delivery; worth it the day someone uses the phone and the browser at once.
 	clients     map[uint]*Client
 	chatService *services.ChatService
-	mqClient    *messaging.RabbitMQClient 
+	mqClient    *messaging.RabbitMQClient
 
 	broadcast  chan *ClientMessageWrapper
 	register   chan *Client
@@ -67,11 +70,25 @@ func (h *Hub) Run() {
 	for {
 		select {
 		case client := <-h.register:
+			// A user reaches this with a second connection through ordinary use: a page
+			// reload, a second tab, a reconnect after a drop. The map holds one connection
+			// per user, so the one being replaced has to be closed here — left open it
+			// leaks its socket and its two goroutines. Closing send is the graceful path:
+			// writePump answers a closed channel with a close frame.
+			if previous, ok := h.clients[client.userID]; ok && previous != client {
+				close(previous.send)
+			}
 			h.clients[client.userID] = client
 			log.Printf("User %d connected. Total online: %d", client.userID, len(h.clients))
 
 		case client := <-h.unregister:
-			if _, ok := h.clients[client.userID]; ok {
+			// Match on identity, not on the user id alone. The connection replaced above
+			// still unregisters when its readPump ends, and by then the map holds the live
+			// connection: deleting by id would drop a user who is still connected, and
+			// every message meant for them would take the offline branch — a push that
+			// never arrives on web, while the sender still gets its own confirmation and
+			// believes the message was delivered.
+			if current, ok := h.clients[client.userID]; ok && current == client {
 				delete(h.clients, client.userID)
 				close(client.send)
 				log.Printf("User %d disconnected", client.userID)
@@ -126,9 +143,9 @@ func (h *Hub) handleMessage(sender *Client, msgBytes []byte) {
 // sendPushNotification publishes a push notification event to RabbitMQ.
 func (h *Hub) sendPushNotification(receiverID, senderID uint, content string) {
 	if h.mqClient == nil {
-		return 
+		return
 	}
-	
+
 	event := services.NotificationEvent{
 		UserID: receiverID,
 		Title:  "New Message",
@@ -137,7 +154,7 @@ func (h *Hub) sendPushNotification(receiverID, senderID uint, content string) {
 	}
 
 	body, _ := json.Marshal(event)
-	
+
 	err := h.mqClient.Publish("push_notifications", body)
 	if err != nil {
 		log.Printf("Error queueing chat notification: %v", err)
