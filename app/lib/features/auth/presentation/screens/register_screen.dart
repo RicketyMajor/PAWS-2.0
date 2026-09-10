@@ -131,165 +131,171 @@ class _RegisterScreenState extends State<RegisterScreen> {
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 420),
             child: SingleChildScrollView(
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  children: [
-                    if (!isRoleFixed) ...[
-                      Text(
-                        "¿Cuál es tu objetivo?",
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 15),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildRoleCard(
-                              label: 'Adoptar',
-                              value: 'adopter',
-                              icon: Icons.pets,
-                              color: Colors.orange,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: _buildRoleCard(
-                              label: 'Soy Rescatista',
-                              value: 'rescuer',
-                              icon: Icons.volunteer_activism,
-                              color: Colors.blue,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 24),
-                    ] else ...[
-                      // Mensaje informativo si es un registro vinculado
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.blue[50],
-                          borderRadius: BorderRadius.circular(8),
+              child: AutofillGroup(
+                child: Form(
+                  key: _formKey,
+                  child: Column(
+                    children: [
+                      if (!isRoleFixed) ...[
+                        Text(
+                          "¿Cuál es tu objetivo?",
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.bold),
                         ),
-                        child: Row(
+                        const SizedBox(height: 15),
+                        Row(
                           children: [
-                            const Icon(Icons.info_outline, color: Colors.blue),
-                            const SizedBox(width: 8),
                             Expanded(
-                              child: Text(
-                                "Activando modo ${_selectedRole == 'rescuer' ? 'Rescatista' : 'Adoptante'} para tu cuenta.",
-                                style: const TextStyle(
-                                  color: Colors.blue,
-                                  fontWeight: FontWeight.bold,
-                                ),
+                              child: _buildRoleCard(
+                                label: 'Adoptar',
+                                value: 'adopter',
+                                icon: Icons.pets,
+                                color: Colors.orange,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: _buildRoleCard(
+                                label: 'Soy Rescatista',
+                                value: 'rescuer',
+                                icon: Icons.volunteer_activism,
+                                color: Colors.blue,
                               ),
                             ),
                           ],
                         ),
-                      ),
-                      const SizedBox(height: 24),
-                    ],
-
-                    TextFormField(
-                      controller: _nameController,
-                      decoration: const InputDecoration(
-                        labelText: 'Nombre Completo',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.person),
-                      ),
-                      validator: (value) =>
-                          value!.isEmpty ? 'Ingresa tu nombre' : null,
-                    ),
-                    const SizedBox(height: 16),
-
-                    TextFormField(
-                      controller: _runController,
-                      // Bloquear SOLO si viene pre-llenado y NO está vacío
-                      enabled:
-                          widget.initialRun == null ||
-                          widget.initialRun!.isEmpty,
-                      decoration: const InputDecoration(
-                        labelText: 'RUN',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.badge),
-                        hintText: '12.345.678-9',
-                      ),
-                      inputFormatters: [
-                        FilteringTextInputFormatter.allow(RegExp(r'[0-9kK]')),
-                        RutFormatter(),
-                      ],
-                      validator: (value) {
-                        if (value == null || value.isEmpty) return 'Requerido';
-                        if (!_isValidRut(value)) return 'RUN inválido';
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 16),
-
-                    TextFormField(
-                      controller: _emailController,
-                      enabled:
-                          widget.initialEmail ==
-                          null, // Bloquear si viene pre-llenado
-                      decoration: const InputDecoration(
-                        labelText: 'Correo Electrónico',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.email),
-                      ),
-                      keyboardType: TextInputType.emailAddress,
-                      autofillHints: const [AutofillHints.email],
-                      validator: (value) =>
-                          !value!.contains('@') ? 'Correo inválido' : null,
-                    ),
-                    const SizedBox(height: 16),
-
-                    TextFormField(
-                      controller: _passwordController,
-                      obscureText: true,
-                      autofillHints: const [AutofillHints.newPassword],
-                      decoration: const InputDecoration(
-                        labelText: 'Contraseña',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.lock),
-                      ),
-                      validator: (value) =>
-                          value!.length < 6 ? 'Mínimo 6 caracteres' : null,
-                    ),
-                    const SizedBox(height: 16),
-
-                    TextFormField(
-                      controller: _repeatPasswordController,
-                      obscureText: true,
-                      autofillHints: const [AutofillHints.newPassword],
-                      decoration: const InputDecoration(
-                        labelText: 'Repetir Contraseña',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.lock_outline),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Por favor repite la contraseña';
-                        }
-                        if (value != _passwordController.text) {
-                          return 'Las contraseñas no coinciden';
-                        }
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 30),
-
-                    _isLoading
-                        ? const CircularProgressIndicator()
-                        : FilledButton(
-                            onPressed: _submitRegister,
-                            style: FilledButton.styleFrom(
-                              backgroundColor: const Color(0xFFE91E63),
-                              minimumSize: const Size(double.infinity, 50),
-                            ),
-                            child: const Text('REGISTRARSE'),
+                        const SizedBox(height: 24),
+                      ] else ...[
+                        // Mensaje informativo si es un registro vinculado
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.blue[50],
+                            borderRadius: BorderRadius.circular(8),
                           ),
-                  ],
+                          child: Row(
+                            children: [
+                              const Icon(
+                                Icons.info_outline,
+                                color: Colors.blue,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  "Activando modo ${_selectedRole == 'rescuer' ? 'Rescatista' : 'Adoptante'} para tu cuenta.",
+                                  style: const TextStyle(
+                                    color: Colors.blue,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 24),
+                      ],
+
+                      TextFormField(
+                        controller: _nameController,
+                        decoration: const InputDecoration(
+                          labelText: 'Nombre Completo',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.person),
+                        ),
+                        validator: (value) =>
+                            value!.isEmpty ? 'Ingresa tu nombre' : null,
+                      ),
+                      const SizedBox(height: 16),
+
+                      TextFormField(
+                        controller: _runController,
+                        // Bloquear SOLO si viene pre-llenado y NO está vacío
+                        enabled:
+                            widget.initialRun == null ||
+                            widget.initialRun!.isEmpty,
+                        decoration: const InputDecoration(
+                          labelText: 'RUN',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.badge),
+                          hintText: '12.345.678-9',
+                        ),
+                        inputFormatters: [
+                          FilteringTextInputFormatter.allow(RegExp(r'[0-9kK]')),
+                          RutFormatter(),
+                        ],
+                        validator: (value) {
+                          if (value == null || value.isEmpty)
+                            return 'Requerido';
+                          if (!_isValidRut(value)) return 'RUN inválido';
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 16),
+
+                      TextFormField(
+                        controller: _emailController,
+                        enabled:
+                            widget.initialEmail ==
+                            null, // Bloquear si viene pre-llenado
+                        decoration: const InputDecoration(
+                          labelText: 'Correo Electrónico',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.email),
+                        ),
+                        keyboardType: TextInputType.emailAddress,
+                        autofillHints: const [AutofillHints.email],
+                        validator: (value) =>
+                            !value!.contains('@') ? 'Correo inválido' : null,
+                      ),
+                      const SizedBox(height: 16),
+
+                      TextFormField(
+                        controller: _passwordController,
+                        obscureText: true,
+                        autofillHints: const [AutofillHints.newPassword],
+                        decoration: const InputDecoration(
+                          labelText: 'Contraseña',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.lock),
+                        ),
+                        validator: (value) =>
+                            value!.length < 6 ? 'Mínimo 6 caracteres' : null,
+                      ),
+                      const SizedBox(height: 16),
+
+                      TextFormField(
+                        controller: _repeatPasswordController,
+                        obscureText: true,
+                        autofillHints: const [AutofillHints.newPassword],
+                        decoration: const InputDecoration(
+                          labelText: 'Repetir Contraseña',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.lock_outline),
+                        ),
+                        validator: (value) {
+                          if (value == null || value.isEmpty) {
+                            return 'Por favor repite la contraseña';
+                          }
+                          if (value != _passwordController.text) {
+                            return 'Las contraseñas no coinciden';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 30),
+
+                      _isLoading
+                          ? const CircularProgressIndicator()
+                          : FilledButton(
+                              onPressed: _submitRegister,
+                              style: FilledButton.styleFrom(
+                                backgroundColor: const Color(0xFFE91E63),
+                                minimumSize: const Size(double.infinity, 50),
+                              ),
+                              child: const Text('REGISTRARSE'),
+                            ),
+                    ],
+                  ),
                 ),
               ),
             ),

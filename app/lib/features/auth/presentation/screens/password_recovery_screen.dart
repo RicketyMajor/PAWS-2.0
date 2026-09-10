@@ -128,33 +128,35 @@ class _PasswordRecoveryScreenState extends State<PasswordRecoveryScreen> {
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 420),
-            child: Column(
-              children: [
-                // Indicador de pasos
-                Row(
-                  children: [
-                    _buildStep(0, "Correo"),
-                    _buildLine(0),
-                    _buildStep(1, "Código"),
-                    _buildLine(1),
-                    _buildStep(2, "Nueva Clave"),
-                  ],
-                ),
-                const SizedBox(height: 30),
-
-                Expanded(
-                  child: PageView(
-                    controller: _pageController,
-                    physics:
-                        const NeverScrollableScrollPhysics(), // Bloquear swipe manual
+            child: AutofillGroup(
+              child: Column(
+                children: [
+                  // Indicador de pasos
+                  Row(
                     children: [
-                      _buildEmailStep(),
-                      _buildCodeStep(),
-                      _buildPasswordStep(),
+                      _buildStep(0, "Correo"),
+                      _buildLine(0),
+                      _buildStep(1, "Código"),
+                      _buildLine(1),
+                      _buildStep(2, "Nueva Clave"),
                     ],
                   ),
-                ),
-              ],
+                  const SizedBox(height: 30),
+
+                  Expanded(
+                    child: PageView(
+                      controller: _pageController,
+                      physics:
+                          const NeverScrollableScrollPhysics(), // Bloquear swipe manual
+                      children: [
+                        _buildEmailStep(),
+                        _buildCodeStep(),
+                        _buildPasswordStep(),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
