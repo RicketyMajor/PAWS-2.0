@@ -72,7 +72,6 @@ class PetsBloc extends Bloc<PetsEvent, PetsState> {
               );
               lat = position.latitude;
               lon = position.longitude;
-              print("Ubicación obtenida: $lat, $lon");
             }
           }
         } catch (e) {

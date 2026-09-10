@@ -60,20 +60,15 @@ class _PawsAppState extends State<PawsApp> {
     try {
       if (Firebase.apps.isEmpty) return;
       FirebaseMessaging messaging = FirebaseMessaging.instance;
-      NotificationSettings settings = await messaging.requestPermission(
+      // Ask for the notification permission. The device token is read and sent
+      // to the backend at login (login_screen.dart); printing it here would put
+      // a device credential in the browser console, where the user and any
+      // extension can read it.
+      await messaging.requestPermission(
         alert: true,
         badge: true,
         sound: true,
       );
-
-      if (settings.authorizationStatus == AuthorizationStatus.authorized) {
-        try {
-          String? token = await messaging.getToken();
-          if (token != null) print("FCM Token: $token");
-        } catch (e) {
-          print("Error obteniendo FCM Token (Normal en web dev): $e");
-        }
-      }
     } catch (e) {
       print("Error configurando FCM: $e");
     }
