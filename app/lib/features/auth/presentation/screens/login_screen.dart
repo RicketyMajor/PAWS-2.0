@@ -8,8 +8,6 @@ import 'register_screen.dart';
 import 'password_recovery_screen.dart';
 import '../../../../core/presentation/main_layout_screen.dart';
 import '../../../admin/presentation/screens/admin_dashboard_screen.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
-import '../../../../features/user/data/user_repository.dart';
 
 class LoginScreen extends StatelessWidget {
   const LoginScreen({super.key});
@@ -52,15 +50,6 @@ class _LoginFormState extends State<_LoginForm> {
               backgroundColor: Colors.green,
             ),
           );
-
-          try {
-            String? fcmToken = await FirebaseMessaging.instance.getToken();
-            if (fcmToken != null && mounted) {
-              await context.read<UserRepository>().saveDeviceToken(fcmToken);
-            }
-          } catch (e) {
-            print("Error configurando notificaciones: $e");
-          }
 
           if (!mounted) return;
 

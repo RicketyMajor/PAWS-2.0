@@ -49,7 +49,7 @@ func ConnectRabbitMQ(url string) (*RabbitMQClient, error) {
 	}
 
 	// Declare critical queues to ensure they exist on the server.
-	queues := []string{"email_notifications", "push_notifications"}
+	queues := []string{"email_notifications"}
 	for _, q := range queues {
 		_, err = ch.QueueDeclare(q, true, false, false, false, nil)
 		if err != nil {

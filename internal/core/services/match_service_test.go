@@ -156,7 +156,7 @@ func TestSwipeDeckRanksByFit(t *testing.T) {
 		HasYard: false, FamilyComposition: "Family w/Kids", OtherPets: "None",
 	})
 
-	deck, err := NewMatchService(db, nil, nil).GetSwipeDeck(adopterID, 0, 0)
+	deck, err := NewMatchService(db, nil).GetSwipeDeck(adopterID, 0, 0)
 	if err != nil {
 		t.Fatal("GetSwipeDeck:", err)
 	}
@@ -169,7 +169,7 @@ func TestSwipeDeckRanksByFit(t *testing.T) {
 func TestSwipeDeckWithoutProfileFallsBackCleanly(t *testing.T) {
 	db, adopterID := setupDeckDB(t, "decknoprofile", nil)
 
-	deck, err := NewMatchService(db, nil, nil).GetSwipeDeck(adopterID, 0, 0)
+	deck, err := NewMatchService(db, nil).GetSwipeDeck(adopterID, 0, 0)
 	if err != nil {
 		t.Fatal("GetSwipeDeck:", err)
 	}
@@ -187,7 +187,7 @@ func TestSwipeDeckBreaksTiesByDistance(t *testing.T) {
 	})
 
 	// Sitting on top of Worst, the farthest from Best.
-	deck, err := NewMatchService(db, nil, nil).GetSwipeDeck(adopterID, -33.4, -70.6)
+	deck, err := NewMatchService(db, nil).GetSwipeDeck(adopterID, -33.4, -70.6)
 	if err != nil {
 		t.Fatal("GetSwipeDeck:", err)
 	}

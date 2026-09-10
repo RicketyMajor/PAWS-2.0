@@ -2,12 +2,10 @@
 package services
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/domain"
-	"github.com/RicketyMajor/PAWS-2.0/internal/infrastructure/messaging"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -25,27 +23,17 @@ const (
 	MatchAccepted    = domain.MatchAccepted
 )
 
-// NotificationEvent defines the structure for a push notification.
-type NotificationEvent struct {
-	UserID uint   `json:"user_id"`
-	Title  string `json:"title"`
-	Body   string `json:"body"`
-	Type   string `json:"type"`
-}
-
 // MatchService provides business logic for pet matching operations.
 type MatchService struct {
 	db         *gorm.DB
 	petService *PetService
-	mqClient   *messaging.RabbitMQClient
 }
 
 // NewMatchService creates a new MatchService.
-func NewMatchService(db *gorm.DB, petService *PetService, mq *messaging.RabbitMQClient) *MatchService {
+func NewMatchService(db *gorm.DB, petService *PetService) *MatchService {
 	return &MatchService{
 		db:         db,
 		petService: petService,
-		mqClient:   mq,
 	}
 }
 
@@ -168,22 +156,7 @@ func (s *MatchService) RespondMatch(rescuerID, matchID uint, accept bool) error 
 	if err := s.db.Model(&domain.Match{}).Where("id = ?", matchID).Update("status", status).Error; err != nil {
 		return err
 	}
-	// If accepted, send a notification to the adopter.
-	if accept && s.mqClient != nil {
-		go func() {
-			var match domain.Match
-			if err := s.db.Preload("Pet").First(&match, matchID).Error; err == nil {
-				event := NotificationEvent{
-					UserID: match.AdopterID,
-					Title:  "It's a Match! 🐾",
-					Body:   fmt.Sprintf("Your request for %s has been accepted. Start chatting now!", match.Pet.Name),
-					Type:   "match",
-				}
-				body, _ := json.Marshal(event)
-				_ = s.mqClient.Publish("push_notifications", body)
-			}
-		}()
-	}
+	// The adopter learns of the acceptance from their matches list; there is no push.
 	return nil
 }
 

@@ -21,7 +21,7 @@ func newTestClient(h *Hub, userID uint) *Client {
 // is fine: the process ends with the run and the loop holds nothing but its channels.
 func runTestHub(t *testing.T) *Hub {
 	t.Helper()
-	h := NewHub(nil, nil)
+	h := NewHub(nil)
 	go h.Run()
 	return h
 }

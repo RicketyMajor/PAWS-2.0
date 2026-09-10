@@ -144,9 +144,7 @@ func main() {
 	emailClient := email.NewEmailClient()
 
 	if mqClient != nil {
-		// Start resilient workers in separate goroutines
 		go workers.StartEmailConsumer(rabbitURL, emailClient)
-		go workers.StartNotificationConsumer(rabbitURL, database.DB)
 	}
 
 	// =========================================================================
@@ -162,9 +160,9 @@ func main() {
 	fileService := services.NewFileService()
 
 	reportService := services.NewReportService(database.DB, authService)
-	matchService := services.NewMatchService(database.DB, petService, mqClient)
+	matchService := services.NewMatchService(database.DB, petService)
 
-	hub := httpTransport.NewHub(chatService, mqClient)
+	hub := httpTransport.NewHub(chatService)
 	go hub.Run()
 
 	// =========================================================================
@@ -180,7 +178,6 @@ func main() {
 	uploadHandler := httpTransport.NewUploadHandler(fileService)
 	wsHandler := httpTransport.NewWSHandler(hub)
 	adminHandler := httpTransport.NewAdminHandler(reportService)
-	notificationHandler := httpTransport.NewNotificationHandler(userService)
 
 	// =========================================================================
 	// Router & Middleware
@@ -254,7 +251,6 @@ func main() {
 			protected.GET("/pets/my", petHandler.GetMyPets)
 			protected.POST("/files/upload", uploadHandler.Upload)
 			protected.DELETE("/pets/:id", petHandler.Delete)
-			protected.POST("/notifications/token", notificationHandler.UpdateToken)
 
 			match := protected.Group("/matches")
 			{

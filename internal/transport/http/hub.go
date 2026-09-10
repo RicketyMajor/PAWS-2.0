@@ -6,7 +6,6 @@ import (
 	"log"
 
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/services"
-	"github.com/RicketyMajor/PAWS-2.0/internal/infrastructure/messaging"
 )
 
 // =========================================================================
@@ -42,7 +41,6 @@ type Hub struct {
 	// on delivery; worth it the day someone uses the phone and the browser at once.
 	clients     map[uint]*Client
 	chatService *services.ChatService
-	mqClient    *messaging.RabbitMQClient
 
 	broadcast  chan *ClientMessageWrapper
 	register   chan *Client
@@ -50,14 +48,13 @@ type Hub struct {
 }
 
 // NewHub creates a new Hub instance.
-func NewHub(chatService *services.ChatService, mq *messaging.RabbitMQClient) *Hub {
+func NewHub(chatService *services.ChatService) *Hub {
 	return &Hub{
 		broadcast:   make(chan *ClientMessageWrapper),
 		register:    make(chan *Client),
 		unregister:  make(chan *Client),
 		clients:     make(map[uint]*Client),
 		chatService: chatService,
-		mqClient:    mq,
 	}
 }
 
@@ -126,40 +123,15 @@ func (h *Hub) handleMessage(sender *Client, msgBytes []byte) {
 		Payload: savedMsg,
 	}
 
-	// 4. Smart Routing & Push Notifications
+	// 4. Routing
 	// A) Send confirmation to the sender (always)
 	sender.sendJSON(response.Type, response.Payload)
 
-	// B) Attempt to deliver to the recipient
+	// B) Deliver to the recipient if they are connected. An offline recipient gets
+	// no alert: the message is already persisted above and they read it on their
+	// next open. There is no push channel.
 	if receiver, isOnline := h.clients[receiverID]; isOnline {
-		// Case 1: Recipient is ONLINE -> deliver via WebSocket
 		receiver.sendJSON(response.Type, response.Payload)
-	} else {
-		// Case 2: Recipient is OFFLINE -> send a push notification via RabbitMQ
-		h.sendPushNotification(receiverID, sender.userID, input.Content)
-	}
-}
-
-// sendPushNotification publishes a push notification event to RabbitMQ.
-func (h *Hub) sendPushNotification(receiverID, senderID uint, content string) {
-	if h.mqClient == nil {
-		return
-	}
-
-	event := services.NotificationEvent{
-		UserID: receiverID,
-		Title:  "New Message",
-		Body:   content,
-		Type:   "message",
-	}
-
-	body, _ := json.Marshal(event)
-
-	err := h.mqClient.Publish("push_notifications", body)
-	if err != nil {
-		log.Printf("Error queueing chat notification: %v", err)
-	} else {
-		log.Printf("Chat notification queued for user %d", receiverID)
 	}
 }
 

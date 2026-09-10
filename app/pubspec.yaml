@@ -55,8 +55,6 @@ dependencies:
   geolocator: ^10.1.0 # Para obtener lat/long del usuario
   # Arquitectura y Estado
   get_it: ^7.6.0 # Inyección de dependencias (opcional pero recomendada)
-  firebase_core: ^4.3.0
-  firebase_messaging: ^16.1.0
 
 dev_dependencies:
   flutter_test:

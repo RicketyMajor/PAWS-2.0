@@ -111,20 +111,4 @@ class UserRepository {
       throw Exception('Error subiendo imagen: $e');
     }
   }
-
-  // 4. GUARDAR TOKEN FCM
-  Future<void> saveDeviceToken(String fcmToken) async {
-    try {
-      final token = await authRepository.getToken();
-      if (token == null) return;
-
-      await _dio.post(
-        '${ApiConstants.baseUrl}/notifications/token',
-        data: {'token': fcmToken},
-        options: Options(headers: {'Authorization': 'Bearer $token'}),
-      );
-    } catch (e) {
-      print("Error guardando token FCM: $e");
-    }
-  }
 }

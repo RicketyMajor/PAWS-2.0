@@ -44,7 +44,4 @@ type User struct {
 	OtherPets         string `json:"other_pets"`
 	TimeAvailability  string `json:"time_availability"`
 	Experience        string `json:"experience"`
-
-	// --- Push Notifications ---
-	FCMToken string `json:"fcm_token,omitempty"` // Firebase Cloud Messaging token.
 }

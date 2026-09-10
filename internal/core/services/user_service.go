@@ -73,11 +73,6 @@ func (s *UserService) GetUser(userID uint) (*domain.User, error) {
 	return &user, err
 }
 
-// UpdateFCMToken saves or updates the Firebase Cloud Messaging token for a user.
-func (s *UserService) UpdateFCMToken(userID uint, token string) error {
-	return s.db.Model(&domain.User{}).Where("id = ?", userID).Update("fcm_token", token).Error
-}
-
 // GetUserProfile retrieves the extended user profile information.
 func (s *UserService) GetUserProfile(userID uint) (*domain.UserProfile, error) {
 	var profile domain.UserProfile

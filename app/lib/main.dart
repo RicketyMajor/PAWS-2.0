@@ -1,8 +1,5 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 
 // Imports de tus Repositorios
@@ -21,58 +18,12 @@ import 'features/admin/data/admin_repository.dart';
 import 'features/security/data/security_repository.dart';
 import 'features/reviews/data/reviews_repository.dart';
 
-Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  print("Notificación en Segundo Plano: ${message.messageId}");
-}
-
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-
-  try {
-    await Firebase.initializeApp();
-    if (!kIsWeb) {
-      FirebaseMessaging.onBackgroundMessage(
-        _firebaseMessagingBackgroundHandler,
-      );
-    }
-  } catch (e) {
-    print("⚠️ Advertencia: Firebase no se pudo inicializar: $e");
-  }
-
+void main() {
   runApp(const PawsApp());
 }
 
-class PawsApp extends StatefulWidget {
+class PawsApp extends StatelessWidget {
   const PawsApp({super.key});
-
-  @override
-  State<PawsApp> createState() => _PawsAppState();
-}
-
-class _PawsAppState extends State<PawsApp> {
-  @override
-  void initState() {
-    super.initState();
-    _setupFCM();
-  }
-
-  Future<void> _setupFCM() async {
-    try {
-      if (Firebase.apps.isEmpty) return;
-      FirebaseMessaging messaging = FirebaseMessaging.instance;
-      // Ask for the notification permission. The device token is read and sent
-      // to the backend at login (login_screen.dart); printing it here would put
-      // a device credential in the browser console, where the user and any
-      // extension can read it.
-      await messaging.requestPermission(
-        alert: true,
-        badge: true,
-        sound: true,
-      );
-    } catch (e) {
-      print("Error configurando FCM: $e");
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
