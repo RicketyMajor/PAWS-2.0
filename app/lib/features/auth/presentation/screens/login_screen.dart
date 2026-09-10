@@ -232,7 +232,10 @@ class _LoginFormState extends State<_LoginForm> {
                               );
                             },
                             style: TextButton.styleFrom(
-                              foregroundColor: Colors.grey,
+                              // shade700 is 5.89:1 on this background; plain
+                              // Colors.grey measured 2.55:1, under the 4.5:1 AA
+                              // floor, and shade600 only reaches 4.38:1.
+                              foregroundColor: Colors.grey.shade700,
                             ),
                             child: const Text("¿Olvidaste tu contraseña?"),
                           ),
