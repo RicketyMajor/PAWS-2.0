@@ -5,7 +5,9 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"unicode"
@@ -222,4 +224,58 @@ func splitWords(name string) []string {
 	}
 	flush()
 	return words
+}
+
+// dartInterpolation matches the values Dart splices into a string: $name and
+// ${expr}. Only these are checked, never the surrounding text, for the same
+// reason the Go walk looks at arguments and not at the format string — a print
+// reading "failed to save the token: $e" names a token and leaks nothing.
+var dartInterpolation = regexp.MustCompile(`\$\{?([A-Za-z_][A-Za-z0-9_.]*)`)
+
+// TestDartPrintsCarryNoPersonalData is the client-side half of the rule. Both
+// leaks this guard was written for were Dart — an FCM token and a pair of GPS
+// coordinates — and the Go walk cannot see them. avoid_print is already active
+// through flutter_lints, but nothing runs it: CI runs go test and nothing else.
+//
+// ponytail: this reads the source as text rather than parsing Dart, so it only
+// sees single-line prints. Upgrade path: run `dart analyze` in CI the day the
+// client gets a job of its own there.
+func TestDartPrintsCarryNoPersonalData(t *testing.T) {
+	root := filepath.Join("..", "..", "app", "lib")
+	checked := 0
+
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".dart") {
+			return err
+		}
+		source, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return rerr
+		}
+		checked++
+		rel, _ := filepath.Rel(filepath.Join("..", ".."), path)
+
+		for i, line := range strings.Split(string(source), "\n") {
+			call := strings.Index(line, "print(")
+			if call < 0 || strings.Contains(line, exemptMarker) {
+				continue
+			}
+			for _, match := range dartInterpolation.FindAllStringSubmatch(line[call:], -1) {
+				for _, part := range strings.Split(match[1], ".") {
+					if carriesPersonalData(part) {
+						t.Errorf("%s:%d: print interpolates %q, which carries personal data.\n"+
+							"The browser console is readable by the user and by any extension.",
+							filepath.ToSlash(rel), i+1, part)
+					}
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking the client: %v", err)
+	}
+	if checked < 10 {
+		t.Fatalf("only %d Dart files checked; the walk is not reaching the client", checked)
+	}
 }
