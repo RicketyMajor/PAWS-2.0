@@ -22,6 +22,47 @@ void main() {
   runApp(const PawsApp());
 }
 
+/// The single source of truth for the app's look. Lives outside the widget so a
+/// test can assert on it: the minimum touch targets below were measured on the
+/// deployed app, not assumed, and nothing else would notice if they vanished.
+final ThemeData pawsTheme = ThemeData(
+  primarySwatch: Colors.pink,
+  useMaterial3: true,
+  // Web resolves adaptivePlatformDensity to compact, which shrinks every
+  // button below the 44px minimum touch target: measured on the deployed
+  // login screen at 393px, the primary button painted 39px tall and the
+  // text buttons 32px, and a tap 5px above one did not register. The
+  // minimum sizes are explicit rather than left to density arithmetic,
+  // and they apply to every button in the app instead of one screen.
+  visualDensity: VisualDensity.standard,
+  filledButtonTheme: FilledButtonThemeData(
+    style: FilledButton.styleFrom(minimumSize: const Size(64, 48)),
+  ),
+  elevatedButtonTheme: ElevatedButtonThemeData(
+    style: ElevatedButton.styleFrom(minimumSize: const Size(64, 48)),
+  ),
+  outlinedButtonTheme: OutlinedButtonThemeData(
+    style: OutlinedButton.styleFrom(minimumSize: const Size(64, 48)),
+  ),
+  textButtonTheme: TextButtonThemeData(
+    style: TextButton.styleFrom(minimumSize: const Size(64, 48)),
+  ),
+  iconButtonTheme: IconButtonThemeData(
+    style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+  ),
+  appBarTheme: const AppBarTheme(
+    centerTitle: true,
+    backgroundColor: Colors.white,
+    elevation: 0,
+    iconTheme: IconThemeData(color: Colors.black),
+    titleTextStyle: TextStyle(
+      color: Colors.black,
+      fontSize: 20,
+      fontWeight: FontWeight.bold,
+    ),
+  ),
+);
+
 class PawsApp extends StatelessWidget {
   const PawsApp({super.key});
 
@@ -68,21 +109,7 @@ class PawsApp extends StatelessWidget {
       child: MaterialApp(
         title: 'PAWS',
         debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          primarySwatch: Colors.pink,
-          useMaterial3: true,
-          appBarTheme: const AppBarTheme(
-            centerTitle: true,
-            backgroundColor: Colors.white,
-            elevation: 0,
-            iconTheme: IconThemeData(color: Colors.black),
-            titleTextStyle: TextStyle(
-              color: Colors.black,
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ),
+        theme: pawsTheme,
         home: const AuthCheckScreen(),
       ),
     );
