@@ -25,3 +25,10 @@ context/
 CLAUDE.md
 PONYTAIL.md
 CHANGELOG.md
+
+# Python (scripts/)
+__pycache__/
+*.pyc
+
+# Playwright CLI scratch output
+.playwright-cli/
