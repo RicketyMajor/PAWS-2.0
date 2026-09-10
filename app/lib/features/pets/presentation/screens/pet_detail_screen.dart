@@ -106,7 +106,12 @@ class _PetDetailScreenState extends State<PetDetailScreen> {
             shape: BoxShape.circle,
           ),
           child: IconButton(
-            icon: const Icon(Icons.arrow_back, color: Colors.black),
+            icon: const Icon(
+              Icons.arrow_back,
+              color: Colors.black,
+              semanticLabel: 'Volver',
+            ),
+            tooltip: 'Volver',
             onPressed: () => Navigator.pop(context),
           ),
         ),
@@ -118,7 +123,12 @@ class _PetDetailScreenState extends State<PetDetailScreen> {
               shape: BoxShape.circle,
             ),
             child: IconButton(
-              icon: const Icon(Icons.delete, color: Colors.red),
+              icon: const Icon(
+                Icons.delete,
+                color: Colors.red,
+                semanticLabel: 'Eliminar mascota',
+              ),
+              tooltip: 'Eliminar mascota',
               onPressed: () => _deletePet(context),
             ),
           ),
@@ -148,6 +158,9 @@ class _PetDetailScreenState extends State<PetDetailScreen> {
                         width: double.infinity,
                         height: 400,
                         fit: BoxFit.cover,
+                        semanticLabel: gallery.length > 1
+                            ? 'Foto ${index + 1} de ${gallery.length} de ${widget.pet.name}'
+                            : 'Foto de ${widget.pet.name}',
                       );
                     },
                   ),
@@ -182,6 +195,7 @@ class _PetDetailScreenState extends State<PetDetailScreen> {
                       left: 10,
                       child: _NavButton(
                         icon: Icons.arrow_back_ios_new,
+                        label: 'Foto anterior',
                         onPressed: _prevImage,
                       ),
                     ),
@@ -193,6 +207,7 @@ class _PetDetailScreenState extends State<PetDetailScreen> {
                       right: 10,
                       child: _NavButton(
                         icon: Icons.arrow_forward_ios,
+                        label: 'Foto siguiente',
                         onPressed: _nextImage,
                       ),
                     ),
@@ -444,9 +459,14 @@ class _PetDetailScreenState extends State<PetDetailScreen> {
 // Botón de navegación (Flecha)
 class _NavButton extends StatelessWidget {
   final IconData icon;
+  final String label;
   final VoidCallback onPressed;
 
-  const _NavButton({required this.icon, required this.onPressed});
+  const _NavButton({
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -463,7 +483,8 @@ class _NavButton extends StatelessWidget {
         ],
       ),
       child: IconButton(
-        icon: Icon(icon, color: Colors.black87),
+        icon: Icon(icon, color: Colors.black87, semanticLabel: label),
+        tooltip: label,
         onPressed: onPressed,
       ),
     );

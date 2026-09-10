@@ -17,17 +17,21 @@ class ImageHelper {
   }
 
   /// Devuelve el Widget de Imagen inteligente
+  /// [semanticLabel] describes the image to a screen reader. Leave it null when
+  /// the image sits next to text that already names it — a labelled thumbnail
+  /// beside its own title is read twice, which is worse than silence.
   static Widget getImage(
     String? url, {
     double? width,
     double? height,
     BoxFit fit = BoxFit.cover,
+    String? semanticLabel,
   }) {
     final safeUrl = fixUrl(url ?? '');
 
     // Si la URL fue invalidada por el fixUrl, mostramos el placeholder directamente
     if (safeUrl.isEmpty) {
-      return _buildPlaceholder(width, height);
+      return _buildPlaceholder(width, height, semanticLabel);
     }
 
     return Image.network(
@@ -35,9 +39,10 @@ class ImageHelper {
       width: width,
       height: height,
       fit: fit,
+      semanticLabel: semanticLabel,
       // Si la imagen de Cloudinary llegara a fallar, este constructor la atrapa
       errorBuilder: (context, error, stackTrace) {
-        return _buildErrorPlaceholder(width, height);
+        return _buildErrorPlaceholder(width, height, semanticLabel);
       },
       loadingBuilder: (context, child, loadingProgress) {
         if (loadingProgress == null) return child;
@@ -60,34 +65,53 @@ class ImageHelper {
     );
   }
 
-  /// Provee la imagen para widgets como CircleAvatar
-  static ImageProvider getProvider(String? url) {
+  /// Provee la imagen para widgets como CircleAvatar.
+  /// Devuelve null cuando no hay foto: CircleAvatar cae en su backgroundColor.
+  /// Antes devolvía AssetImage('assets/images/placeholder.png'), un archivo que
+  /// no existe y que además no está declarado en pubspec.yaml, así que cada
+  /// avatar sin foto lanzaba una excepción de carga.
+  static ImageProvider? getProvider(String? url) {
     final safeUrl = fixUrl(url ?? '');
 
-    if (safeUrl.isEmpty) {
-      // Retornamos una imagen transparente o un asset por defecto
-      // (Asegúrate de tener un asset en esta ruta, o simplemente deja que el
-      // CircleAvatar maneje el color de fondo usando null en backgroundImage)
-      return const AssetImage('assets/images/placeholder.png');
-    }
+    if (safeUrl.isEmpty) return null;
     return NetworkImage(safeUrl);
   }
 
-  static Widget _buildPlaceholder(double? width, double? height) {
+  static Widget _buildPlaceholder(
+    double? width,
+    double? height,
+    String? semanticLabel,
+  ) {
     return Container(
       width: width,
       height: height,
       color: Colors.grey[200],
-      child: Icon(Icons.pets, color: Colors.grey[400], size: 40),
+      child: Icon(
+        Icons.pets,
+        color: Colors.grey[400],
+        size: 40,
+        semanticLabel: semanticLabel == null ? null : 'Sin foto',
+      ),
     );
   }
 
-  static Widget _buildErrorPlaceholder(double? width, double? height) {
+  static Widget _buildErrorPlaceholder(
+    double? width,
+    double? height,
+    String? semanticLabel,
+  ) {
     return Container(
       width: width,
       height: height,
       color: Colors.grey[200],
-      child: Icon(Icons.broken_image, color: Colors.grey[400], size: 40),
+      child: Icon(
+        Icons.broken_image,
+        color: Colors.grey[400],
+        size: 40,
+        semanticLabel: semanticLabel == null
+            ? null
+            : 'La foto no se pudo cargar',
+      ),
     );
   }
 }

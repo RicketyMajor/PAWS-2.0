@@ -339,7 +339,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         actions: [
           // 1. Botón Editar (Se mantiene igual)
           IconButton(
-            icon: Icon(_isEditing ? Icons.check : Icons.edit),
+            icon: Icon(
+              _isEditing ? Icons.check : Icons.edit,
+              semanticLabel: _isEditing ? 'Guardar cambios' : 'Editar perfil',
+            ),
+            tooltip: _isEditing ? 'Guardar cambios' : 'Editar perfil',
             onPressed: _isLoading
                 ? null
                 : (_isEditing

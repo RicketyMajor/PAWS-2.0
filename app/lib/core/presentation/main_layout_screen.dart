@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -139,11 +140,16 @@ class _MainLayoutScreenState extends State<MainLayoutScreen> {
             ),
           ];
 
-    return WillPopScope(
-      onWillPop: () async {
+    // canPop is false so every back gesture arrives here; leaving the app is an
+    // explicit SystemNavigator.pop. WillPopScope did the same but breaks the
+    // Android 14+ predictive back animation.
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
         if (_currentIndex != 0) {
           setState(() => _currentIndex = 0);
-          return false;
+          return;
         }
         final now = DateTime.now();
         if (_lastPressedTime == null ||
@@ -155,9 +161,9 @@ class _MainLayoutScreenState extends State<MainLayoutScreen> {
               duration: Duration(seconds: 2),
             ),
           );
-          return false;
+          return;
         }
-        return true;
+        SystemNavigator.pop();
       },
       child: Scaffold(
         // --- EL CAMBIO ESTÁ AQUÍ ---
@@ -183,6 +189,18 @@ class _MainLayoutScreenState extends State<MainLayoutScreen> {
   Widget _buildBadgedIcon(IconData icon, int count) {
     if (count == 0) return Icon(icon);
 
+    // The badge is a bare "3" glued to an icon: spelled out, or a screen reader
+    // reads a stray number next to the tab name.
+    return Semantics(
+      label: count == 1
+          ? '1 solicitud pendiente'
+          : '$count solicitudes pendientes',
+      excludeSemantics: true,
+      child: _buildBadge(icon, count),
+    );
+  }
+
+  Widget _buildBadge(IconData icon, int count) {
     return Stack(
       children: [
         Icon(icon),

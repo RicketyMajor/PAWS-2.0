@@ -9,6 +9,10 @@ class PetCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // No Semantics wrapper here on purpose: measured with a dumped semantics
+    // tree, Flutter already collapses the card's Texts into a single node that
+    // reads "Luna, 3 años | Perro | Labrador | ... | Apto niños". A
+    // MergeSemantics around it only adds a duplicate node.
     return Card(
       elevation: 4,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),

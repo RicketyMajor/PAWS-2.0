@@ -27,7 +27,11 @@ class MatchScreen extends StatelessWidget {
             // --- SOLUCIÓN: Usamos un Builder para heredar el contexto del BLoC ---
             Builder(
               builder: (ctx) => IconButton(
-                icon: const Icon(Icons.refresh),
+                icon: const Icon(
+                  Icons.refresh,
+                  semanticLabel: 'Recargar mascotas',
+                ),
+                tooltip: 'Recargar mascotas',
                 onPressed: () => ctx.read<PetsBloc>().add(LoadSwipeDeck()),
               ),
             ),
@@ -157,11 +161,13 @@ class MatchView extends StatelessWidget {
             children: [
               _ActionButton(
                 icon: Icons.close,
+                label: 'Descartar esta mascota',
                 color: Colors.red,
                 onPressed: () => controller.swipe(CardSwiperDirection.left),
               ),
               _ActionButton(
                 icon: Icons.favorite,
+                label: 'Enviar solicitud de adopción',
                 color: const Color(0xFFE91E63),
                 onPressed: () => controller.swipe(CardSwiperDirection.right),
               ),
@@ -175,11 +181,13 @@ class MatchView extends StatelessWidget {
 
 class _ActionButton extends StatelessWidget {
   final IconData icon;
+  final String label;
   final Color color;
   final VoidCallback onPressed;
 
   const _ActionButton({
     required this.icon,
+    required this.label,
     required this.color,
     required this.onPressed,
   });
@@ -200,7 +208,12 @@ class _ActionButton extends StatelessWidget {
       ),
       child: IconButton(
         iconSize: 40,
-        icon: Icon(icon, color: color),
+        // Both are needed: tooltip is the long-press hint for sighted users and
+        // lands on the semantics node as `tooltip`, which is NOT the accessible
+        // name. Only Icon.semanticLabel fills `label`; without it the button is
+        // announced as an unnamed button. Measured, not assumed.
+        tooltip: label,
+        icon: Icon(icon, color: color, semanticLabel: label),
         onPressed: onPressed,
       ),
     );

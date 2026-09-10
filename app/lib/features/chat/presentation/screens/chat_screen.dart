@@ -153,7 +153,12 @@ class _ChatScreenState extends State<ChatScreen> {
             backgroundColor: Colors.white,
             elevation: 1,
             leading: IconButton(
-              icon: const Icon(Icons.arrow_back, color: Color(0xFFE91E63)),
+              icon: const Icon(
+                Icons.arrow_back,
+                color: Color(0xFFE91E63),
+                semanticLabel: 'Volver',
+              ),
+              tooltip: 'Volver',
               onPressed: () => Navigator.pop(context),
             ),
             // 1. EL TÍTULO AHORA ES UN BOTÓN HACIA EL PERFIL
@@ -235,7 +240,11 @@ class _ChatScreenState extends State<ChatScreen> {
             actions: [
               // 2. BOTÓN DE LA MASCOTA
               IconButton(
-                icon: const Icon(Icons.pets, color: Color(0xFFE91E63)),
+                icon: const Icon(
+                  Icons.pets,
+                  color: Color(0xFFE91E63),
+                  semanticLabel: "Ver mascota",
+                ),
                 tooltip: "Ver mascota",
                 onPressed: () async {
                   // 1. Mostrar pantalla de carga
@@ -682,7 +691,13 @@ class _ChatScreenState extends State<ChatScreen> {
               backgroundColor: const Color(0xFFE91E63),
               radius: 22,
               child: IconButton(
-                icon: const Icon(Icons.send, color: Colors.white, size: 20),
+                icon: const Icon(
+                  Icons.send,
+                  color: Colors.white,
+                  size: 20,
+                  semanticLabel: 'Enviar mensaje',
+                ),
+                tooltip: 'Enviar mensaje',
                 onPressed: () => _sendMessage(context),
               ),
             ),

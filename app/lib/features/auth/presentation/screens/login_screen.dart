@@ -133,10 +133,16 @@ class _LoginFormState extends State<_LoginForm> {
                               prefixIcon: const Icon(Icons.lock_outline),
                               border: const OutlineInputBorder(),
                               suffixIcon: IconButton(
+                                tooltip: _isPasswordVisible
+                                    ? 'Ocultar contraseña'
+                                    : 'Mostrar contraseña',
                                 icon: Icon(
                                   _isPasswordVisible
                                       ? Icons.visibility_off
                                       : Icons.visibility,
+                                  semanticLabel: _isPasswordVisible
+                                      ? 'Ocultar contraseña'
+                                      : 'Mostrar contraseña',
                                 ),
                                 onPressed: () {
                                   setState(() {
