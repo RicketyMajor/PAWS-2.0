@@ -168,6 +168,12 @@ func (h *Hub) sendPushNotification(receiverID, senderID uint, content string) {
 // =========================================================================
 
 // sendJSON is a helper to marshal a payload and send it to a client.
+//
+// ponytail: this send blocks. The hub calls it from its own goroutine to deliver to a
+// receiver, so one client that stops reading fills its 256-slot buffer and freezes the
+// chat for everyone. Ceiling: a single slow reader stalls the whole hub. Upgrade path:
+// select with a default that drops the message and unregisters the client, the day a
+// stalled connection actually shows up in the logs.
 func (c *Client) sendJSON(typeMsg string, payload interface{}) {
 	msg := OutputMessage{Type: typeMsg, Payload: payload}
 	bytes, _ := json.Marshal(msg)
