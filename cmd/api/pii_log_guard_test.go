@@ -234,12 +234,15 @@ var dartInterpolation = regexp.MustCompile(`\$\{?([A-Za-z_][A-Za-z0-9_.]*)`)
 
 // TestDartPrintsCarryNoPersonalData is the client-side half of the rule. Both
 // leaks this guard was written for were Dart — an FCM token and a pair of GPS
-// coordinates — and the Go walk cannot see them. avoid_print is already active
-// through flutter_lints, but nothing runs it: CI runs go test and nothing else.
+// coordinates — and the Go walk cannot see them.
+//
+// CI now runs flutter analyze too, but that does NOT replace this: avoid_print
+// reports at info level and the job passes --no-fatal-infos, so a reintroduced
+// print would not break the build. This still does.
 //
 // ponytail: this reads the source as text rather than parsing Dart, so it only
-// sees single-line prints. Upgrade path: run `dart analyze` in CI the day the
-// client gets a job of its own there.
+// sees single-line prints. Upgrade path: drop this the day flutter analyze runs
+// with avoid_print promoted to an error in analysis_options.yaml.
 func TestDartPrintsCarryNoPersonalData(t *testing.T) {
 	root := filepath.Join("..", "..", "app", "lib")
 	checked := 0
