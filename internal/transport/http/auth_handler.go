@@ -96,7 +96,7 @@ func (h *AuthHandler) SwitchRole(c *gin.Context) {
 // respondOTPError turns a failed OTP dispatch into a status. Throttling is the
 // caller asking too fast (429); everything else is ours (500), and its cause exists
 // only inside err — the client is told nothing, so it has to be logged here.
-func respondOTPError(c *gin.Context, email, generic string, err error) {
+func respondOTPError(c *gin.Context, generic string, err error) {
 	if errors.Is(err, services.ErrOTPThrottled) {
 		c.JSON(http.StatusTooManyRequests, gin.H{
 			"error": "A code was sent to this address moments ago. Please wait a minute before requesting another.",
@@ -109,7 +109,7 @@ func respondOTPError(c *gin.Context, email, generic string, err error) {
 		})
 		return
 	}
-	log.Printf("sending code to %s failed: %v", email, err)
+	log.Printf("otp delivery failed: %v", err)
 	c.JSON(http.StatusInternalServerError, gin.H{"error": generic})
 }
 
@@ -122,7 +122,7 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 	}
 
 	if _, err := h.otpService.GenerateRecoveryOTP(req.Email); err != nil {
-		respondOTPError(c, req.Email, "Error sending recovery code", err)
+		respondOTPError(c, "Error sending recovery code", err)
 		return
 	}
 
@@ -189,7 +189,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	}
 
 	if _, err = h.otpService.GenerateOTP(req.Email); err != nil {
-		respondOTPError(c, req.Email, "Error sending verification code", err)
+		respondOTPError(c, "Error sending verification code", err)
 		return
 	}
 
@@ -250,7 +250,7 @@ func (h *AuthHandler) RequestOTP(c *gin.Context) {
 		return
 	}
 	if _, err := h.otpService.GenerateOTP(req.Email); err != nil {
-		respondOTPError(c, req.Email, "OTP system error", err)
+		respondOTPError(c, "OTP system error", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Code sent"})

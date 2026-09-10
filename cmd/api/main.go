@@ -110,12 +110,12 @@ func main() {
 	if err := database.DB.Where("email = ?", targetEmail).First(&adminUser).Error; err == nil {
 		if adminUser.Role != "admin" {
 			database.DB.Model(&adminUser).Update("role", "admin")
-			log.Printf("User %s promoted to ADMIN.", targetEmail)
+			log.Println("Admin user promoted to ADMIN.")
 		} else {
 			log.Println("Admin user is already correctly configured.")
 		}
 	} else {
-		log.Printf("NOTICE: User %s does not exist in the DB yet.", targetEmail)
+		log.Println("NOTICE: the admin user does not exist in the DB yet.")
 	}
 
 	// =========================================================================

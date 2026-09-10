@@ -106,6 +106,6 @@ func (c *EmailClient) Send(to, subject, body string) error {
 	// closed, which would cost a fresh TLS handshake on every send.
 	_, _ = io.Copy(io.Discard, resp.Body)
 
-	log.Printf("[Worker email_notifications] Correo entregado exitosamente vía HTTP a: %s", to)
+	log.Println("[email] delivered")
 	return nil
 }

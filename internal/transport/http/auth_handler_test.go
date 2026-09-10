@@ -21,7 +21,7 @@ func respond(t *testing.T, err error) (int, string) {
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/auth/otp/request", nil)
 
-	respondOTPError(c, "someone@example.com", "OTP system error", err)
+	respondOTPError(c, "OTP system error", err)
 	return w.Code, w.Body.String()
 }
 
