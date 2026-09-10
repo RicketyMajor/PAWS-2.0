@@ -120,7 +120,10 @@ func (s *PetService) GetByUserID(userID uint) ([]domain.Pet, error) {
 
 // GetNearby retrieves available pets within a certain distance of a given location.
 func (s *PetService) GetNearby(lat, lng, dist float64) ([]domain.Pet, error) {
-	var pets []domain.Pet
+	// Initialized, not declared nil: Raw().Scan() leaves an unmatched slice nil, and a
+	// nil slice marshals to `null` where every other list endpoint answers `[]`. Find()
+	// does this on its own, which is why only this query had the inconsistency.
+	pets := []domain.Pet{}
 	// Simple Haversine formula in SQL
 	query := `
 		SELECT *, (
