@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # -------------------
   # PostgreSQL Database
@@ -12,10 +10,16 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
       POSTGRES_DB: paws-db
-    ports:
-      - "5432:5432"
+    # Sin publicar al host a propósito: el backend llega por la red de compose y el
+    # arnés lee Redis con `docker compose exec`. Publicarlo solo sirve para chocar
+    # con el Postgres que ya corre en la máquina.
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d paws-db"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
 
   # -------------------
   # Redis Cache
@@ -24,25 +28,6 @@ services:
     image: redis:alpine
     container_name: paws-redis
     restart: always
-    ports:
-      - "6379:6379"
-
-  # -------------------
-  # MinIO Storage
-  # -------------------
-  minio:
-    image: minio/minio
-    container_name: paws-minio
-    restart: always
-    ports:
-      - "9000:9000" # S3 API
-      - "9001:9001" # Web Console
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    command: server /data --console-address ":9001"
-    volumes:
-      - minio_data:/data
 
   # -------------------
   # Backend Application
@@ -52,48 +37,39 @@ services:
     container_name: paws-backend
     restart: always
     depends_on:
-      - db
-      - redis
-      - minio
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
     ports:
       - "8080:8080"
     environment:
       PORT: 8080
       
-      # --- Database Config ---
-      DB_HOST: db
-      DB_PORT: 5432
-      DB_USER: postgres
-      DB_PASSWORD: password
-      DB_NAME: paws-db
-      DB_SSL_MODE: disable
-      
-      # --- Redis Config ---
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      REDIS_PASSWORD: ""
-      
+      # --- Database and cache ---
+      # Written out in full, NEVER as ${DATABASE_URL}: compose interpolates that from
+      # .env, which points at Supabase and Upstash. An accidental ${...} here would aim
+      # the local stack at production.
+      DATABASE_URL: "postgres://postgres:password@db:5432/paws-db?sslmode=disable"
+      REDIS_URL: "redis://redis:6379/0"
+
       # --- Security ---
-      JWT_SECRET: "tu_secreto"
+      # Local only. Production keeps its own secret in Render.
+      JWT_SECRET: "local-development-secret-not-used-anywhere-else"
 
       # --- Email ---
       # Sin credenciales de Brevo el envio es un fallo duro, asi que el stack local
       # simula: el codigo OTP se imprime en los logs del contenedor.
       EMAIL_SIMULATION: "true"
 
-      # --- MinIO Storage Config ---
-      MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
-      MINIO_BUCKET: paws-bucket
-      MINIO_USE_SSL: "false"
-      
-      # Public URL for storage access
-      STORAGE_PUBLIC_URL: http://10.0.2.2:9000 
+      # --- Storage ---
+      # The only value taken from .env on purpose. With it the walkthrough exercises the
+      # real upload path; without it FileService degrades and the image checks are
+      # skipped, which the harness reports rather than failing on.
+      CLOUDINARY_URL: "${CLOUDINARY_URL:-}"
 
 # -------------------
 # Volumes
 # -------------------
 volumes:
   postgres_data:
-  minio_data:

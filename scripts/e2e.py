@@ -22,7 +22,10 @@ to the hub. That makes this script the behavioural check for that fix.
 
 import argparse
 import json
+import os
+import random
 import struct
+import subprocess
 import sys
 import time
 import uuid
@@ -110,6 +113,27 @@ def publish(api, token, spec, jitter=0.0):
     return resp.status_code, (body.get("pet", body) or {}), resp.text
 
 
+def fit_score(pet, profile):
+    """Recompute the deck score from the pet as the API returns it: one point per
+    need this adopter's home can meet. Mirrors GetSwipeDeck, deliberately written
+    from the outside so a change in the query has to survive being observed."""
+    def flag(*names):
+        for n in names:
+            if n in pet:
+                return bool(pet[n])
+        return False
+
+    has_kids = profile["family_composition"] == "Family w/Kids"
+    has_dogs = profile["other_pets"] in ("Dogs", "Both")
+    has_cats = profile["other_pets"] in ("Cats", "Both")
+    return (
+        (0 if flag("requires_yard", "RequiresYard") and not profile["has_yard"] else 1)
+        + (0 if has_kids and not flag("good_with_kids", "GoodWithKids") else 1)
+        + (0 if has_dogs and not flag("good_with_dogs", "GoodWithDogs") else 1)
+        + (0 if has_cats and not flag("good_with_cats", "GoodWithCats") else 1)
+    )
+
+
 def image_url(pet):
     images = pet.get("images") or pet.get("Images") or []
     return (images[0].get("url") or images[0].get("URL")) if images else None
@@ -124,6 +148,111 @@ def seed(api, token, count, r):
         status, pet, text = publish(api, token, named, jitter=(i % 5) * 0.01)
         pet_id = pet.get("id") or pet.get("ID")
         r.check(status in (200, 201) and pet_id, f"{named[0]}", f"{status}, id={pet_id}, {image_url(pet) or text[:60]}")
+    return 1 if r.failed else 0
+
+
+# =========================================================================
+# Bootstrap: build the two accounts the walkthrough needs, without a mailbox
+# =========================================================================
+#
+# Only works against a local stack running with EMAIL_SIMULATION=true, where the
+# OTP never leaves the machine: it is written to Redis and read back from there.
+# The registration itself is the real one — same endpoints, same validation, same
+# bcrypt, same Redis handover — so the accounts it produces are ordinary accounts.
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# The adopter is born with a profile so the deck has something to rank on: kids at
+# home and no yard, which is the case that separates the seeded pets.
+ADOPTER_PROFILE = {
+    "housing_type": "Apartment",
+    "housing_ownership": "Rented",
+    "has_yard": False,
+    "has_fence": False,
+    "family_composition": "Family w/Kids",
+    "other_pets": "None",
+    "time_availability": "Medium",
+    "experience": "Beginner",
+}
+
+
+def run_dv(number):
+    """Check digit of a Chilean RUN, modulo 11 — the same algorithm the app used."""
+    m, s, n = 0, 1, number
+    while n:
+        s = (s + n % 10 * (9 - m % 6)) % 11
+        n //= 10
+        m += 1
+    return str(s - 1) if s else "K"
+
+
+def make_run():
+    """A RUN that is unique per run and correct in its check digit."""
+    n = random.randint(10_000_000, 24_999_999)
+    return f"{n // 1000000}.{n // 1000 % 1000:03d}.{n % 1000:03d}-{run_dv(n)}"
+
+
+def read_otp(email, service="redis"):
+    """Read the code straight out of the local Redis, where sendOTP just put it."""
+    out = subprocess.run(
+        ["docker", "compose", "exec", "-T", service, "redis-cli", "GET", f"otp:{email}"],
+        capture_output=True, text=True, cwd=REPO, timeout=30,
+    )
+    code = out.stdout.strip()
+    return code if code and code.lower() != "(nil)" else ""
+
+
+def create_account(api, role, r, profile=None):
+    """Register, read the OTP, verify. Returns the token, or None on failure."""
+    tag = uuid.uuid4().hex[:8]
+    email = f"paws-{role}-{tag}@example.com"
+    account = {
+        "name": f"Test {role.title()} {tag}",
+        "email": email,
+        "password": f"local-test-{tag}",
+        "run": make_run(),
+        "role": role,
+    }
+
+    resp = requests.post(f"{api}/auth/register", json=account, timeout=60)
+    if not r.check(resp.status_code == 201, f"registro de {role}", f"{resp.status_code} {resp.text[:120]}"):
+        return None
+
+    code = read_otp(email)
+    if not r.check(len(code) == 6, f"OTP de {role} leído de Redis", f"{len(code)} dígitos"):
+        return None
+
+    resp = requests.post(f"{api}/auth/otp/verify", json={"email": email, "code": code}, timeout=60)
+    token = (resp.json() or {}).get("token") if resp.ok else None
+    if not r.check(bool(token), f"cuenta de {role} creada", f"{resp.status_code} {resp.text[:120]}"):
+        return None
+
+    if profile:
+        body = dict(profile, name=account["name"], bio="", phone="+56900000000", photo_url="")
+        resp = requests.put(f"{api}/profile", headers=auth(token), json=body, timeout=60)
+        r.check(resp.status_code in (200, 201), f"perfil de {role}", f"{resp.status_code} {resp.text[:120]}")
+
+    print(f"   {role}: {email}  ·  RUN {account['run']}")
+    return token
+
+
+def bootstrap(args, r):
+    print("\n== Creando las dos cuentas ==")
+    if "localhost" not in args.api and "127.0.0.1" not in args.api:
+        print(f"!! --bootstrap solo corre contra un stack local. --api es {args.api}")
+        return 1
+
+    tok_a = create_account(args.api, "rescuer", r)
+    tok_b = create_account(args.api, "adopter", r, profile=ADOPTER_PROFILE)
+    if not (tok_a and tok_b):
+        return 1
+
+    for path, token in ((args.token_a, tok_a), (args.token_b, tok_b)):
+        target = os.path.expanduser(path)
+        with open(target, "w") as fh:
+            fh.write(token)
+        os.chmod(target, 0o600)
+        print(f"   token → {target}")
     return 1 if r.failed else 0
 
 
@@ -150,8 +279,12 @@ def walkthrough(args, tok_a, tok_b, r):
     pet_id = pet.get("id") or pet.get("ID")
     r.check(status in (200, 201) and pet_id, "POST /pets", f"{status}, id={pet_id}")
 
-    url = image_url(pet)
-    if r.check(bool(url), "la mascota trae imagen", url or text[:120]):
+    # POST /pets responde con la mascota recién creada y SIN su galería: las filas de
+    # PetImage se escriben pero no se recargan. La imagen se comprueba releyendo, que
+    # es lo que hace el cliente de todos modos.
+    fetched = requests.get(f"{api}/pets/{pet_id}", timeout=30)
+    url = image_url((fetched.json() if fetched.ok else {}) or {})
+    if r.check(bool(url), "la mascota trae imagen", url or fetched.text[:120]):
         r.check("cloudinary" in url.lower(), "la imagen se sirve desde Cloudinary", url)
         r.check(requests.head(url, timeout=30).status_code == 200, "la imagen responde 200")
 
@@ -170,6 +303,15 @@ def walkthrough(args, tok_a, tok_b, r):
         any((p.get("id") or p.get("ID")) == pet_id for p in deck),
         "la mascota recién publicada está en el mazo", f"{len(deck)} candidatas",
     )
+
+    # The deck must come back ranked by how well each pet fits this adopter, best
+    # first. Recomputed here from what the API returns, so the check is on observed
+    # behaviour and not on a copy of the query. Only meaningful when the adopter has
+    # a profile — --bootstrap gives B one; a hand-made account may not have.
+    scores = [fit_score(p, ADOPTER_PROFILE) for p in deck]
+    ordered = all(a >= b for a, b in zip(scores, scores[1:]))
+    r.check(ordered or len(set(scores)) < 2, "el mazo llega ordenado por afinidad",
+            f"puntajes en orden: {scores}")
 
     print("\n== 4. B desliza a la derecha y A ve la solicitud ==")
     resp = requests.post(f"{api}/matches/swipe", headers=auth(tok_b),
@@ -212,7 +354,7 @@ def walkthrough(args, tok_a, tok_b, r):
                 frame = json.loads(ws_a2.recv())
             except websocket.WebSocketTimeoutException:
                 break
-            got = text in json.dumps(frame.get("payload") or {})
+            got = text in json.dumps(frame.get("payload") or {}, ensure_ascii=False)
         r.check(got, "el mensaje llega en vivo al socket que sobrevivió a la recarga",
                 "sin el arreglo del hub, no llega")
     except Exception as exc:  # noqa: BLE001 - the failure itself is the result
@@ -229,7 +371,7 @@ def walkthrough(args, tok_a, tok_b, r):
         resp = requests.get(f"{api}/matches/{match_id}/messages", headers=auth(tok), timeout=30)
         body = resp.json() if resp.ok else []
         body = body if isinstance(body, list) else body.get("messages", [])
-        r.check(resp.status_code == 200 and any(text in json.dumps(m) for m in body),
+        r.check(resp.status_code == 200 and any(text in json.dumps(m, ensure_ascii=False) for m in body),
                 f"{name} recupera el mensaje por HTTP", f"{resp.status_code}, {len(body)} mensajes")
 
     return cleanup(r, api, tok_a, pet_id, args.keep)
@@ -250,19 +392,30 @@ def main():
     ap.add_argument("--token-a", required=True, help="archivo con el JWT del rescatista")
     ap.add_argument("--token-b", help="archivo con el JWT del adoptante (no se usa con --seed)")
     ap.add_argument("--seed", type=int, metavar="N", help="publica N mascotas y termina")
+    ap.add_argument("--bootstrap", action="store_true",
+                    help="crea las dos cuentas contra un stack local y escribe los tokens")
     ap.add_argument("--keep", action="store_true", help="no borrar la mascota al terminar")
     args = ap.parse_args()
     args.api = args.api.rstrip("/")
 
-    tok_a = open(args.token_a).read().strip()
     r = Run()
+
+    # --bootstrap runs before the token files exist: for it they are outputs, not inputs.
+    if args.bootstrap:
+        if not args.token_b:
+            ap.error("--bootstrap escribe dos tokens: hace falta --token-b")
+        code = bootstrap(args, r)
+        print("\n" + (f"\033[31m{r.failed} comprobaciones fallaron\033[0m" if r.failed else "\033[32mtodo verde\033[0m"))
+        return code
+
+    tok_a = open(os.path.expanduser(args.token_a)).read().strip()
 
     if args.seed:
         code = seed(args.api, tok_a, args.seed, r)
     else:
         if not args.token_b:
             ap.error("el recorrido necesita --token-b (o usa --seed para solo sembrar)")
-        code = walkthrough(args, tok_a, open(args.token_b).read().strip(), r)
+        code = walkthrough(args, tok_a, open(os.path.expanduser(args.token_b)).read().strip(), r)
 
     print("\n" + (f"\033[31m{r.failed} comprobaciones fallaron\033[0m" if r.failed else "\033[32mtodo verde\033[0m"))
     return code

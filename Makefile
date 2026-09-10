@@ -35,4 +35,55 @@ e2e:
 seed:
 	@python3 scripts/e2e.py --token-a $(TOK_A) --seed $(N)
 
-.PHONY: tunnel clean-tunnel dev e2e seed
+# =========================================================================
+# 5. Entorno de pruebas local, completo y sin intervención manual
+# =========================================================================
+#
+# El stack local corre con EMAIL_SIMULATION=true, así que el OTP nunca sale de la
+# máquina: se escribe en Redis y el arnés lo lee de ahí. Por eso `local-bootstrap`
+# puede crear las dos cuentas por la API real —mismos endpoints, misma validación,
+# mismo bcrypt— sin buzón y sin que nadie teclee una contraseña.
+#
+# Nada de esto toca producción: docker-compose.yml fija DATABASE_URL y REDIS_URL a
+# los contenedores locales y NO los interpola desde .env, que apunta a Supabase y
+# Upstash.
+
+LOCAL_API ?= http://localhost:8080/api/v1
+LOCAL_WS  ?= ws://localhost:8080/api/v1/ws
+LOCAL_TOK_A ?= .local-tokens/tok_a
+LOCAL_TOK_B ?= .local-tokens/tok_b
+
+# Levanta el stack y espera a que responda de verdad, no a que el contenedor exista.
+local-up:
+	@docker compose up -d --build --wait
+	@echo "Esperando al backend..."
+	@for i in $$(seq 1 30); do \
+		curl -sf $(LOCAL_API)/health >/dev/null && echo "  backend arriba en $(LOCAL_API)" && exit 0; \
+		sleep 2; \
+	done; \
+	echo "  el backend no respondió en 60 s:"; docker compose logs --tail 30 backend; exit 1
+
+# Baja el stack y BORRA los volúmenes: cada corrida parte de una base limpia.
+local-down:
+	@docker compose down -v
+	@rm -rf .local-tokens
+
+# Crea las dos cuentas y deja sus tokens en .local-tokens/
+local-bootstrap:
+	@mkdir -p .local-tokens
+	@python3 scripts/e2e.py --api $(LOCAL_API) --bootstrap \
+		--token-a $(LOCAL_TOK_A) --token-b $(LOCAL_TOK_B)
+
+# El recorrido entero contra el stack local.
+local-e2e:
+	@python3 scripts/e2e.py --api $(LOCAL_API) --ws $(LOCAL_WS) \
+		--token-a $(LOCAL_TOK_A) --token-b $(LOCAL_TOK_B)
+
+# Siembra N mascotas en el mazo local.
+local-seed:
+	@python3 scripts/e2e.py --api $(LOCAL_API) --token-a $(LOCAL_TOK_A) --seed $(N)
+
+# Un solo comando: base limpia, cuentas nuevas, mazo sembrado y recorrido completo.
+local-test: local-down local-up local-bootstrap local-seed local-e2e
+
+.PHONY: tunnel clean-tunnel dev e2e seed local-up local-down local-bootstrap local-e2e local-seed local-test

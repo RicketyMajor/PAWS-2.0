@@ -32,3 +32,6 @@ __pycache__/
 
 # Playwright CLI scratch output
 .playwright-cli/
+
+# Tokens del entorno de pruebas local
+.local-tokens/
