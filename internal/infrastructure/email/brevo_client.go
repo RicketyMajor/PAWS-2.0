@@ -50,6 +50,9 @@ func (c *EmailClient) Send(to, subject, body string) error {
 	// unconditionally: someone who sets it wants nothing to leave the machine, even if
 	// real credentials happen to be loaded from .env.
 	if os.Getenv("EMAIL_SIMULATION") == "true" {
+		// pii-ok: printing the recipient and the OTP is what simulation mode is for.
+		// The risk is the flag being set in production, which is a Render panel
+		// question, not a code one.
 		log.Printf("\n========== [MOCK EMAIL] ==========\nPara: %s\nAsunto: %s\nCuerpo:\n%s\n==================================\n", to, subject, body)
 		return nil
 	}
