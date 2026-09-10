@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -31,6 +32,28 @@ func TestSendReturnsErrorWhenAPIRejects(t *testing.T) {
 	c := &EmailClient{apiKey: "test-key", sender: "paws@example.com"}
 	if err := c.Send("someone@example.com", "Subject", "body"); err == nil {
 		t.Fatal("expected an error when the API returns 401, got nil")
+	}
+}
+
+// Brevo names the address it rejected in its own message, and the caller logs the
+// error this returns. Carrying that message through would put the address back in the
+// service log by a second door, on a path reachable without authenticating.
+func TestRejectionErrorCarriesNoRecipient(t *testing.T) {
+	withStubBrevo(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"code":"invalid_parameter","message":"Invalid email: someone@example.com"}`))
+	})
+
+	c := &EmailClient{apiKey: "test-key", sender: "paws@example.com"}
+	err := c.Send("someone@example.com", "Subject", "body")
+	if err == nil {
+		t.Fatal("expected an error when the API rejects the send, got nil")
+	}
+	if strings.Contains(err.Error(), "someone@example.com") {
+		t.Errorf("the error names the recipient, which the caller writes to the log: %v", err)
+	}
+	if !strings.Contains(err.Error(), "invalid_parameter") {
+		t.Errorf("the error dropped the code too, leaving nothing to diagnose with: %v", err)
 	}
 }
 

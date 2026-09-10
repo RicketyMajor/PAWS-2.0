@@ -101,8 +101,19 @@ func (c *EmailClient) Send(to, subject, body string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("rechazo de la API (HTTP %d): %s", resp.StatusCode, string(bodyBytes))
+		// Only the error code travels, never Brevo's free-text message: a rejection
+		// naming the address it rejected would put that address back in the service
+		// log, through the error this returns. The code is a fixed identifier
+		// (invalid_parameter, unauthorized...) and carries nobody's data.
+		//
+		// ponytail: the code alone, so a rejection Brevo only explains in prose reads
+		// as a bare HTTP status here. Upgrade path: log the message under a flag the
+		// day a failure cannot be diagnosed from the code.
+		var rejection struct {
+			Code string `json:"code"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&rejection)
+		return fmt.Errorf("brevo rejected the send (HTTP %d, %s)", resp.StatusCode, rejection.Code)
 	}
 
 	// Drain the body so the connection returns to the idle pool instead of being
