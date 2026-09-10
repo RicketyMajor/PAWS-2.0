@@ -61,9 +61,19 @@ func (s *MatchService) GetSwipeDeck(userID uint, lat, lon float64) ([]domain.Pet
 		return nil, fmt.Errorf("error identifying user: %v", err)
 	}
 
+	// 2. Read the adopter's profile. It drives the ordering below.
+	// Most users have never filled it in, and for them there is no row at all. That is
+	// not a failure, so the error is dropped — but it is also not the same as a profile
+	// full of falses: an absent profile means "unknown", while has_yard = false means
+	// "no yard", and only the second should push a pet that needs a yard down the deck.
+	// With no profile the score is left out of the query entirely and the deck orders
+	// exactly as it did before profiles entered it.
+	var profile domain.UserProfile
+	hasProfile := s.db.Where("user_id = ?", userID).First(&profile).Error == nil
+
 	var pets []domain.Pet
 
-	// 2. Build the query.
+	// 3. Build the query.
 	query := s.db.Table("pets p").
 		Select("p.*").
 		Joins("INNER JOIN users u ON p.user_id = u.id"). // Join to filter by owner's RUN
@@ -73,17 +83,62 @@ func (s *MatchService) GetSwipeDeck(userID uint, lat, lon float64) ([]domain.Pet
 		Where("p.deleted_at IS NULL").
 		Where("u.run <> ?", currentUser.Run) // "Mirror Filter": Don't show user's own pets.
 
-	// 3. Apply ordering (by distance or creation date).
-	if lat != 0 && lon != 0 {
-		orderClause := "((? - p.latitude) * (? - p.latitude) + (? - p.longitude) * (? - p.longitude)) ASC"
-		query = query.Order(clause.Expr{SQL: orderClause, Vars: []interface{}{lat, lat, lon, lon}})
-	} else {
-		query = query.Order("p.created_at DESC")
+	// 4. Order by fit first, then distance. Both criteria go into ONE expression on
+	// purpose: gorm's Order only understands clause.OrderBy, clause.OrderByColumn and
+	// string — a bare clause.Expr matches no case and is dropped without a word — and
+	// clause.OrderBy builds its Expression and ignores everything else, so a second
+	// Order call would silently replace the first rather than follow it.
+	//
+	// The score runs 0-4: one point for every need this adopter's home can meet. Pets
+	// that do not fit are ranked last, never hidden. With a handful of pets published a
+	// hard filter would empty the deck, and an empty deck is indistinguishable from a
+	// broken one.
+	var orderSQL string
+	var orderVars []interface{}
+	if hasProfile {
+		fit := fitFromProfile(profile)
+		orderSQL = `(
+		CASE WHEN p.requires_yard AND NOT ? THEN 0 ELSE 1 END +
+		CASE WHEN ? AND NOT p.good_with_kids THEN 0 ELSE 1 END +
+		CASE WHEN ? AND NOT p.good_with_dogs THEN 0 ELSE 1 END +
+		CASE WHEN ? AND NOT p.good_with_cats THEN 0 ELSE 1 END) DESC, `
+		orderVars = append(orderVars, fit.hasYard, fit.hasKids, fit.hasDogs, fit.hasCats)
 	}
 
-	// 4. Execute and preload data for the UI.
+	// 5. Distance breaks ties, or creation date when the client sent no location.
+	if lat != 0 && lon != 0 {
+		orderSQL += `((? - p.latitude) * (? - p.latitude) + (? - p.longitude) * (? - p.longitude)) ASC`
+		orderVars = append(orderVars, lat, lat, lon, lon)
+	} else {
+		orderSQL += `p.created_at DESC`
+	}
+	query = query.Order(clause.OrderBy{Expression: clause.Expr{SQL: orderSQL, Vars: orderVars}})
+
+	// 6. Execute and preload data for the UI.
 	err := query.Preload("Images").Preload("User").Find(&pets).Error
 	return pets, err
+}
+
+// adopterFit describes what an adopter's home can take. The zero value means
+// "no constraints", which every pet satisfies.
+type adopterFit struct {
+	hasYard bool
+	hasKids bool
+	hasDogs bool
+	hasCats bool
+}
+
+// fitFromProfile maps the profile's stored strings onto the flags the deck scores.
+// The literals are the ones edit_profile_screen.dart offers, and nothing else writes
+// this table. A typo here would not fail: the deck would quietly stop ranking, which
+// is why TestFitFromProfile pins every option the client can send.
+func fitFromProfile(p domain.UserProfile) adopterFit {
+	return adopterFit{
+		hasYard: p.HasYard,
+		hasKids: p.FamilyComposition == "Family w/Kids",
+		hasDogs: p.OtherPets == "Dogs" || p.OtherPets == "Both",
+		hasCats: p.OtherPets == "Cats" || p.OtherPets == "Both",
+	}
 }
 
 // Swipe records a user's swipe action (like or dislike) on a pet.
