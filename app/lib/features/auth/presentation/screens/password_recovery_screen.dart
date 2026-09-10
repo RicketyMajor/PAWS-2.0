@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../data/auth_repository.dart';
 
@@ -124,33 +125,38 @@ class _PasswordRecoveryScreenState extends State<PasswordRecoveryScreen> {
       appBar: AppBar(title: const Text("Recuperar Cuenta")),
       body: Padding(
         padding: const EdgeInsets.all(24.0),
-        child: Column(
-          children: [
-            // Indicador de pasos
-            Row(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Column(
               children: [
-                _buildStep(0, "Correo"),
-                _buildLine(0),
-                _buildStep(1, "Código"),
-                _buildLine(1),
-                _buildStep(2, "Nueva Clave"),
+                // Indicador de pasos
+                Row(
+                  children: [
+                    _buildStep(0, "Correo"),
+                    _buildLine(0),
+                    _buildStep(1, "Código"),
+                    _buildLine(1),
+                    _buildStep(2, "Nueva Clave"),
+                  ],
+                ),
+                const SizedBox(height: 30),
+
+                Expanded(
+                  child: PageView(
+                    controller: _pageController,
+                    physics:
+                        const NeverScrollableScrollPhysics(), // Bloquear swipe manual
+                    children: [
+                      _buildEmailStep(),
+                      _buildCodeStep(),
+                      _buildPasswordStep(),
+                    ],
+                  ),
+                ),
               ],
             ),
-            const SizedBox(height: 30),
-
-            Expanded(
-              child: PageView(
-                controller: _pageController,
-                physics:
-                    const NeverScrollableScrollPhysics(), // Bloquear swipe manual
-                children: [
-                  _buildEmailStep(),
-                  _buildCodeStep(),
-                  _buildPasswordStep(),
-                ],
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -205,6 +211,7 @@ class _PasswordRecoveryScreenState extends State<PasswordRecoveryScreen> {
         TextField(
           controller: _emailCtrl,
           keyboardType: TextInputType.emailAddress,
+          autofillHints: const [AutofillHints.email],
           decoration: const InputDecoration(
             labelText: "Correo Electrónico",
             border: OutlineInputBorder(),
@@ -262,6 +269,7 @@ class _PasswordRecoveryScreenState extends State<PasswordRecoveryScreen> {
         TextField(
           controller: _passCtrl,
           obscureText: true,
+          autofillHints: const [AutofillHints.newPassword],
           decoration: const InputDecoration(
             labelText: "Nueva Contraseña",
             border: OutlineInputBorder(),
@@ -272,6 +280,7 @@ class _PasswordRecoveryScreenState extends State<PasswordRecoveryScreen> {
         TextField(
           controller: _passConfirmCtrl,
           obscureText: true,
+          autofillHints: const [AutofillHints.newPassword],
           decoration: const InputDecoration(
             labelText: "Confirmar Contraseña",
             border: OutlineInputBorder(),

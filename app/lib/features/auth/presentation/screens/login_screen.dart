@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 import '../../data/auth_repository.dart';
@@ -99,131 +100,149 @@ class _LoginFormState extends State<_LoginForm> {
           child: Padding(
             padding: const EdgeInsets.all(24.0),
             child: Center(
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const Icon(Icons.pets, size: 80, color: Color(0xFFE91E63)),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Bienvenido a PAWS',
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.headlineMedium
-                          ?.copyWith(
-                            fontWeight: FontWeight.bold,
-                            color: const Color(0xFFE91E63),
-                          ),
-                    ),
-                    const SizedBox(height: 48),
-                    TextField(
-                      controller: _emailController,
-                      decoration: const InputDecoration(
-                        labelText: 'Correo Electrónico',
-                        prefixIcon: Icon(Icons.email_outlined),
-                        border: OutlineInputBorder(),
-                      ),
-                      keyboardType: TextInputType.emailAddress,
-                    ),
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: _passwordController,
-                      obscureText: !_isPasswordVisible,
-                      decoration: InputDecoration(
-                        labelText: 'Contraseña',
-                        prefixIcon: const Icon(Icons.lock_outline),
-                        border: const OutlineInputBorder(),
-                        suffixIcon: IconButton(
-                          icon: Icon(
-                            _isPasswordVisible
-                                ? Icons.visibility_off
-                                : Icons.visibility,
-                          ),
-                          onPressed: () {
-                            setState(() {
-                              _isPasswordVisible = !_isPasswordVisible;
-                            });
-                          },
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 8),
-                    // --- CHECKBOX RECÚERDAME ---
-                    Row(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 420),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Checkbox(
-                          value: _rememberMe,
-                          onChanged: (v) => setState(() => _rememberMe = v!),
-                          activeColor: const Color(0xFFE91E63),
+                        const Icon(
+                          Icons.pets,
+                          size: 80,
+                          color: Color(0xFFE91E63),
                         ),
-                        const Text("Recordar usuario"),
-                      ],
-                    ),
-                    const SizedBox(height: 24),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Bienvenido a PAWS',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.headlineMedium
+                              ?.copyWith(
+                                fontWeight: FontWeight.bold,
+                                color: const Color(0xFFE91E63),
+                              ),
+                        ),
+                        const SizedBox(height: 48),
+                        TextField(
+                          controller: _emailController,
+                          decoration: const InputDecoration(
+                            labelText: 'Correo Electrónico',
+                            prefixIcon: Icon(Icons.email_outlined),
+                            border: OutlineInputBorder(),
+                          ),
+                          keyboardType: TextInputType.emailAddress,
+                          autofillHints: const [AutofillHints.email],
+                        ),
+                        const SizedBox(height: 16),
+                        TextField(
+                          controller: _passwordController,
+                          obscureText: !_isPasswordVisible,
+                          autofillHints: const [AutofillHints.password],
+                          decoration: InputDecoration(
+                            labelText: 'Contraseña',
+                            prefixIcon: const Icon(Icons.lock_outline),
+                            border: const OutlineInputBorder(),
+                            suffixIcon: IconButton(
+                              icon: Icon(
+                                _isPasswordVisible
+                                    ? Icons.visibility_off
+                                    : Icons.visibility,
+                              ),
+                              onPressed: () {
+                                setState(() {
+                                  _isPasswordVisible = !_isPasswordVisible;
+                                });
+                              },
+                            ),
+                          ),
+                        ),
 
-                    // --- BOTÓN INICIAR SESIÓN (MODIFICADO) ---
-                    BlocBuilder<LoginBloc, LoginState>(
-                      builder: (context, state) {
-                        if (state is LoginLoading) {
-                          return const Center(
-                            child: CircularProgressIndicator(),
-                          );
-                        }
-                        return FilledButton(
-                          onPressed: () {
-                            // AQUÍ ESTÁ EL CAMBIO: Enviamos rememberMe al Bloc
-                            context.read<LoginBloc>().add(
-                              LoginButtonPressed(
-                                email: _emailController.text,
-                                password: _passwordController.text,
-                                rememberMe: _rememberMe,
+                        const SizedBox(height: 8),
+                        // --- CHECKBOX RECÚERDAME ---
+                        Row(
+                          children: [
+                            Checkbox(
+                              value: _rememberMe,
+                              onChanged: (v) =>
+                                  setState(() => _rememberMe = v!),
+                              activeColor: const Color(0xFFE91E63),
+                            ),
+                            const Text("Recordar usuario"),
+                          ],
+                        ),
+                        const SizedBox(height: 24),
+
+                        // --- BOTÓN INICIAR SESIÓN (MODIFICADO) ---
+                        BlocBuilder<LoginBloc, LoginState>(
+                          builder: (context, state) {
+                            if (state is LoginLoading) {
+                              return const Center(
+                                child: CircularProgressIndicator(),
+                              );
+                            }
+                            return FilledButton(
+                              onPressed: () {
+                                // AQUÍ ESTÁ EL CAMBIO: Enviamos rememberMe al Bloc
+                                context.read<LoginBloc>().add(
+                                  LoginButtonPressed(
+                                    email: _emailController.text,
+                                    password: _passwordController.text,
+                                    rememberMe: _rememberMe,
+                                  ),
+                                );
+                              },
+                              style: FilledButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 16,
+                                ),
+                                backgroundColor: const Color(0xFFE91E63),
+                              ),
+                              child: const Text(
+                                'INICIAR SESIÓN',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
                             );
                           },
-                          style: FilledButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                            backgroundColor: const Color(0xFFE91E63),
-                          ),
+                        ),
+
+                        // Botón Registro
+                        TextButton(
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => const RegisterScreen(),
+                              ),
+                            );
+                          },
                           child: const Text(
-                            'INICIAR SESIÓN',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
+                            '¿No tienes cuenta? Regístrate aquí',
                           ),
-                        );
-                      },
-                    ),
+                        ),
 
-                    // Botón Registro
-                    TextButton(
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const RegisterScreen(),
+                        // Botón Recuperar
+                        const SizedBox(height: 10),
+                        TextButton(
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => const PasswordRecoveryScreen(),
+                              ),
+                            );
+                          },
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.grey,
                           ),
-                        );
-                      },
-                      child: const Text('¿No tienes cuenta? Regístrate aquí'),
+                          child: const Text("¿Olvidaste tu contraseña?"),
+                        ),
+                        const SizedBox(height: 20), // Espacio final
+                      ],
                     ),
-
-                    // Botón Recuperar
-                    const SizedBox(height: 10),
-                    TextButton(
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const PasswordRecoveryScreen(),
-                          ),
-                        );
-                      },
-                      style: TextButton.styleFrom(foregroundColor: Colors.grey),
-                      child: const Text("¿Olvidaste tu contraseña?"),
-                    ),
-                    const SizedBox(height: 20), // Espacio final
-                  ],
+                  ),
                 ),
               ),
             ),
