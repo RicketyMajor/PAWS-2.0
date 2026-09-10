@@ -212,6 +212,13 @@ class _ActionButton extends StatelessWidget {
         // lands on the semantics node as `tooltip`, which is NOT the accessible
         // name. Only Icon.semanticLabel fills `label`; without it the button is
         // announced as an unnamed button. Measured, not assumed.
+        //
+        // ponytail: on Flutter web both render into the same node, so a screen
+        // reader reads the name twice ("Mostrar contraseña\nMostrar contraseña",
+        // measured in production). Ceiling: verbose, not broken -- read twice
+        // beats not read at all. Upgrade path: drop the tooltip if a web-DOM
+        // measurement ever shows tooltip alone also names the button there; the
+        // framework tree says it does not, and finding out costs a deploy.
         tooltip: label,
         icon: Icon(icon, color: color, semanticLabel: label),
         onPressed: onPressed,
