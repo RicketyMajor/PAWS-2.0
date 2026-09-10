@@ -160,7 +160,6 @@ func main() {
 	chatService := services.NewChatService(database.DB)
 	reviewService := services.NewReviewService(database.DB)
 	fileService := services.NewFileService()
-	identityService := services.NewIdentityService()
 
 	reportService := services.NewReportService(database.DB, authService)
 	matchService := services.NewMatchService(database.DB, petService, mqClient)
@@ -179,7 +178,6 @@ func main() {
 	socialHandler := httpTransport.NewSocialHandler(chatService, reviewService)
 	reportHandler := httpTransport.NewReportHandler(reportService)
 	uploadHandler := httpTransport.NewUploadHandler(fileService)
-	identityHandler := httpTransport.NewIdentityHandler(identityService)
 	wsHandler := httpTransport.NewWSHandler(hub)
 	adminHandler := httpTransport.NewAdminHandler(reportService)
 	notificationHandler := httpTransport.NewNotificationHandler(userService)
@@ -236,8 +234,6 @@ func main() {
 			auth.POST("/verify-recovery-code", authHandler.VerifyRecoveryCode)
 			auth.POST("/reset-password", authHandler.ResetPassword)
 		}
-
-		api.POST("/verification/verify", identityHandler.Verify)
 
 		petsPublic := api.Group("/pets")
 		{
