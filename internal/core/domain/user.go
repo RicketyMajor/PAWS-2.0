@@ -12,8 +12,14 @@ type User struct {
 	Name string `gorm:"not null" json:"name"`
 
 	// Composite indexes with Role allow the same Email/RUN if the Role is different.
-	Email string `gorm:"index:idx_email_role,unique;not null" json:"email"`
-	Run   string `gorm:"index:idx_run_role,unique;not null" json:"run"`
+	//
+	// Email and Run are withheld from JSON by default, like Password. A User reaches a
+	// response through four eager loads (a pet's owner, the swipe deck, a match, a
+	// report), two of which serve unauthenticated routes, so anything serialized here
+	// is public by default. The owner and an admin get them back explicitly through
+	// SelfUser; nobody else has a use for them.
+	Email string `gorm:"index:idx_email_role,unique;not null" json:"-"`
+	Run   string `gorm:"index:idx_run_role,unique;not null" json:"-"`
 
 	Password string `gorm:"not null" json:"-"` // Hidden in JSON responses.
 
@@ -44,4 +50,19 @@ type User struct {
 	OtherPets         string `json:"other_pets"`
 	TimeAvailability  string `json:"time_availability"`
 	Experience        string `json:"experience"`
+}
+
+// SelfUser renders a User for themselves or for an admin: the public projection plus
+// the two identifiers the struct withholds. The outer fields shadow the embedded ones,
+// which encoding/json resolves by depth, so the shape is the public one with `email`
+// and `run` added back — not a second definition that can drift from it.
+type SelfUser struct {
+	User
+	Email string `json:"email"`
+	Run   string `json:"run"`
+}
+
+// NewSelfUser wraps u for a caller entitled to see the withheld identifiers.
+func NewSelfUser(u User) SelfUser {
+	return SelfUser{User: u, Email: u.Email, Run: u.Run}
 }

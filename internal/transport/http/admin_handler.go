@@ -5,8 +5,26 @@ import (
 	"net/http"
 	"strconv"
 	"github.com/gin-gonic/gin"
+	"github.com/RicketyMajor/PAWS-2.0/internal/core/domain"
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/services"
 )
+
+// adminReport re-adds the identifiers domain.User withholds. An admin resolving a
+// report has to tell two accounts apart, and names are not unique; every other reader
+// of a Report gets the public projection. Same shadowing as domain.SelfUser.
+type adminReport struct {
+	domain.Report
+	Reporter domain.SelfUser `json:"reporter"`
+	Reported domain.SelfUser `json:"reported"`
+}
+
+func newAdminReport(r domain.Report) adminReport {
+	return adminReport{
+		Report:   r,
+		Reporter: domain.NewSelfUser(r.Reporter),
+		Reported: domain.NewSelfUser(r.Reported),
+	}
+}
 
 // =========================================================================
 // Handler Definition
@@ -33,7 +51,11 @@ func (h *AdminHandler) GetReports(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error loading reports"})
 		return
 	}
-	c.JSON(http.StatusOK, reports)
+	out := make([]adminReport, len(reports))
+	for i, r := range reports {
+		out[i] = newAdminReport(r)
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 // GetReportDetails handles GET /admin/reports/:id to fetch the details of a specific report.
@@ -48,7 +70,7 @@ func (h *AdminHandler) GetReportDetails(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"report":   report,
+		"report":   newAdminReport(*report),
 		"evidence": messages, // The full chat history for context
 	})
 }

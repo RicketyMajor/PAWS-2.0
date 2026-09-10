@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/RicketyMajor/PAWS-2.0/internal/core/domain"
 	"github.com/RicketyMajor/PAWS-2.0/internal/core/services"
 )
 
@@ -85,7 +86,7 @@ func (h *AuthHandler) SwitchRole(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Role switched successfully",
 		"token":   newToken,
-		"user":    newUser,
+		"user":    domain.NewSelfUser(*newUser),
 	})
 }
 
@@ -223,7 +224,7 @@ func (h *AuthHandler) VerifyOTP(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{
 		"message": "Account created successfully!",
 		"token":   token,
-		"user":    user,
+		"user":    domain.NewSelfUser(*user),
 	})
 }
 

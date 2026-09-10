@@ -125,7 +125,7 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 
 	// Return a nested JSON response
 	c.JSON(http.StatusOK, gin.H{
-		"user":    user,
+		"user":    domain.NewSelfUser(*user),
 		"profile": profile,
 	})
 }
